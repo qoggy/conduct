@@ -1,0 +1,13 @@
+# 构建产物
+/bin/
+/conduct
+
+# Go
+*.exe
+*.test
+*.out
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
