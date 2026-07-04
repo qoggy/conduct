@@ -50,3 +50,34 @@ func TestExpandDemoSequence(t *testing.T) {
 		t.Errorf("展开序列不符:\n得到 %+v\n期望 %+v", got, want)
 	}
 }
+
+// TestExpandRedoOverSelfLoopSequence 校验「自循环 + redo 叠加」下的精确步序（回归锚点只钉步数，
+// 这里钉逐步顺序，防止段循环把内层自循环展开错位而步数恰好不变的 bug）。
+// 结构：A → B(自循环 loopCount=1，带 evaluator) → C(redoTarget=A, loopCount=1)。
+// 期望：A → B → B-Eval → B → C → A → B → B-Eval → B → C（redo 段把 [A,B] 连同 B 的内循环整段重跑一轮，
+// C 为段尾）。段循环内各步迭代号统一取段循环轮号（见 expand.go 的 outerIteration 语义）。
+func TestExpandRedoOverSelfLoopSequence(t *testing.T) {
+	one := 1
+	nodes := []Node{
+		{ID: "A", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "a"},
+		{ID: "B", DisplayName: "乙", Engine: "claude-code", PromptTemplate: "b",
+			LoopCount: &one, Evaluator: &Evaluator{Engine: "claude-code", PromptTemplate: "e"}},
+		{ID: "C", DisplayName: "丙", Engine: "claude-code", PromptTemplate: "c",
+			LoopCount: &one, RedoTarget: "A"},
+	}
+	want := []ExecutionStep{
+		{Type: "agent", NodeID: "A", Iteration: 1},
+		{Type: "agent", NodeID: "B", Iteration: 1},
+		{Type: "evaluator", NodeID: "B", Iteration: 1},
+		{Type: "agent", NodeID: "B", Iteration: 1},
+		{Type: "agent", NodeID: "C", Iteration: 1},
+		{Type: "agent", NodeID: "A", Iteration: 2},
+		{Type: "agent", NodeID: "B", Iteration: 2},
+		{Type: "evaluator", NodeID: "B", Iteration: 2},
+		{Type: "agent", NodeID: "B", Iteration: 2},
+		{Type: "agent", NodeID: "C", Iteration: 2},
+	}
+	if got := Expand(nodes); !reflect.DeepEqual(got, want) {
+		t.Errorf("自循环+redo 叠加展开序列不符:\n得到 %+v\n期望 %+v", got, want)
+	}
+}
