@@ -4,6 +4,7 @@ conduct —— 把 workflow 定义（JSON）解释成确定性步骤、逐步驱
 
 ## 动手前必读
 
+- **读记忆**：读 `@docs/memory/MEMORY.md`（项目长期记忆索引），按需再读其中链接的记忆文件。
 - **语言 / 布局**：Go，标准布局。入口在 `cmd/conduct/`，其余全在 `internal/`。
 - **改完必须自检**：`make fmt && make vet && make test && make build` 全绿才算完成。
 - **错误不吞**：`error` 一律处理——用 `fmt.Errorf("...: %w", err)` 包装上抛，或记录后处理；禁止 `_ = err` 静默丢弃。
