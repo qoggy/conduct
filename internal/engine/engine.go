@@ -1,6 +1,6 @@
 // Package engine 定义 AI 编程引擎的无头执行抽象，以及引擎注册表。
 //
-// 每种引擎（claude-code、codex、qoder、gemini）实现同一个 Engine 接口，
+// 每种引擎（如 claude-code、antigravity）实现同一个 Engine 接口，
 // 以子进程 / 无头 CLI 方式运行一个提示词并返回产物文本。workflow 节点通过
 // engine 字段按名字选择引擎，由本包的注册表解析到具体实现。
 package engine
@@ -12,7 +12,8 @@ import (
 	"sort"
 )
 
-// ErrNotImplemented 表示引擎已登记但其无头执行尚未落地。
+// ErrNotImplemented 是「引擎已登记但无头执行尚未落地」的约定返回值（承 AGENTS.md「不假装成功」）。
+// 现有三引擎均已实装，暂无使用者；codex 恢复前若先登记 stub，即用它显式占位而非空实现冒充可用。
 var ErrNotImplemented = errors.New("engine not yet implemented")
 
 // RunRequest 是一次无头引擎执行的入参。
@@ -64,6 +65,12 @@ func Lookup(name string) (Engine, error) {
 		return nil, fmt.Errorf("unknown engine %q; available: %v", name, RegisteredNames())
 	}
 	return engine, nil
+}
+
+// Exists 报告某名字的引擎是否已登记（即可作为 workflow 定义里的合法 engine 值）。
+func Exists(name string) bool {
+	_, ok := registry[name]
+	return ok
 }
 
 // RegisteredNames 返回已登记引擎名字的有序列表。

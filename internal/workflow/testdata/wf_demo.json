@@ -1,0 +1,21 @@
+{
+  "nodes": [
+    {
+      "id": "name",
+      "displayName": "起名",
+      "engine": "claude-code",
+      "promptTemplate": "为下面的产品起一个简短好记的中文名字，只输出名字本身，不要任何解释和标点：\n{{sys.userPrompt}}",
+      "evaluator": {
+        "engine": "claude-code",
+        "promptTemplate": "下面 artifact 是一个候选产品名。若你觉得已经很好，回复一句「通过」；否则用一句话给出改进方向（比如更简洁/更有科技感）。"
+      },
+      "loopCount": 1
+    },
+    {
+      "id": "slogan",
+      "displayName": "标语",
+      "engine": "claude-code",
+      "promptTemplate": "产品的最终定名是「{{name}}」。为它写一句 10 个字以内的中文广告标语，只输出标语本身："
+    }
+  ]
+}

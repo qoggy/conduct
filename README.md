@@ -1,6 +1,6 @@
 # conduct
 
-把 workflow 定义（JSON）解释成确定性步骤、逐步驱动多种 AI 编程引擎（claude-code / codex / qoder / gemini）执行的命令行工具。
+把 workflow 定义（JSON）解释成确定性步骤、逐步驱动多种 AI 编程引擎（claude-code / antigravity / qoder）执行的命令行工具。
 
 ## 开发
 

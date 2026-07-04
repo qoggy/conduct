@@ -1,0 +1,82 @@
+package workflow
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+)
+
+// Definition 是一份完整的工作流记录：系统管理的元数据 + 用户编写的节点定义。
+// name / createdAt / updatedAt 由 store 写入，nodes 是定义主体。
+type Definition struct {
+	Name      string `json:"name"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+	Nodes     []Node `json:"nodes"`
+}
+
+// Node 是工作流的单个节点。evaluator 与 redoTarget 互斥（见 Validate）。
+type Node struct {
+	ID             string        `json:"id"`
+	DisplayName    string        `json:"displayName"`
+	Engine         string        `json:"engine"`
+	EngineConfig   *EngineConfig `json:"engineConfig,omitempty"`
+	PromptTemplate string        `json:"promptTemplate"`
+	Evaluator      *Evaluator    `json:"evaluator,omitempty"`
+	RedoTarget     string        `json:"redoTarget,omitempty"`
+	LoopCount      *int          `json:"loopCount,omitempty"`
+}
+
+// EngineConfig 是引擎专属的调优载荷，其合法字段由所属 Node/Evaluator 的 engine 决定
+// （判别联合，见 engine 包的能力表与 Validate）。所有字段选填。
+type EngineConfig struct {
+	Model           string `json:"model,omitempty"`
+	Effort          string `json:"effort,omitempty"`          // 仅 claude-code
+	ReasoningEffort string `json:"reasoningEffort,omitempty"` // qoder（及恢复后的 codex）
+}
+
+// Evaluator 是节点内联的评测官，触发 in-place 内循环；engine + engineConfig 同构于 Node。
+type Evaluator struct {
+	Engine         string        `json:"engine"`
+	EngineConfig   *EngineConfig `json:"engineConfig,omitempty"`
+	PromptTemplate string        `json:"promptTemplate"`
+}
+
+// ParseDefinition 严格解析一份导入定义：拒绝未知字段（fail-loud，尽早暴露拼写错误）。
+// 只做 JSON 结构解析，语义校验见 Validate。
+func ParseDefinition(data []byte) (*Definition, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var definition Definition
+	if err := decoder.Decode(&definition); err != nil {
+		return nil, fmt.Errorf("解析定义 JSON 失败: %w", err)
+	}
+	if decoder.More() {
+		return nil, fmt.Errorf("解析定义 JSON 失败: 检测到多余的尾随内容（应为单个 JSON 对象）")
+	}
+	return &definition, nil
+}
+
+// Normalize 补齐规范化默认值：带 evaluator / redoTarget 的节点若未写 loopCount，则补为 1。
+func (d *Definition) Normalize() {
+	for i := range d.Nodes {
+		node := &d.Nodes[i]
+		if (node.Evaluator != nil || node.RedoTarget != "") && node.LoopCount == nil {
+			one := 1
+			node.LoopCount = &one
+		}
+	}
+}
+
+// Scaffold 返回一份最小可用的骨架定义（单节点、claude-code、透传用户需求）。
+// name 与时间戳由 store 写入。
+func Scaffold() *Definition {
+	return &Definition{
+		Nodes: []Node{{
+			ID:             "step-1",
+			DisplayName:    "第一步",
+			Engine:         "claude-code",
+			PromptTemplate: "{{sys.userPrompt}}",
+		}},
+	}
+}

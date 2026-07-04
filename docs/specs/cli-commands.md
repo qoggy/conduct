@@ -268,9 +268,9 @@ conduct workflow list --json | jq '.[].name'
 示意输出：
 
 ```
-NAME       NODES  ENGINES              UPDATED
-autopilot  4      claude-code, codex   2026-07-03 10:22
-my-flow    1      claude-code          2026-07-03 15:40
+NAME       NODES  ENGINES                   UPDATED
+autopilot  4      antigravity, claude-code  2026-07-03 10:22
+my-flow    1      claude-code               2026-07-03 15:40
 ```
 
 ---
@@ -317,7 +317,7 @@ conduct workflow show demo --json
 autopilot · 4 节点
 plan   · 规划 · claude-code · claude-opus-4-8 · 单次
 code   · 编码 · claude-code · claude-opus-4-8 · evaluator 内循环
-test   · 测试 · codex · (引擎默认) · 单次
+test   · 测试 · antigravity · (引擎默认) · 单次
 review · 评审 · claude-code · claude-opus-4-8 · redoTarget→code 回跳
 ```
 
@@ -541,10 +541,10 @@ conduct ui — 可视化界面已启动
   "nodes": [{
     "id": "node-1",                 // 必填，唯一，命名受限（见〈落盘校验规则〉）；模板中以 {{node-1}} 引用其产物
     "displayName": "规划",           // 必填，进度展示用
-    "engine": "claude-code",        // 必填（判别式）：claude-code | codex | qoder | gemini
+    "engine": "claude-code",        // 必填（判别式）：claude-code | antigravity（codex 暂时下线，见〈实现状态〉）
     "engineConfig": {               // 选填；shape 由 engine 决定，合法字段见下「引擎载荷」
       "model": "claude-opus-4-8",   // 选填；取值受 engine 约束，省略则用引擎默认模型
-      "effort": "high"              // claude-code 档位；codex 换成 reasoningEffort
+      "effort": "high"              // claude-code 档位（antigravity 无、编码在 model 标签；codex 下线用 reasoningEffort）
     },
     "promptTemplate": "…{{sys.userPrompt}}…",  // 必填，见下「模板变量」
     "evaluator": {                  // 选填：带评测官 → in-place 内循环（写→评→改）；同构 engine + engineConfig
@@ -565,8 +565,9 @@ conduct ui — 可视化界面已启动
 | engine | engineConfig 合法字段 |
 | --- | --- |
 | `claude-code` | `model?`（Claude 系）、`effort?`（`low`/`medium`/`high`/`xhigh`/`max`/`ultracode`/`auto`，实际随模型） |
-| `codex` | `model?`（GPT 系）、`reasoningEffort?`（`low`/`medium`/`high`/`xhigh`，实际随模型） |
-| `qoder` / `gemini` | 待其实装再定义（当前为 stub，见〈实现状态〉） |
+| `antigravity` | `model?`（完整模型标签，如 `Gemini 3.5 Flash (Medium)`）；**无独立 effort 字段**——推理强度编码在模型标签后缀里（见 `docs/references/agy-print.md`） |
+| `qoder` | `model?`（Qoder 模型名或档位，如 `Auto`/`Performance`，见 `--list-models`）、`reasoningEffort?`（`disabled`/`off`/`none`/`low`/`medium`/`high`/`xhigh`/`max`，与模型解耦的独立标志，见 `docs/references/qodercli-print.md`） |
+| `codex`（暂时下线） | 账户欠费暂下线、下周恢复；恢复后为 `model?`（GPT 系）、`reasoningEffort?`（`low`/`medium`/`high`/`xhigh`）。`gemini` 被 `antigravity` 取代、均已移除 |
 
 `model` 省略则用该引擎默认模型；`evaluator` 用同一套 `engine` + `engineConfig` 结构。具体校验（严格、依能力表）见〈落盘校验规则〉。
 
@@ -690,9 +691,9 @@ conduct ui — 可视化界面已启动
   "displayName": "规划",         // 冗余存节点名，使本文件自解释（不依赖当时的定义）
   "iteration": 1,              // 第几轮（内循环 / 回跳时 >1）
   "engine": "claude-code",     // 该步实际调用的引擎（同定义的判别式）
-  "engineConfig": {            // 该步实际生效的引擎配置，结构同定义（见〈workflow 定义 schema〉）
-    "model": "claude-opus-4-8",// 实际使用的模型（定义里省略则记解析后的引擎默认）
-    "effort": "high"           // claude-code 档位；codex 为 reasoningEffort
+  "engineConfig": {            // 该步生效的引擎配置，记节点/evaluator 的声明值，结构同定义（见〈workflow 定义 schema〉）
+    "model": "claude-opus-4-8",// 声明的模型；定义省略则此字段缺省（引擎侧用其默认模型，本记录不额外探测该默认名）
+    "effort": "high"           // claude-code 档位（antigravity 无、编码在 model 标签；codex 下线用 reasoningEffort）
   },
   "input": "…",                // 该步喂给引擎的完整输入（渲染后的 promptTemplate，全文不截断）
   "success": true,             // 该步是否成功
@@ -711,13 +712,13 @@ conduct ui — 可视化界面已启动
 
 - **结构与类型**：`nodes` 数组存在；每个 node 的 `id` / `displayName` / `engine` / `promptTemplate` 必填；`engineConfig` 结构合法；`loopCount` 为 `1`–`20` 的整数（仅当 node 带 `evaluator` / `redoTarget` 时校验）。
 - **元数据字段系统管理**：`name` 若在导入定义中出现，须等于目标名（`create` 的 `<name>` 参数 / `edit` 的目标），否则拒绝；`createdAt`（`create` 时写、此后不可变）与 `updatedAt`（`create` / `edit` 每次重戳）由系统写入，导入值一律忽略。故导入体（`create --definition` / `edit` 的 stdin）给 `nodes` 即可。改名是独立操作、走 `workflow rename`——不能靠导入体里的 `name` 与目标名不一致来触发（那一律按错误拒绝，绝不做静默改名）。
-- **engine + engineConfig 严格校验（判别联合）**：`create` / `edit` 先按 `engine` 选定该引擎的**能力表**（支持的 `model` 集合 → 各 model 支持的调优字段与档位），再校验 `engineConfig`：`engine` 合法、`engineConfig.model` 属于该引擎、调优字段属于该 `engine`（`effort` ↔ claude-code、`reasoningEffort` ↔ codex）、档位在该模型允许集内、无该引擎不认的多余字段；任一不符即拒绝（node 与其 `evaluator` 各自独立校验）。能力表随引擎 / 模型演进维护；qoder / gemini 的能力表待其实装补齐（见〈实现状态〉）。
+- **engine + engineConfig 严格校验（判别联合）**：`create` / `edit` 先按 `engine` 选定该引擎的**能力表**（该引擎接受的调优字段及其枚举），再校验 `engineConfig`：`engine` 合法（已注册）、调优字段属于该 `engine`（`effort` ↔ claude-code；`reasoningEffort` ↔ qoder；`antigravity` 无独立调优字段、仅认 `model`）、其值在该字段允许集内、无该引擎不认的多余字段；任一不符即拒绝（node 与其 `evaluator` 各自独立校验）。`model` 当前**不做白名单**（接受任意非空串，待有权威模型表再收紧）；能力表随引擎演进维护。`codex` 暂时下线（下周恢复）；`gemini` 被 `antigravity` 取代（见〈实现状态〉）。
 - **`evaluator` 与 `redoTarget` 互斥**：同一 node 二者不可并存。
 - **node `id` 合法且唯一**：`id` 须匹配 `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`——首字符为字母或下划线，其余限字母 / 数字 / 连字符 / 下划线，总长 1–64；且同一份定义内不得重复。`redoTarget` 作为对 node 的引用同样须是合法 id。（注意：这套 id 规则与工作流名 `<name>` 的 `[A-Za-z0-9._-]+` 不同——后者是 store 文件名，可含点、可数字开头。）
 - **`redoTarget` 合法回跳**：必须指向一个**存在且位于本 node 之前**的节点；指向不存在的、自身、或后续节点即拒绝。
 - **模板变量引用存在**：`promptTemplate`（含 `evaluator` 的）里非转义的 `{{<nodeId>}}` 必须引用定义内存在的 node id；`{{sys.*}}` 仅限已知系统变量（`sys.userPrompt` / `sys.cwd`）。
 
-校验失败时逐条打印字段级错误（如 `nodes[0].engineConfig.effort: engine='codex' 不认 effort（codex 用 reasoningEffort）`），退出码 `1`。
+校验失败时逐条打印字段级错误（如 `nodes[0].engineConfig.effort: engine="antigravity" 不认 effort`），退出码 `1`。
 
 > 注：这三条（`id` 唯一、`redoTarget` 合法回跳、模板引用存在）比 Python 原型更严——原型对它们分别是静默降级 / 后者覆盖 / 渲染时保留字面量；conduct 提前到入库时 fail-loud 拒绝。
 
@@ -737,12 +738,13 @@ conduct ui — 可视化界面已启动
 
 | 命令 | 状态 |
 | --- | --- |
-| `workflow run` | **stub**：当前骨架为顶层 `conduct run "<需求>"`（`internal/cli/run.go`，返回「run 尚未实现：解释器内核待移植」并退出 1）；按本规格，跑工作流迁至 `conduct workflow run`，顶层 `run` 改作运行记录 noun（`run list` / `run show`），不再是「跑工作流」的动词 |
-| `workflow create/edit/rename/delete/list/show` | **未实现**（尚无 `workflow` 命令族与 store 层） |
-| `run list` / `run show` | **未实现**（运行历史查询，读 `~/.conduct/runs/`） |
+| `workflow run` | **已实现**（`internal/orchestrator` 主循环：展开 → 渲染 → 逐步驱动引擎 → 串联产物/反馈 → 落盘 trace；`--cwd` / `--json` / stdin 需求就位。顶层 `run` 已改作运行记录 noun） |
+| `workflow create/edit/rename/delete/list/show` | **已实现**（`workflow` 命令族 + `internal/store` 托管层 + `internal/workflow` 校验/展开/渲染；`show --expand` 复用展开算法） |
+| `run list` / `run show` | **已实现**（读 `~/.conduct/runs/`；`show` 支持 `--trace` / `--json` 四组合；`interrupted` 按 pid 存活读时派生） |
 | `ui` | **未实现**（可视化界面，x-one-web 式，横跨编辑 / 监控 / 启动；形态待规定） |
 | `version` | 已实现 |
-| 引擎 `claude-code` / `codex` | 接口已定义、**执行未实装**（Python 原型 `run_agent` 已验证可行，待移植） |
-| 引擎 `qoder` / `gemini` | 仅注册占位 stub，`Run` 返回 `ErrNotImplemented`，**尚不能真正执行**；各自调优字段待实装时定义 |
+| 引擎 `claude-code` / `antigravity` / `qoder` | **已实装**（无头 CLI `claude -p` / `agy -p` / `qodercli -p`，三者均经真实调用冒烟通过；单测用假二进制覆盖参数/stdin/cwd 接线与 JSON 解析） |
+| 引擎 `codex` | **暂时下线**（账户欠费，下周恢复）；届时加回注册表（`internal/engine/codex.go`）与能力表 |
+| 引擎 `gemini` | **已移除**：被 `antigravity` 取代（agy 取代 gemini cli） |
 
-解释器内核（展开 / 渲染 / 主循环）尚待移植。
+解释器内核（展开 `expand` + 渲染 `render` + 主循环 `orchestrator`）已全部落地。尚未做：`ui`、崩溃续跑 / 超时重试 / 多模态附件（原型也刻意不做）。

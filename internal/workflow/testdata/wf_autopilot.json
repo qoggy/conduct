@@ -1,0 +1,45 @@
+{
+  "nodes": [
+    {
+      "id": "node-1",
+      "displayName": "plan",
+      "engine": "claude-code",
+      "promptTemplate": "{{sys.userPrompt}}",
+      "evaluator": {
+        "engine": "claude-code",
+        "promptTemplate": "judge {{node-1}}"
+      },
+      "loopCount": 1
+    },
+    {
+      "id": "node-2",
+      "displayName": "TC",
+      "engine": "claude-code",
+      "promptTemplate": "{{node-1}}",
+      "evaluator": {
+        "engine": "claude-code",
+        "promptTemplate": "judge {{node-2}}"
+      },
+      "loopCount": 1
+    },
+    {
+      "id": "node-3",
+      "displayName": "code",
+      "engine": "claude-code",
+      "promptTemplate": "{{node-2}}",
+      "evaluator": {
+        "engine": "claude-code",
+        "promptTemplate": "judge {{node-3}}"
+      },
+      "loopCount": 1
+    },
+    {
+      "id": "node-4",
+      "displayName": "test-run",
+      "engine": "antigravity",
+      "promptTemplate": "run {{node-3}}",
+      "redoTarget": "node-3",
+      "loopCount": 1
+    }
+  ]
+}

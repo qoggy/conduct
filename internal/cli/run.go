@@ -1,26 +1,25 @@
 package cli
 
-import (
-	"errors"
+import "github.com/spf13/cobra"
 
-	"github.com/spf13/cobra"
-)
-
-// newRunCommand 构造 `conduct run`：解释运行一份 workflow 定义。
+// newRunCommand 构造 `conduct run` 名词族——运行记录（不可变历史）的查询入口。
+// 「跑一份工作流」是 `conduct workflow run`；本命令只读 ~/.conduct/runs/ 下的历史。
 func newRunCommand() *cobra.Command {
-	var expandOnly bool
-
-	runCommand := &cobra.Command{
-		Use:   "run <workflow.json>",
-		Short: "解释运行一份 workflow 定义",
-		Args:  cobra.ExactArgs(1),
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "查询运行记录（列表 / 详情）",
+		Long:  "conduct run —— 运行记录的查询入口（存于 ~/.conduct/runs/）。跑工作流用 conduct workflow run。",
+		// 无参裸命令打印帮助；拼错的子命令 fail-loud 报用法错误（退出码 2），不静默当成功。
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// 解释器内核（类型建模 + expand 展开 + 主循环）尚未移植。
-			// 显式报错而非静默假装成功，避免误导使用者。
-			return errors.New("run 尚未实现：解释器内核待移植")
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			return usageErrorf("未知子命令 %q（可用：list / show）", args[0])
 		},
 	}
-	runCommand.Flags().BoolVar(&expandOnly, "expand-only", false,
-		"只打印展开后的执行步骤、不调用任何引擎")
-	return runCommand
+	cmd.AddCommand(
+		newRunListCommand(),
+		newRunShowCommand(),
+	)
+	return cmd
 }
