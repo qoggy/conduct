@@ -9,8 +9,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newRootCommand 构造根命令并挂载全部子命令。
-func newRootCommand() *cobra.Command {
+// newRootCommand 构造根命令并挂载全部子命令与帮助主题。
+func newRootCommand() (*cobra.Command, error) {
 	rootCommand := &cobra.Command{
 		Use:   "conduct",
 		Short: "编排并运行多引擎 AI workflow",
@@ -42,13 +42,23 @@ func newRootCommand() *cobra.Command {
 	rootCommand.AddCommand(newWorkflowCommand())
 	rootCommand.AddCommand(newRunCommand())
 	rootCommand.AddCommand(newVersionCommand())
-	return rootCommand
+	if err := addHelpTopics(rootCommand); err != nil {
+		return nil, err
+	}
+	// 替换 Cobra 默认 help 命令：未知主题 fail-loud 退 2（见 newHelpCommand）。
+	rootCommand.SetHelpCommand(newHelpCommand(rootCommand))
+	return rootCommand, nil
 }
 
 // Execute 运行根命令；出错时打印到 stderr 并按错误类别选择退出码：
 // usageError → 2（用法错误），其余 → 1（一般错误）。
 func Execute() {
-	if err := newRootCommand().Execute(); err != nil {
+	rootCommand, err := newRootCommand()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "conduct: "+err.Error())
+		os.Exit(1)
+	}
+	if err := rootCommand.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "conduct: "+err.Error())
 		var usage *usageError
 		if errors.As(err, &usage) {

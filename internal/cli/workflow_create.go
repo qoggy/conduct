@@ -11,9 +11,10 @@ func newWorkflowCreateCommand() *cobra.Command {
 	var fromDefinition bool
 	cmd := &cobra.Command{
 		Use:   "create <name>",
-		Short: "新建一份工作流入库",
-		Long: "新建一份工作流并入库。默认脚手架出最小骨架；带 --definition 时从 stdin 读入完整定义导入。\n" +
-			"入库前一律校验，不过则拒绝落盘。",
+		Short: "新建工作流（默认最小骨架，或 --definition 从 stdin 导入）",
+		Long: "新建一份名为 <name> 的工作流（<name> 已存在则报错）。默认脚手架出最小骨架（单节点、claude-code、透传用户需求）；\n" +
+			"带 --definition 时改为从 stdin 读入一份完整定义导入。\n\n" +
+			workflowDefinitionHelp(),
 		Args: requireArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]

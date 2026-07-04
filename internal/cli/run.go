@@ -8,7 +8,7 @@ func newRunCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "查询运行记录（列表 / 详情）",
-		Long:  "conduct run —— 运行记录的查询入口（存于 ~/.conduct/runs/）。跑工作流用 conduct workflow run。",
+		Long:  "conduct run —— 查询运行记录（不可变历史）。跑一份工作流用 conduct workflow run。",
 		// 无参裸命令打印帮助；拼错的子命令 fail-loud 报用法错误（退出码 2），不静默当成功。
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {

@@ -15,7 +15,9 @@ func newRunShowCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show <id>",
 		Short: "查看某次运行的状态与详情",
-		Args:  requireArgs(cobra.ExactArgs(1)),
+		Long: "查看某次运行的状态与逐步结果。<id> 取自 conduct run list（形如 <workflow>-<YYYYMMDD-HHMMSS>）；不存在则报错退 1。\n" +
+			"默认每步只显示产物前 80 字预览；--trace 展开每步完整 input/output。",
+		Args: requireArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			st, err := openStore()

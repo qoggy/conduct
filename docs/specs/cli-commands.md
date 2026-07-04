@@ -43,9 +43,12 @@ conduct 只有两个模型，像数据库的两张表：
 | `conduct run list` | 列出历史运行记录 | 查询（运行） |
 | `conduct run show <id>` | 查看某次运行的状态与详情 | 查询（运行） |
 | `conduct ui` | 可视化界面：编辑工作流 / 监控运行 / 启动，conduct 的整体 GUI | 人类界面 |
+| `conduct help <主题>` | 输出跨命令的长文档（教程 / 概念 / 最佳实践） | 支撑 |
 | `conduct version` | 打印版本号 | 支撑 |
 
 > 没有独立的 `validate` 命令：定义校验已内化进 `create` / `edit` 的落盘环节（不合规即拒绝保存），规则见〈落盘校验规则〉。需要不运行、不花 token 地核对一份定义合不合法、并预览它会展开成什么步骤时，用 `show --expand`（载入即校验，再打印展开）。
+
+> 文档分层：各命令的 `--help` 只做精简速查（本命令怎么用，遵循社区标准）；教程 / 概念 / 最佳实践这类**跨命令的长文档**不塞进 `--help`，改由 `conduct help <主题>` 输出（对标 `go help <topic>`）。主题按概念组织（如 `prompts` 讲 promptTemplate 怎么写好），文档 `go:embed` 进二进制随发布走（`docs/` 不随 `go install` 发布，故必须内嵌），相关命令的 `--help` 末尾留一行指针。
 
 ## 全局约定
 

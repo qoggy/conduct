@@ -19,7 +19,12 @@ func newWorkflowRunCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   `run <name> ["<需求>"]`,
 		Short: "解释运行一份工作流",
-		Args:  requireArgs(cobra.RangeArgs(1, 2)),
+		Long: "解释运行名为 <name> 的工作流：按定义逐节点驱动 AI 引擎执行，前台同步阻塞并打印进度，结束后用 conduct run show <id> 看记录。\n" +
+			"用户需求经第二个位置参数或 stdin 传入（二者其一必填；均缺且 stdin 是终端则报错退 2，不挂起）。\n\n" +
+			"示例：\n" +
+			"  conduct workflow run myflow \"把 README 翻译成英文\"\n" +
+			"  echo \"把 README 翻译成英文\" | conduct workflow run myflow",
+		Args: requireArgs(cobra.RangeArgs(1, 2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			if err := workflow.ValidateName(name); err != nil {

@@ -10,9 +10,9 @@ import (
 func newWorkflowEditCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "edit <name>",
-		Short: "从 stdin 整体替换既有工作流（保存即校验）",
-		Long: "从 stdin 读入完整新定义整体替换既有工作流。保存即校验，不过则拒绝写入、保留原定义不变。\n" +
-			"可视化编辑用 conduct ui；改名用 conduct workflow rename。",
+		Short: "从 stdin 读 JSON 整体替换既有工作流",
+		Long: "从 stdin 读入一份完整定义，原子替换名为 <name> 的既有工作流（<name> 不存在则报错；替换失败保留原定义）。\n\n" +
+			workflowDefinitionHelp(),
 		Args: requireArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
