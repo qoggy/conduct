@@ -45,6 +45,7 @@ type Record struct {
 	Cwd              string               `json:"cwd"`
 	Status           Status               `json:"status"`
 	Pid              int                  `json:"pid"`
+	PidStartTime     string               `json:"pidStartTime,omitempty"` // 进程启动时刻标识，防 pid 复用误判/误杀；旧记录/不支持平台为空
 	Steps            int                  `json:"steps"`
 	StartedAt        string               `json:"startedAt"`
 	EndedAt          *string              `json:"endedAt"`
@@ -70,6 +71,12 @@ type TraceEntry struct {
 	DurationMs   int64                  `json:"durationMs"`
 }
 
+// ProcessStartToken 暴露给编排器在创建运行时捕获**自身**进程的启动时刻标识，随 run.json 落盘；
+// 与 processAlive 用同一来源，保证同一进程存续期内比对必然相等。不支持平台/读不到返回 ("", false)。
+func ProcessStartToken(pid int) (string, bool) {
+	return processStartToken(pid)
+}
+
 // ProcessAlive 报告某 pid 的进程是否存活（signal 0 探测：不投递信号、只做存在性/权限检查）。
 // ESRCH → 已死；EPERM → 存在但属他人（视为存活）；nil → 存活。
 func ProcessAlive(pid int) bool {
@@ -82,7 +89,23 @@ func ProcessAlive(pid int) bool {
 
 // EffectiveStatus 返回对外展示的状态：running 且进程已死 → interrupted，其余照 Status。
 func (r *Record) EffectiveStatus() Status {
-	return deriveStatus(r.Status, ProcessAlive(r.Pid))
+	return deriveStatus(r.Status, r.processAlive())
+}
+
+// processAlive 在 pid 存活基础上再校验进程启动时刻，防 pid 被 OS 复用后把无关进程误判为本运行。
+// 无 PidStartTime（旧记录/不支持平台）或读不到目标进程启动时刻时，退回纯 pid 判断，不因此误判为死。
+func (r *Record) processAlive() bool {
+	if !ProcessAlive(r.Pid) {
+		return false
+	}
+	if r.PidStartTime == "" {
+		return true
+	}
+	token, ok := processStartToken(r.Pid)
+	if !ok {
+		return true
+	}
+	return token == r.PidStartTime
 }
 
 // deriveStatus 是状态派生的纯逻辑（便于单测）：仅当 running 且进程已死才降级为 interrupted。

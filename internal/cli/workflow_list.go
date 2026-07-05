@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -37,10 +36,10 @@ func newWorkflowListCommand() *cobra.Command {
 				return nil
 			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(writer, "NAME\tNODES\tENGINES\tUPDATED")
+			fmt.Fprintln(writer, "NAME\tNODES\tUPDATED")
 			for _, def := range defs {
-				fmt.Fprintf(writer, "%s\t%d\t%s\t%s\n",
-					def.Name, len(def.Nodes), strings.Join(enginesOf(def), ", "), formatTimestamp(def.UpdatedAt))
+				fmt.Fprintf(writer, "%s\t%s\t%s\n",
+					def.Name, nodeIDStream(def), formatTimestamp(def.UpdatedAt))
 			}
 			return writer.Flush()
 		},
@@ -51,8 +50,7 @@ func newWorkflowListCommand() *cobra.Command {
 
 type workflowListItem struct {
 	Name      string   `json:"name"`
-	Nodes     int      `json:"nodes"`
-	Engines   []string `json:"engines"`
+	Nodes     []string `json:"nodes"`
 	UpdatedAt string   `json:"updatedAt"`
 }
 
@@ -61,31 +59,31 @@ func listItems(defs []*workflow.Definition) []workflowListItem {
 	for _, def := range defs {
 		items = append(items, workflowListItem{
 			Name:      def.Name,
-			Nodes:     len(def.Nodes),
-			Engines:   enginesOf(def),
+			Nodes:     nodeIDs(def),
 			UpdatedAt: def.UpdatedAt,
 		})
 	}
 	return items
 }
 
-// enginesOf 返回定义里去重排序后的引擎集合（含各节点及其 evaluator 用到的引擎）。
-func enginesOf(def *workflow.Definition) []string {
-	seen := make(map[string]bool)
-	for _, node := range def.Nodes {
-		if node.Engine != "" {
-			seen[node.Engine] = true
-		}
-		if node.Evaluator != nil && node.Evaluator.Engine != "" {
-			seen[node.Evaluator.Engine] = true
-		}
+// nodeIDs 返回定义里各节点 id（按定义顺序）；空定义返回空切片（JSON 里为 []，不为 null）。
+func nodeIDs(def *workflow.Definition) []string {
+	ids := make([]string, len(def.Nodes))
+	for i, node := range def.Nodes {
+		ids[i] = node.ID
 	}
-	engines := make([]string, 0, len(seen))
-	for engineName := range seen {
-		engines = append(engines, engineName)
+	return ids
+}
+
+// nodeIDStream 把节点 id 按定义顺序以 `›` 连接，供人类表格的 NODES 列；
+// 超过 6 个截断为前 6 个 + `+N`，避免长流程撑爆表格（节点全量见 show）。
+func nodeIDStream(def *workflow.Definition) string {
+	ids := nodeIDs(def)
+	const maxShown = 6
+	if len(ids) > maxShown {
+		return strings.Join(ids[:maxShown], "›") + fmt.Sprintf("+%d", len(ids)-maxShown)
 	}
-	sort.Strings(engines)
-	return engines
+	return strings.Join(ids, "›")
 }
 
 // formatTimestamp 把 RFC3339 时间转成人类可读的 "2006-01-02 15:04"；解析失败则原样返回。

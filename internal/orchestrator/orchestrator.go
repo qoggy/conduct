@@ -65,6 +65,8 @@ func (o *Orchestrator) Run(ctx context.Context, def *workflow.Definition, userPr
 	feedback := map[string]string{}  // nodeId → 最近 evaluator 反馈（喂该节点下一次 agent）
 	sysVars := map[string]string{"userPrompt": userPrompt, "cwd": cwd}
 
+	pid := os.Getpid()
+	startToken, _ := run.ProcessStartToken(pid) // 落盘进程启动时刻，供读时校验，防 pid 复用误判/误杀
 	record := &run.Record{
 		ID:               runID,
 		Workflow:         def.Name,
@@ -72,7 +74,8 @@ func (o *Orchestrator) Run(ctx context.Context, def *workflow.Definition, userPr
 		UserPrompt:       userPrompt,
 		Cwd:              cwd,
 		Status:           run.StatusRunning,
-		Pid:              os.Getpid(),
+		Pid:              pid,
+		PidStartTime:     startToken,
 		Steps:            len(steps),
 		StartedAt:        startedAt,
 		Artifacts:        artifacts, // 与循环内 artifacts 共享同一 map：agent 步覆盖写即对 record 可见

@@ -126,6 +126,84 @@ func TestRunStoreRejectsUnsafeID(t *testing.T) {
 	}
 }
 
+// writeRawTrace 直接向某 run 的 trace.jsonl 落原始字节（绕过 AppendTrace，用于构造末尾半行等边界）。
+func writeRawTrace(t *testing.T, s *Store, id, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(s.runsDir(), id, "trace.jsonl"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCountTrace 覆盖：缺文件=0、完整行计数、末尾半行不计。
+func TestCountTrace(t *testing.T) {
+	s := New(t.TempDir())
+	rec := sampleRun("flow-20260703-150000")
+	if err := s.CreateRun(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	// 刚建好：空 trace.jsonl → 0。
+	if n, err := s.CountTrace(rec.ID); err != nil || n != 0 {
+		t.Fatalf("空 trace 应为 0，得到 %d/%v", n, err)
+	}
+
+	// 3 条完整行 + 1 条末尾无换行的半行 → 只数 3。
+	writeRawTrace(t, s, rec.ID,
+		`{"stepIndex":0}`+"\n"+`{"stepIndex":1}`+"\n"+`{"stepIndex":2}`+"\n"+`{"stepIndex":3`)
+	if n, err := s.CountTrace(rec.ID); err != nil || n != 3 {
+		t.Fatalf("3 完整行 + 半行应为 3，得到 %d/%v", n, err)
+	}
+
+	// 文件整个不存在（另一个从未写过 trace 的 id）→ 0。
+	missing := New(t.TempDir())
+	if n, err := missing.CountTrace("ghost-20260703-150000"); err != nil || n != 0 {
+		t.Fatalf("缺 trace 文件应为 0，得到 %d/%v", n, err)
+	}
+}
+
+// TestLoadTraceIgnoresTrailingHalfLine 确认末尾半行不被当成完整行解析（不报「行损坏」）。
+func TestLoadTraceIgnoresTrailingHalfLine(t *testing.T) {
+	s := New(t.TempDir())
+	rec := sampleRun("flow-20260703-150000")
+	if err := s.CreateRun(rec); err != nil {
+		t.Fatal(err)
+	}
+	// 2 条完整合法行 + 末尾一条写了一半的非法 JSON（无换行）。
+	writeRawTrace(t, s, rec.ID,
+		`{"stepIndex":0,"nodeId":"a"}`+"\n"+`{"stepIndex":1,"nodeId":"a"}`+"\n"+`{"stepIndex":2,"node`)
+	entries, err := s.LoadTrace(rec.ID)
+	if err != nil {
+		t.Fatalf("末尾半行不应导致 LoadTrace 报错: %v", err)
+	}
+	if len(entries) != 2 || entries[0].StepIndex != 0 || entries[1].StepIndex != 1 {
+		t.Errorf("应只读到 2 条完整行，得到 %+v", entries)
+	}
+}
+
+// TestReadSummary 覆盖两态：已写返回内容、未写返回 ErrSummaryNotExist。
+func TestReadSummary(t *testing.T) {
+	s := New(t.TempDir())
+	rec := sampleRun("flow-20260703-150000")
+	if err := s.CreateRun(rec); err != nil {
+		t.Fatal(err)
+	}
+	// running 期还没收尾：未生成 → 哨兵。
+	if _, err := s.ReadSummary(rec.ID); !errors.Is(err, ErrSummaryNotExist) {
+		t.Errorf("未生成总结应 ErrSummaryNotExist，得到 %v", err)
+	}
+	// 收尾写入后可读回原文。
+	if err := s.WriteSummary(rec.ID, "# 报告\n完成\n"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadSummary(rec.ID)
+	if err != nil {
+		t.Fatalf("ReadSummary 失败: %v", err)
+	}
+	if got != "# 报告\n完成\n" {
+		t.Errorf("总结内容错: %q", got)
+	}
+}
+
 func TestWriteRunAndSummary(t *testing.T) {
 	s := New(t.TempDir())
 	rec := sampleRun("flow-20260703-150000")
@@ -143,7 +221,10 @@ func TestWriteRunAndSummary(t *testing.T) {
 	if err := s.WriteSummary(rec.ID, "# 报告\n"); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.LoadRun(rec.ID)
+	got, err := s.LoadRun(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got.Status != run.StatusCompleted || got.Artifacts["a"] != "产物" {
 		t.Errorf("WriteRun 未生效: %+v", got)
 	}
@@ -151,7 +232,11 @@ func TestWriteRunAndSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(path); string(data) != "# 报告\n" {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "# 报告\n" {
 		t.Errorf("summary 内容错: %q", string(data))
 	}
 }

@@ -96,3 +96,55 @@ func TestValidateEscapedTemplateNotChecked(t *testing.T) {
 		t.Errorf("转义模板不应校验引用，却报错: %v", err)
 	}
 }
+
+// findProblem 返回首条 Path 命中的 Problem；未命中返回零值与 false。
+func findProblem(problems []Problem, path string) (Problem, bool) {
+	for _, p := range problems {
+		if p.Path == path {
+			return p, true
+		}
+	}
+	return Problem{}, false
+}
+
+// TestValidateStructuredPaths 锁死结构化契约：每类错误落在预期的字段点路径上（编辑器据此定位）。
+func TestValidateStructuredPaths(t *testing.T) {
+	cases := []struct {
+		name        string
+		def         *Definition
+		wantPath    string
+		wantMsgPart string
+	}{
+		{"空 nodes 落在 nodes", &Definition{}, "nodes", "不能为空"},
+		{"缺 id 落在 nodes[0].id", oneNode(Node{DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x"}), "nodes[0].id", "必填"},
+		{"id 非法落在 nodes[0].id", oneNode(Node{ID: "1x", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x"}), "nodes[0].id", "非法"},
+		{"id 重复落在 nodes[1].id", &Definition{Nodes: []Node{baseNode(), baseNode()}}, "nodes[1].id", "重复"},
+		{"缺 displayName 落在 nodes[0].displayName", oneNode(Node{ID: "a", Engine: "claude-code", PromptTemplate: "x"}), "nodes[0].displayName", "必填"},
+		{"缺 engine 落在 nodes[0].engine", oneNode(Node{ID: "a", DisplayName: "甲", PromptTemplate: "x"}), "nodes[0].engine", "必填"},
+		{"未知引擎落在 nodes[0].engine", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "nope", PromptTemplate: "x"}), "nodes[0].engine", "未知引擎"},
+		{"effort 非法落在 engineConfig.effort", withEngineConfig("claude-code", &EngineConfig{Effort: "insane"}), "nodes[0].engineConfig.effort", "允许集"},
+		{"互斥落在 nodes[0]", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x",
+			Evaluator: &Evaluator{Engine: "claude-code", PromptTemplate: "e"}, RedoTarget: "a"}), "nodes[0]", "互斥"},
+		{"redoTarget 不存在落在 nodes[0].redoTarget", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x", RedoTarget: "ghost"}), "nodes[0].redoTarget", "不存在"},
+		{"模板引用落在 nodes[0].promptTemplate", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "看 {{ghost}}"}), "nodes[0].promptTemplate", "不存在的节点"},
+		{"loopCount 落在 nodes[0].loopCount", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x",
+			Evaluator: &Evaluator{Engine: "claude-code", PromptTemplate: "e"}, LoopCount: loopCount(0)}), "nodes[0].loopCount", "1–20"},
+		{"evaluator promptTemplate 落在 nodes[0].evaluator.promptTemplate", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x",
+			Evaluator: &Evaluator{Engine: "claude-code"}}), "nodes[0].evaluator.promptTemplate", "必填"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			problems := ValidateStructured(c.def)
+			problem, ok := findProblem(problems, c.wantPath)
+			if !ok {
+				t.Fatalf("期望有 Path=%q 的错误，实际 problems=%+v", c.wantPath, problems)
+			}
+			if !strings.Contains(problem.Message, c.wantMsgPart) {
+				t.Errorf("Path=%q 的 Message 应含 %q，实际 %q", c.wantPath, c.wantMsgPart, problem.Message)
+			}
+			if strings.Contains(problem.Path, ": ") {
+				t.Errorf("Path 不应含 %q 分隔符（会破坏字符串化重建）：%q", ": ", problem.Path)
+			}
+		})
+	}
+}

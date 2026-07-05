@@ -14,12 +14,13 @@ func newRunCommand() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return usageErrorf("未知子命令 %q（可用：list / show）", args[0])
+			return usageErrorf("未知子命令 %q（可用：list / show / stop）", args[0])
 		},
 	}
 	cmd.AddCommand(
 		newRunListCommand(),
 		newRunShowCommand(),
+		newRunStopCommand(),
 	)
 	return cmd
 }

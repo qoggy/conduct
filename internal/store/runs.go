@@ -2,9 +2,11 @@ package store
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,6 +23,9 @@ var (
 	ErrRunExists = errors.New("运行已存在")
 	// ErrRunNotExist 表示目标运行记录不存在。
 	ErrRunNotExist = errors.New("运行不存在")
+	// ErrSummaryNotExist 表示 run-summary.md 尚未生成（多为 running 期，收尾节点还没写）。
+	// 供 handler 映射 404，与「运行本身不存在」区分。
+	ErrSummaryNotExist = errors.New("运行总结尚未生成")
 )
 
 func (s *Store) runsDir() string { return filepath.Join(s.root, "runs") }
@@ -82,7 +87,7 @@ func (s *Store) WriteRun(record *run.Record) error {
 }
 
 // AppendTrace 向 trace.jsonl 追加一条步骤记录（单行 JSON）。
-func (s *Store) AppendTrace(id string, entry run.TraceEntry) error {
+func (s *Store) AppendTrace(id string, entry run.TraceEntry) (err error) {
 	dir, err := s.runDir(id)
 	if err != nil {
 		return err
@@ -95,9 +100,14 @@ func (s *Store) AppendTrace(id string, entry run.TraceEntry) error {
 	if err != nil {
 		return fmt.Errorf("打开 trace.jsonl 失败: %w", err)
 	}
-	defer file.Close()
-	if _, err := file.Write(append(line, '\n')); err != nil {
-		return fmt.Errorf("追加 trace 失败: %w", err)
+	// 写路径上 Close 失败意味着这行 trace 可能没落全，不能像读路径那样静默丢弃：合并进返回值。
+	defer func() {
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("关闭 trace.jsonl 失败: %w", cerr)
+		}
+	}()
+	if _, werr := file.Write(append(line, '\n')); werr != nil {
+		return fmt.Errorf("追加 trace 失败: %w", werr)
 	}
 	return nil
 }
@@ -109,6 +119,23 @@ func (s *Store) WriteSummary(id, markdown string) error {
 		return err
 	}
 	return atomicWrite(summaryPath(dir), []byte(markdown))
+}
+
+// ReadSummary 读 run-summary.md 全文；尚未生成（running 期收尾节点还没写）返回 ErrSummaryNotExist。
+// WriteSummary 走 atomicWrite（rename 原子），故不存在读到半文件的情况。
+func (s *Store) ReadSummary(id string) (string, error) {
+	dir, err := s.runDir(id)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(summaryPath(dir))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("%s: %w", id, ErrSummaryNotExist)
+		}
+		return "", fmt.Errorf("读取运行总结 %s 失败: %w", id, err)
+	}
+	return string(data), nil
 }
 
 // LoadRun 读入某 run 的 run.json；不存在时返回 ErrNotExist。
@@ -132,6 +159,8 @@ func (s *Store) LoadRun(id string) (*run.Record, error) {
 }
 
 // LoadTrace 读入某 run 的 trace.jsonl（逐行解析）；文件缺失视为空 trace（尚未写入任何步骤）。
+// 用 bufio.Reader.ReadBytes('\n') 而非 Scanner：单行产物可达 MB 级，Scanner 的 token 上限会 ErrTooLong 崩；
+// 且只解析以换行结尾的完整行——末尾无换行的残块视为「正在写入的半行」丢弃，不当成损坏报错。
 func (s *Store) LoadTrace(id string) ([]run.TraceEntry, error) {
 	dir, err := s.runDir(id)
 	if err != nil {
@@ -146,23 +175,59 @@ func (s *Store) LoadTrace(id string) ([]run.TraceEntry, error) {
 	}
 	defer file.Close()
 	var entries []run.TraceEntry
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024) // 放宽单行上限：产物可能很长
-	for lineNumber := 1; scanner.Scan(); lineNumber++ {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
+	reader := bufio.NewReader(file)
+	for lineNumber := 1; ; lineNumber++ {
+		chunk, readErr := reader.ReadBytes('\n')
+		if len(chunk) > 0 && chunk[len(chunk)-1] == '\n' {
+			line := bytes.TrimRight(chunk[:len(chunk)-1], "\r") // 容忍 \r\n
+			if len(line) > 0 {
+				var entry run.TraceEntry
+				if err := json.Unmarshal(line, &entry); err != nil {
+					return nil, fmt.Errorf("trace %s 第 %d 行损坏: %w", id, lineNumber, err)
+				}
+				entries = append(entries, entry)
+			}
 		}
-		var entry run.TraceEntry
-		if err := json.Unmarshal(line, &entry); err != nil {
-			return nil, fmt.Errorf("trace %s 第 %d 行损坏: %w", id, lineNumber, err)
+		// chunk 不以 '\n' 结尾即末尾半行（尚未写完）：不解析、直接随 EOF 收束。
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return entries, nil
+			}
+			return nil, fmt.Errorf("读取 trace %s 失败: %w", id, readErr)
 		}
-		entries = append(entries, entry)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("扫描 trace %s 失败: %w", id, err)
+}
+
+// CountTrace 统计某 run 的 trace 完整行数（= 已记录步骤数），列表页进度 k/N 的 k。
+// 只数 '\n' 字节、绝不解析 JSON——单行可达 MB 级，全量 LoadTrace 只为数行数会拖垮列表。
+// 文件缺失视为 0；末尾无换行的半行（正在写入）自然不计入。
+func (s *Store) CountTrace(id string) (int, error) {
+	dir, err := s.runDir(id)
+	if err != nil {
+		return 0, err
 	}
-	return entries, nil
+	file, err := os.Open(tracePath(dir))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("读取 trace %s 失败: %w", id, err)
+	}
+	defer file.Close()
+	count := 0
+	buf := make([]byte, 64*1024)
+	for {
+		n, readErr := file.Read(buf)
+		if n > 0 {
+			count += bytes.Count(buf[:n], []byte{'\n'})
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return count, nil
+			}
+			return 0, fmt.Errorf("统计 trace %s 行数失败: %w", id, readErr)
+		}
+	}
 }
 
 // ListRuns 列出全部运行记录，按 startedAt 倒序（新在前）；目录不存在返回空。

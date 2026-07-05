@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/qoggy/conduct/internal/run"
@@ -15,8 +17,8 @@ func newRunShowCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show <id>",
 		Short: "查看某次运行的状态与详情",
-		Long: "查看某次运行的状态与逐步结果。<id> 取自 conduct run list（形如 <workflow>-<YYYYMMDD-HHMMSS>）；不存在则报错退 1。\n" +
-			"默认每步只显示产物前 80 字预览；--trace 展开每步完整 input/output。",
+		Long: "查看某次运行的详情。<id> 取自 conduct run list（形如 <workflow>-<YYYYMMDD-HHMMSS>）；不存在则报错退 1。\n" +
+			"默认打印 run-summary.md（运行总结）；未收尾（running / interrupted）时尚无总结，改打印状态与进度。--trace 展开每步完整 input/output。",
 		Args: requireArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
@@ -28,28 +30,29 @@ func newRunShowCommand() *cobra.Command {
 			if err != nil {
 				return err // 不存在 → ErrNotExist → 退 1
 			}
-			trace, err := loadTraceIfNeeded(st, id, withTrace, asJSON)
-			if err != nil {
-				return err
-			}
 			if asJSON {
+				var trace []run.TraceEntry
+				if withTrace { // --json 仅 --trace 时嵌入逐步数据
+					if trace, err = st.LoadTrace(id); err != nil {
+						return err
+					}
+				}
 				return showRunJSON(cmd, record, trace, withTrace)
 			}
-			showRunHuman(cmd.OutOrStdout(), record, trace, withTrace)
-			return nil
+			if withTrace {
+				trace, err := st.LoadTrace(id)
+				if err != nil {
+					return err
+				}
+				showRunTrace(cmd.OutOrStdout(), record, trace)
+				return nil
+			}
+			return showRunSummary(cmd.OutOrStdout(), st, id, record)
 		},
 	}
-	cmd.Flags().BoolVar(&withTrace, "trace", false, "追加打印逐步 trace（--json 时嵌入 trace 数组）")
+	cmd.Flags().BoolVar(&withTrace, "trace", false, "展开每步完整 input/output（--json 时嵌入 trace 数组）")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "输出 run.json 的规范化内容")
 	return cmd
-}
-
-// loadTraceIfNeeded 仅在需要逐步数据时读 trace：人类模式总要（逐步结果），--json 仅 --trace 时要。
-func loadTraceIfNeeded(st *store.Store, id string, withTrace, asJSON bool) ([]run.TraceEntry, error) {
-	if asJSON && !withTrace {
-		return nil, nil
-	}
-	return st.LoadTrace(id)
 }
 
 // showRunJSON 输出 run.json 内容（status 用读时派生态，interrupted 也如实反映）；--trace 时嵌入 trace 数组。
@@ -65,8 +68,44 @@ func showRunJSON(cmd *cobra.Command, record *run.Record, trace []run.TraceEntry,
 	return printJSON(cmd, payload)
 }
 
-// showRunHuman 打印概要 + 逐步结果；--trace 时每步展开完整 input/output。
-func showRunHuman(out io.Writer, record *run.Record, trace []run.TraceEntry, withTrace bool) {
+// showRunSummary 打印 run-summary.md 全文（默认视图）；未收尾（running / interrupted）时总结尚未生成，
+// 退回状态 + 进度视图并指路 --trace 查看已执行步骤。
+func showRunSummary(out io.Writer, st *store.Store, id string, record *run.Record) error {
+	md, err := st.ReadSummary(id)
+	if err == nil {
+		fmt.Fprint(out, md)
+		if !strings.HasSuffix(md, "\n") { // 保证行尾换行，避免与 shell 提示符黏在一起
+			fmt.Fprintln(out)
+		}
+		return nil
+	}
+	if !errors.Is(err, store.ErrSummaryNotExist) {
+		return err // 读文件真出错（权限等）：如实上抛，不静默
+	}
+	// 收尾节点还没写 summary：打印状态与进度，需逐步数据算进度。
+	trace, terr := st.LoadTrace(id)
+	if terr != nil {
+		return terr
+	}
+	showRunStatus(out, record, trace)
+	fmt.Fprintf(out, "运行总结尚未生成（运行未收尾）；用 conduct run show %s --trace 查看已执行步骤。\n", id)
+	return nil
+}
+
+// showRunTrace 打印状态摘要 + 逐步完整 input/output（--trace）。
+func showRunTrace(out io.Writer, record *run.Record, trace []run.TraceEntry) {
+	showRunStatus(out, record, trace)
+	for _, entry := range trace {
+		result := "成功"
+		if !entry.Success {
+			result = "失败"
+		}
+		printTraceEntryFull(out, entry, result)
+	}
+}
+
+// showRunStatus 打印一次运行的状态摘要（运行行 / 需求 / 步数进度或耗时 / 失败错误），不含逐步明细。
+func showRunStatus(out io.Writer, record *run.Record, trace []run.TraceEntry) {
 	status := record.EffectiveStatus()
 	fmt.Fprintf(out, "运行 %s · %s\n", record.ID, status)
 	fmt.Fprintf(out, "需求：%s\n", record.UserPrompt)
@@ -80,19 +119,6 @@ func showRunHuman(out io.Writer, record *run.Record, trace []run.TraceEntry, wit
 	}
 	if status == run.StatusFailed && record.Error != nil {
 		fmt.Fprintf(out, "错误：%s\n", *record.Error)
-	}
-
-	for _, entry := range trace {
-		result := "成功"
-		if !entry.Success {
-			result = "失败"
-		}
-		if withTrace {
-			printTraceEntryFull(out, entry, result)
-		} else {
-			fmt.Fprintf(out, "● step %d [%s] %s  %s  %s\n",
-				entry.StepIndex, entry.StepLabel(), entry.Engine, result, preview(entry.Output, 80))
-		}
 	}
 }
 

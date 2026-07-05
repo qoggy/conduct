@@ -41,12 +41,12 @@ func TestRenderSummaryCompleted(t *testing.T) {
 
 	for _, want := range []string{
 		"# autopilot-20260703-152233",
-		"**工作流** autopilot · 2 节点（冻结于 updatedAt 2026-07-03 15:40）",
+		"**工作流** autopilot · 2 节点",
 		"**需求** 给购物车加一个清空按钮",
 		"✅ completed · 18.0s（2026-07-03 15:22:33 → 2026-07-03 15:22:51）",
 		"**工作目录** /Users/me/proj",
-		"| 0 | 规划 | claude-code · claude-opus-4-8 | ✅ | 1.2s |",
-		"| 1 | 编码 | claude-code · (默认) | ✅ | 8.0s |",
+		"| 0 | 规划 | claude-code | 1.2s |",
+		"| 1 | 编码 | claude-code | 8.0s |",
 		`<output node="plan" name="规划">`,
 		"# 方案\n加按钮",
 		`<output node="code" name="编码">`,
@@ -70,7 +70,7 @@ func TestRenderSummaryFailedShowsStepAndError(t *testing.T) {
 		{StepIndex: 1, Type: "agent", NodeID: "code", DisplayName: "编码", Engine: "claude-code", Success: false, DurationMs: 500},
 	}
 	md := RenderSummary(r, trace)
-	for _, want := range []string{"**失败步** step 1", "**错误** claude 退出码 1: boom", "| 1 | 编码 | claude-code · (默认) | ❌ | 0.5s |"} {
+	for _, want := range []string{"**失败步** step 1", "**错误** claude 退出码 1: boom", "| 1 | 编码 | claude-code | 0.5s |"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("failed summary 缺少 %q\n完整:\n%s", want, md)
 		}

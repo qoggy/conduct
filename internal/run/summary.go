@@ -15,12 +15,10 @@ func RenderSummary(record *Record, trace []TraceEntry) string {
 	fmt.Fprintf(&b, "# %s\n\n", record.ID)
 
 	nodeCount := 0
-	updated := ""
 	if record.WorkflowSnapshot != nil {
 		nodeCount = len(record.WorkflowSnapshot.Nodes)
-		updated = formatMinute(record.WorkflowSnapshot.UpdatedAt)
 	}
-	fmt.Fprintf(&b, "**工作流** %s · %d 节点（冻结于 updatedAt %s）\n", record.Workflow, nodeCount, updated)
+	fmt.Fprintf(&b, "**工作流** %s · %d 节点\n", record.Workflow, nodeCount)
 	fmt.Fprintf(&b, "**需求** %s\n", record.UserPrompt)
 	fmt.Fprintf(&b, "**状态** %s\n", statusLine(record))
 	fmt.Fprintf(&b, "**工作目录** %s\n", record.Cwd)
@@ -34,21 +32,14 @@ func RenderSummary(record *Record, trace []TraceEntry) string {
 	}
 
 	b.WriteString("\n## 步骤\n\n")
-	b.WriteString("| # | 节点 | 引擎 · 模型 | 结果 | 耗时 |\n")
-	b.WriteString("| --- | --- | --- | --- | --- |\n")
+	b.WriteString("| # | 节点 | 引擎 | 耗时 |\n")
+	b.WriteString("| --- | --- | --- | --- |\n")
 	for _, entry := range trace {
-		result := "✅"
-		if !entry.Success {
-			result = "❌"
-		}
-		fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n",
-			entry.StepIndex, entry.StepLabel(), engineModel(entry), result, formatDurationMs(entry.DurationMs))
+		fmt.Fprintf(&b, "| %d | %s | %s | %s |\n",
+			entry.StepIndex, entry.StepLabel(), entry.Engine, formatDurationMs(entry.DurationMs))
 	}
 
 	b.WriteString("\n## 产物\n\n")
-	b.WriteString("> 各节点产物多为 Markdown（含标题、代码块），故逐节点用 XML 标签包裹其**完整**产物：" +
-		"产物内的标题不会污染本报告大纲、代码围栏也不与外层冲突（产物含字面 `</output>` 时边界才会破，极少见）。" +
-		"字节级权威仍是 `trace.jsonl` 的 `output` 字段。\n\n")
 	// 按快照节点顺序输出，稳定且与定义一致；仅输出有产物的节点。
 	if record.WorkflowSnapshot != nil {
 		for _, node := range record.WorkflowSnapshot.Nodes {
@@ -75,17 +66,7 @@ func statusLine(record *Record) string {
 		formatSecond(record.StartedAt), formatSecond(*record.EndedAt))
 }
 
-// engineModel 返回步骤的「引擎 · 模型」展示串；未声明 model 时标「(默认)」。
-func engineModel(entry TraceEntry) string {
-	model := "(默认)"
-	if entry.EngineConfig != nil && entry.EngineConfig.Model != "" {
-		model = entry.EngineConfig.Model
-	}
-	return entry.Engine + " · " + model
-}
-
-// formatMinute / formatSecond 把 RFC3339 时间戳格式化为可读形态；解析失败则原样返回（不崩）。
-func formatMinute(rfc3339 string) string { return reformat(rfc3339, "2006-01-02 15:04") }
+// formatSecond 把 RFC3339 时间戳格式化为可读形态；解析失败则原样返回（不崩）。
 func formatSecond(rfc3339 string) string { return reformat(rfc3339, "2006-01-02 15:04:05") }
 
 func reformat(rfc3339, layout string) string {

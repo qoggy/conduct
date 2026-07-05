@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/qoggy/conduct/internal/orchestrator"
+	"github.com/qoggy/conduct/internal/run"
 	"github.com/qoggy/conduct/internal/store"
 	"github.com/qoggy/conduct/internal/workflow"
 	"github.com/spf13/cobra"
@@ -93,7 +95,12 @@ func runWithJSON(cmd *cobra.Command, orch *orchestrator.Orchestrator, def *workf
 // resolveUserPrompt 按优先级取用户需求：位置参数 > 非 TTY 的 stdin；都无且 stdin 是终端则用法错误（退 2），不挂起。
 func resolveUserPrompt(args []string) (string, error) {
 	if len(args) == 2 {
-		return args[1], nil
+		// 与 stdin 路径同一标准：空白需求不放行，避免带着空需求去烧引擎。
+		prompt := strings.TrimSpace(args[1])
+		if prompt == "" {
+			return "", usageErrorf("用户需求不能为空")
+		}
+		return prompt, nil
 	}
 	if stdinIsTerminal() {
 		return "", usageErrorf("缺少用户需求：作为第二个参数传入，或经 stdin 管道输入（如 cat req.txt | conduct workflow run <name>）")
@@ -121,6 +128,19 @@ func resolveCwd(cwd string) (string, error) {
 	abs, err := filepath.Abs(cwd)
 	if err != nil {
 		return "", fmt.Errorf("解析 --cwd 路径失败: %w", err)
+	}
+	// 显式传入时必须是已存在的目录：不存在 / 不是目录 / 无法 stat 都属用法错误（退 2），
+	// 让 AI 引擎在无效目录上空跑没有意义。校验逻辑收敛在 run.ValidateWorkingDir（UI 启动预检
+	// 与本命令同源复用），这里按哨兵类型还原各自的 --cwd 用法错误文案（退 2）。
+	if err := run.ValidateWorkingDir(abs); err != nil {
+		switch {
+		case errors.Is(err, run.ErrWorkingDirNotExist):
+			return "", usageErrorf("--cwd 指向的路径不存在：%s", abs)
+		case errors.Is(err, run.ErrWorkingDirNotDir):
+			return "", usageErrorf("--cwd 不是目录：%s", abs)
+		default:
+			return "", usageErrorf("--cwd 路径无法访问：%s（%v）", abs, err)
+		}
 	}
 	return abs, nil
 }

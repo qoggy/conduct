@@ -73,8 +73,8 @@ func (d *Definition) Normalize() {
 func Scaffold() *Definition {
 	return &Definition{
 		Nodes: []Node{{
-			ID:             "step-1",
-			DisplayName:    "第一步",
+			ID:             "node-1",
+			DisplayName:    "node-1",
 			Engine:         "claude-code",
 			PromptTemplate: "{{sys.userPrompt}}",
 		}},
