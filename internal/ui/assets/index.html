@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>conduct ui</title>
+    <link rel="stylesheet" href="./style.css" />
+    <!-- 第三方库（内嵌随 go:embed 走，不引 CDN）。非模块脚本，先于 ES 模块加载，挂 globalThis。
+         marked（MIT）：运行总结的 Markdown 渲染；prism（MIT）：提示词 / JSON 编辑器与只读代码块的语法高亮；
+         purify（Apache/MPL，DOMPurify）：marked 输出注入 DOM 前的 XSS 消毒（运行总结含半可信引擎产物）。 -->
+    <script src="./vendor/marked.min.js"></script>
+    <script src="./vendor/prism.min.js"></script>
+    <script src="./vendor/purify.min.js"></script>
+  </head>
+  <body>
+    <div class="topbar">
+      <span class="brand">conduct</span>
+      <div class="tabs">
+        <a class="tab" data-tab="workflows" href="#/workflows">工作流</a>
+        <a class="tab" data-tab="runs" href="#/runs">运行</a>
+      </div>
+      <span class="ver" id="version"></span>
+    </div>
+    <main id="app"></main>
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>

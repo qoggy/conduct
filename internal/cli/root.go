@@ -34,13 +34,18 @@ func newRootCommand() (*cobra.Command, error) {
 			}
 			return usageErrorf("未知命令 %q", args[0])
 		},
+		// 根命令 --version：Cobra 在 Version 非空时自动挂载 --version 旗标（仅根命令、非持久化，
+		// 与 gh / kubectl 惯例一致），打印后退 0。模板对齐 `conduct version` 子命令输出（"conduct <版本>"）。
+		Version: version,
 	}
+	rootCommand.SetVersionTemplate("conduct {{.Version}}\n")
 	// Cobra 的旗标解析错误统一包成 usageError（→ 退出码 2）。
 	rootCommand.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return &usageError{err: err}
 	})
 	rootCommand.AddCommand(newWorkflowCommand())
 	rootCommand.AddCommand(newRunCommand())
+	rootCommand.AddCommand(newUICommand())
 	rootCommand.AddCommand(newVersionCommand())
 	if err := addHelpTopics(rootCommand); err != nil {
 		return nil, err
