@@ -1,8 +1,8 @@
 # workflow 运行 测试用例
 
-覆盖 conduct 中**跑工作流与查运行记录**的一族命令：`workflow run`、`run list`、`run show`，以及聚合视图 `ui`。工作流定义的增删改查见 [workflow-editing.md](./workflow-editing.md)。对应 spec：[docs/specs/cli-commands.md](../specs/cli-commands.md)。
+覆盖 conduct 中**跑工作流、查运行记录、终止运行**的一族命令：`workflow run`、`run list`、`run show`、`run stop`。工作流定义的增删改查见 [workflow-editing.md](./workflow-editing.md)；聚合视图 `ui` 的 CLI 冒烟见本文 TC-012，其服务端与 `/api/*` 端点的黑盒覆盖见 [ui-server.md](./ui-server.md)。对应 spec：[docs/specs/cli-commands.md](../specs/cli-commands.md)。
 
-> **预期以 spec 为准，不以当前代码为准。** 本文描述 spec 规定的**目标行为**（命令该怎样表现），用来验证实现对不对——不是照现有代码反推。当前实现状态（见 spec〈实现状态〉）：`workflow run`、`run list`、`run show`（含 `--trace`/`--json`）**均已实装**，预期可直接对照验证；唯 `ui`（TC-012）**尚未实现**——此刻直接跑会得到 `未知命令 "ui"`、退出 `2`，本文按 spec 目标行为写预期，待其落地后该用例即可通过。命令若有偏离本文〈预期〉，即为实现未达标。
+> **预期以 spec 为准，不以当前代码为准。** 本文描述 spec 规定的**目标行为**（命令该怎样表现），用来验证实现对不对——不是照现有代码反推。当前实现状态（见 spec〈实现状态〉）：`workflow run`、`run list`、`run show`（含 `--trace`/`--json`）、`run stop` 与 `ui` 服务端**均已实装**，预期可直接对照验证。两点行为变更需注意：① `run show` 默认视图（不加 `--trace`）现打印 `run-summary.md` 全文（终态）/ 状态摘要（未收尾），不再是旧版「概要 + 每步 80 字预览」（见 TC-007 / TC-008）；② `ui` 已从占位骨架变为可用服务端（TC-012 现可通过），内嵌前端 SPA 代码已落地、待浏览器走查验收。命令若有偏离本文〈预期〉，即为实现未达标。
 
 > **用户视角、不伪造内部数据（关键）**：查询类命令（`run list`/`run show`）要「有一条运行记录」才能查。本文**一律先用真实的 `workflow run` 把记录跑出来，再查**——绝不手写 `run.json`/`trace.jsonl` 去「摆拍」一条记录（那是与 conduct 内部存储格式死耦合的伪造，见 test-case-writing skill 的 MUST〈用户视角〉）。代价是这些用例也要真调引擎、算 💸；这是保真度换来的，值得。
 
@@ -104,19 +104,41 @@ JSON
   - 步骤 3 打印 `0 agent say True`（首行事件的 `stepIndex`/`type`/`nodeId`/`success`；用解析取值而非逐字匹配键序）。
 - **清理**：`cleanup_run je; rm -rf "$PROJ"`。
 
-### TC-004 run 缺需求且 stdin 是终端时报错、不挂起（零成本，需真 TTY）
+### TC-004 run 缺需求且 stdin 是终端时报错、不挂起（零成本，pty 伪终端驱动）
 
 - **目的**：验证既无位置参数、stdin 又是**终端**时报参数缺失、退出 `2`，不静默挂起、不调用引擎（spec〈用户需求的来源〉最后一句）。
 - **前置**：
   1. 建隔离环境（临时 HOME）：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`。
   2. `PROJ="$WORK"; write_min`；`cat "$PROJ/min.json" | "$CONDUCT" workflow create np --definition`。
 - **步骤**：
-  1. （手工，真 TTY）在**真实终端**直接敲 `"$CONDUCT" workflow run np`（不接管道、不重定向），观察是否立即报错返回。
+  1. （真 TTY 分支，pty 伪终端驱动，可无人值守自动化）把 stdin 接成真终端后运行 `run`、不喂任何输入，用超时守卫验证它立即报错返回而非挂起：
+
+     ```bash
+     python3 - "$CONDUCT" "$WORK" <<'PY'
+     import os, pty, subprocess, sys
+     conduct, work = sys.argv[1], sys.argv[2]
+     master, slave = pty.openpty()            # 分配伪终端；slave 端 os.isatty()=True
+     p = subprocess.Popen([conduct, "workflow", "run", "np"],
+                          stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+     os.close(slave)
+     try:
+         out, err = p.communicate(timeout=5)  # 超时守卫：若停在等待输入即为 bug
+         print(f"exit={p.returncode}"); print("stderr:", err.strip())
+     except subprocess.TimeoutExpired:
+         p.kill(); print("exit=HANG(FAIL)")
+     os.close(master)
+     runs = os.path.join(work, ".conduct", "runs")
+     real = [x for x in (os.listdir(runs) if os.path.isdir(runs) else []) if not x.startswith(".")]
+     print("runs=", real)                     # 应为空：未触发引擎、零 token
+     PY
+     ```
+
+     （沿用〈前置〉里 `export HOME="$WORK"`，python 子进程继承同一隔离 store。）
 - **预期**：
-  - 命令**立即返回、不停在等待输入**。
-  - 退出码 `2`，stderr 报需求缺失。
-  - 未产生 run 记录：`$WORK/.conduct/runs/` 为空或不存在（未触发引擎、零 token）。
-- **关键说明（勿踩坑）**：本用例断言的是 **stdin 是终端**这一路径，只能在真 TTY 复现，故列为手工项。**切勿用 `< /dev/null` 代替**——按 spec，`< /dev/null` 是重定向（非 TTY），走的是「读取整个 stdin 作需求」路径，会读到**空串**需求（其行为 spec 未定义，甚至可能拿空 prompt 触发引擎、意外烧钱），退出码也非 `2`。两条路径语义不同，不可混用。
+  - 脚本**立即返回、不停在等待输入**（不打印 `HANG`）。
+  - 打印 `exit=2`，stderr 含 `缺少用户需求`。
+  - 打印 `runs= []`——未产生 run 记录（未触发引擎、零 token）。
+- **关键说明（勿踩坑）**：本用例断言的是 **stdin 是终端**这一路径——用 pty 伪终端把 stdin 接成 tty 即可在 CI / 无人值守自动化里复现，**不必真人守终端**。**切勿用 `< /dev/null` 代替**——按 spec，`< /dev/null` 是重定向（非 TTY），走的是「读取整个 stdin 作需求」路径，会读到**空串**需求（其行为 spec 未定义，甚至可能拿空 prompt 触发引擎、意外烧钱），退出码也非 `2`。两条路径语义不同，不可混用。若要人工复核，也可在真实终端直接敲 `"$CONDUCT" workflow run np` 观察其立即退出 `2`。
 - **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
 ---
@@ -152,47 +174,52 @@ JSON
 
 ## run show
 
-### TC-007 💸 run show 默认只给产物 80 字预览
+### TC-007 run show 默认打印运行总结（run-summary.md 全文）
 
-- **目的**：验证 `run show <id>` 打印概要与逐步结果，且逐步产物**只给前 80 字预览、不给全文**。用一个**故意超过 80 字、以 `【END】` 收尾**的产物来判定截断。
-- **前置**：
-  1. 真实家目录 `claude` 已就绪；`PROJ=$(mktemp -d)`。
-  2. 造一个「让 agent 逐字复述一段长文本」的 workflow（产物 >80 字、以 `【END】` 收尾）：
+- **目的**：验证 `run show <id>`（默认、不加 `--trace`）打印 `run-summary.md` 全文——概要头 + 步骤表 + **逐节点完整产物**（**行为变更**：旧版是「概要 + 每步 80 字预览」，现改为总结全文、产物不截断）。
+- **前置**（**零 💸**：`run show` 只读回落盘数据、**不调引擎**，故用一个**确定性假引擎**顶替真 claude——避免真实调用的不确定产物，run 记录仍全由 conduct 自己产出；与 TC-010 弄坏引擎同理，属外部依赖的测试替身，非伪造内部数据）：
+  1. 建隔离环境（临时 HOME）：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`。
+  2. 装一个「打印固定 JSON、零 token」的假 claude（claude-code 引擎解析 stdout 的 `{"result":…}`）：
      ```bash
-     cat > "$PROJ/long.json" <<'JSON'
-     {
-       "nodes": [
-         {"id":"say","displayName":"复述","engine":"claude-code",
-          "promptTemplate":"请一字不差地只输出下面这段话，不要加任何前后缀、不要读写文件：在购物车页面的头部区域新增一个用于清空购物车的按钮，用户点击之后会弹出一个二次确认对话框，只有当用户明确点击确认以后才会清空购物车里的全部商品条目；若点击取消则关闭对话框且不做任何改动，而当购物车本身为空时该按钮处于禁用状态【END】"}
-       ]
-     }
-     JSON
-     cat "$PROJ/long.json" | "$CONDUCT" workflow create sp --definition
+     mkdir -p "$WORK/fakebin"
+     cat > "$WORK/fakebin/claude" <<'SH'
+     #!/usr/bin/env bash
+     cat > /dev/null   # 吞掉 stdin（conduct 从 stdin 喂 prompt）
+     echo '{"result":"HELLO-ARTIFACT","is_error":false,"usage":{"input_tokens":3,"output_tokens":2}}'
+     SH
+     chmod +x "$WORK/fakebin/claude"
+     export PATH="$WORK/fakebin:$PATH"
      ```
-  3. `"$CONDUCT" workflow run sp "复述" --cwd "$PROJ" >/dev/null`（真跑，产物落到 run.json）。
+  3. 造最小工作流并真跑一条（假引擎秒级成功 → `completed`）：
+     ```bash
+     cat > "$WORK/min.json" <<'JSON'
+     {"nodes":[{"id":"say","displayName":"打招呼","engine":"claude-code","promptTemplate":"回复：hi。需求：{{sys.userPrompt}}"}]}
+     JSON
+     cat "$WORK/min.json" | "$CONDUCT" workflow create ok --definition
+     "$CONDUCT" workflow run ok "打个招呼" --cwd "$WORK" >/dev/null
+     RID=$(ls "$WORK/.conduct/runs/" | grep '^ok-' | head -1)
+     ```
 - **步骤**：
-  1. `RID=$(ls "$HOME/.conduct/runs/" | grep '^sp-' | head -1)`
-  2. `"$CONDUCT" run show "$RID"; echo "exit=$?"`
-  3. `"$CONDUCT" run show "$RID" | grep -c '【END】'`
+  1. `"$CONDUCT" run show "$RID"; echo "exit=$?"`
+  2. `"$CONDUCT" run show "$RID" | grep -c 'HELLO-ARTIFACT'`
 - **预期**：
-  - 步骤 2 退出码 `0`；stdout 含 run id、状态 `completed`、需求 `复述`、步数 `1`；有一行 `● step 0 [复述] claude-code 成功 ...` 且产物预览以 `在购物车页面的头部区域` 开头。
-  - 步骤 3 打印 `0`——默认视图**看不到** `【END】`（它在第 80 字之后，被预览截断）。这与 TC-008 构成对照。
-  - 归一化说明：断言依赖 agent 逐字复述出 >80 字、且 `【END】` 落在第 80 字之后。引擎偶发不严格复述时（如加了前后缀、漏了 `【END】`）本用例失真：先核对 run.json 的 `artifacts.say` 是否 >80 字且以 `【END】` 结尾，是则断言成立、否则重跑一次。
-- **清理**：`cleanup_run sp; rm -rf "$PROJ"`。
+  - 步骤 1 退出码 `0`；stdout 是 `run-summary.md` 全文：首行 `# ok-<时间戳>`；含 `**工作流** ok · 1 节点`、`**需求** 打个招呼`、`**状态** ✅ completed …`；有 `## 步骤` 表（表头 `| # | 节点 | 引擎 | 耗时 |`，一行以 `| 0 | 打招呼 | claude-code |` 打头）；有 `## 产物` 段，内含 `<output node="say" name="打招呼">` 包裹的**完整**产物。
+  - 步骤 2 打印 `1`——默认视图即含完整产物 `HELLO-ARTIFACT`（总结给全文、不截断；这正是与旧版「80 字预览」相反的新行为）。
+  - 归一化说明：run id 时间后缀、耗时忽略。
+- **清理**：`pkill -f "$WORK/fakebin/claude" 2>/dev/null; export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
-### TC-008 💸 run show --trace 附完整逐步 trace（含全文）
+### TC-008 run show --trace 打印状态摘要 + 每步完整 input/output
 
-- **目的**：验证 `--trace` 追加打印每步**完整** input/output，而非 80 字预览。
-- **前置**：同 TC-007 步骤 1-3，但 workflow 名用 `st`（`cat "$PROJ/long.json" | "$CONDUCT" workflow create st --definition`，再 `workflow run st "复述" --cwd "$PROJ" >/dev/null`）。
+- **目的**：验证 `--trace` 改变**深度**：打印状态摘要（运行行 / 需求 / 步数 / 耗时）后，逐步展开每步**完整** input 与 output（区别于默认视图的 run-summary.md 报告形态）。
+- **前置**：同 TC-007 前置 1-3（临时 HOME + 确定性假引擎 + 跑一条 `completed` run），但 workflow 名改用 `tr`：`cat "$WORK/min.json" | "$CONDUCT" workflow create tr --definition`、`"$CONDUCT" workflow run tr "打个招呼" --cwd "$WORK" >/dev/null`、`RID=$(ls "$WORK/.conduct/runs/" | grep '^tr-' | head -1)`。
 - **步骤**：
-  1. `RID=$(ls "$HOME/.conduct/runs/" | grep '^st-' | head -1)`
-  2. `"$CONDUCT" run show "$RID" --trace; echo "exit=$?"`
-  3. `"$CONDUCT" run show "$RID" --trace | grep -c '【END】'`
+  1. `"$CONDUCT" run show "$RID" --trace; echo "exit=$?"`
+  2. `"$CONDUCT" run show "$RID" --trace | grep -c 'HELLO-ARTIFACT'`
 - **预期**：
-  - 步骤 2 退出码 `0`；在概要之后附每步完整 trace，含该步完整 `input` 与完整 `output`。
-  - 步骤 3 打印 `≥1`——`--trace` 视图**能看到** `【END】`（给了全文，非预览）。与 TC-007 的 `0` 构成可判定对照。
-  - 归一化说明：同 TC-007，依赖 agent 复述出以 `【END】` 收尾的长文本；失真则先核对 `artifacts.say` 再决定重跑。
-- **清理**：`cleanup_run st; rm -rf "$PROJ"`。
+  - 步骤 1 退出码 `0`；stdout 首为状态摘要（`运行 tr-<时间戳> · completed`、`需求：打个招呼`、`步数 1 · 耗时 …`），随后一行 `● step 0 [打招呼] agent claude-code  成功`，其下 `  ── input ──` 段为该步完整输入（含 `回复：hi。需求：打个招呼`）、`  ── output ──` 段为该步完整产物。
+  - 步骤 2 打印 `1`——`--trace` 的 output 段含完整产物 `HELLO-ARTIFACT`（与 TC-007 同为全文，区别在**呈现形态**：TC-007 是总结报告、本例是逐步原始 input/output）。
+  - 归一化说明：run id 时间后缀、耗时忽略。
+- **清理**：`pkill -f "$WORK/fakebin/claude" 2>/dev/null; export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
 ### TC-009 💸 run show --json 输出规范化 run.json
 
@@ -272,7 +299,7 @@ JSON
 - **预期**：
   - 打印 `ui_alive`——`sleep 2` 后进程仍活着（未自行退出），证明它驻留而非一闪而过。
   - `ui.log` 含启动横幅与一个入口地址（形如 `http://127.0.0.1:<port>`；端口每次可能不同，只校验 `http://127.0.0.1:` 前缀，不比对端口号）。
-  - **现状注**：`ui` 尚未实现——此刻直接跑会得到 `未知命令 "ui"`、退出 `2`（无 `ui_alive`、无 `ui.log` 地址）。上为 spec 目标行为，待落地后本用例即通过。
+  - **说明**：`ui` 服务端已实装，本用例（CLI 层冒烟：启动、打印地址、驻留）现应通过。服务端启动的错误路径（端口占用 / store 不可读）与 `/api/*` 全端点的黑盒覆盖见 [ui-server.md](./ui-server.md)，本文不重复。
   - 归一化说明：端口号非确定，忽略；本用例含时序成分，非纯确定性，必要时人工在终端 `conduct ui` 目视确认并 `Ctrl-C` 退出。
 - **清理**：`kill "$UIPID" 2>/dev/null; export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
@@ -398,3 +425,142 @@ TC-006~009 查的都是**已终结**的 run。本节验一条**仍在途**的 ru
   - 步骤 3：`final_status= completed`——同一条记录在进程结束后转终态。
   - 归一化说明：本用例含时序，依赖 agent 真的执行了 `sleep 8`。若 agent 不听话（没 sleep、秒回）导致查询窗口错过 running，会看到 `completed`——此时调大 `sleep` 秒数与 prompt 里的时长后重跑。查询窗口内的 `running` 是断言重点，`pid` 为运行时判活字段（spec 语义：`running` 且 pid 已死 → `run show` 派生展示为 `interrupted`）。
 - **清理**：`cleanup_run sl; rm -rf "$PROJ"`。
+
+---
+
+## 补充：workflow run 的 --cwd 与空需求校验（零成本）
+
+**行为变更**：显式 `--cwd` 现做「已存在的目录」校验——不存在 / 不是目录即报用法错误退 `2`，发射前拦下、不烧引擎；位置参数需求为空白也与 stdin 路径同标准退 `2`。三者都在载入工作流、调引擎**之前**触发（甚至工作流不存在也照样先报这些），故全零成本、全隔离临时 HOME。
+
+### TC-016 workflow run --cwd 指向不存在的路径 → 退 2
+
+- **目的**：验证显式 `--cwd` 指向不存在的路径时报用法错误退 `2`，不带着错误目录去烧引擎。
+- **前置**：建隔离环境（临时 HOME）：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`。（无需建工作流：该校验在载入工作流前触发。）
+- **步骤**：
+  1. `"$CONDUCT" workflow run any "hi" --cwd "$WORK/no-such-dir" 2>"$WORK/err.txt"; echo "exit=$?"; cat "$WORK/err.txt"`
+- **预期**：
+  - 退出码 `2`；stderr 含 `--cwd 指向的路径不存在：` 且带该绝对路径（路径子串归一化，不逐字比对）。
+  - 未产生任何 run 记录：`$WORK/.conduct/runs/` 为空或不存在。
+- **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
+
+### TC-017 workflow run --cwd 指向非目录（文件）→ 退 2
+
+- **目的**：验证 `--cwd` 指向一个**存在但不是目录**的路径时报用法错误退 `2`。
+- **前置**：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`；造一个普通文件：`: > "$WORK/afile"`。
+- **步骤**：
+  1. `"$CONDUCT" workflow run any "hi" --cwd "$WORK/afile" 2>"$WORK/err.txt"; echo "exit=$?"; cat "$WORK/err.txt"`
+- **预期**：
+  - 退出码 `2`；stderr 含 `--cwd 不是目录：` 且带该文件路径。
+- **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
+
+### TC-018 workflow run 位置参数需求为空白 → 退 2
+
+- **目的**：验证位置参数需求为纯空白（`TrimSpace` 后为空）时报用法错误退 `2`，不带空需求去烧引擎（与 stdin 空需求同标准）。
+- **前置**：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`。
+- **步骤**：
+  1. `"$CONDUCT" workflow run any "   " --cwd "$WORK" 2>"$WORK/err.txt"; echo "exit=$?"; cat "$WORK/err.txt"`
+- **预期**：
+  - 退出码 `2`；stderr 含 `用户需求不能为空`。
+- **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
+
+---
+
+## run stop（终止运行）
+
+`run stop <id>` 向运行的进程发 SIGTERM（先按进程组、非组长回退单进程）。**仅 `running` 可终止**：不存在 / 已终态 / `running` 但 pid 已死（interrupted）均报错退 `1`；终止后不落新状态，进程停写、pid 判活派生为 `interrupted`。以下三例全零成本：错误路径不调引擎；happy path 用一个「只 sleep、零 token」的**假慢引擎**把 run 拖在 `running`，供 stop 命中（假引擎是 conduct 的外部依赖替身，run 记录仍由 conduct 自己产出，同 TC-010）。
+
+### TC-019 run stop 不存在的 id → 退 1
+
+- **目的**：验证终止一个不存在的 run 时报错退 `1`。
+- **前置**：建隔离环境（临时 HOME、`runs/` 为空）：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`。
+- **步骤**：
+  1. `"$CONDUCT" run stop no-such-000000 2>"$WORK/err.txt"; echo "exit=$?"; cat "$WORK/err.txt"`
+- **预期**：
+  - 退出码 `1`；stderr 含 `no-such-000000: 运行不存在`（实际形如 `conduct: no-such-000000: 运行不存在`）。
+- **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
+
+### TC-020 run stop 已终结（failed）的运行 → 退 1（仅 running 可终止）
+
+- **目的**：验证对**已终态**的 run 调 `run stop` 报「无可终止」退 `1`。用弄坏引擎造一条真实的 `failed` run（零 token，同 TC-010）。
+- **前置**：
+  1. 建隔离环境（临时 HOME）：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`。
+  2. **弄坏引擎**：PATH 前置一个「一运行就报错退出」的假 `claude`：
+     ```bash
+     mkdir -p "$WORK/brokenbin"
+     cat > "$WORK/brokenbin/claude" <<'SH'
+     #!/usr/bin/env bash
+     echo "claude: 引擎不可用（模拟故障）" >&2
+     exit 1
+     SH
+     chmod +x "$WORK/brokenbin/claude"
+     export PATH="$WORK/brokenbin:$PATH"
+     ```
+  3. 造最小工作流并真跑一条（引擎秒级失败 → `failed`）：
+     ```bash
+     cat > "$WORK/min.json" <<'JSON'
+     {"nodes":[{"id":"say","displayName":"打招呼","engine":"claude-code","promptTemplate":"回复：hi。需求：{{sys.userPrompt}}"}]}
+     JSON
+     cat "$WORK/min.json" | "$CONDUCT" workflow create bf --definition
+     "$CONDUCT" workflow run bf "会失败" --cwd "$WORK" >/dev/null 2>&1
+     RID=$(ls "$WORK/.conduct/runs/" | grep '^bf-' | head -1)
+     ```
+- **步骤**：
+  1. `"$CONDUCT" run stop "$RID" 2>"$WORK/err.txt"; echo "exit=$?"; cat "$WORK/err.txt"`
+- **预期**：
+  - 退出码 `1`；stderr 含 `当前状态为 failed，无可终止（仅 running 可终止）`。
+- **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
+
+### TC-021 run stop 终止运行中的运行 → 退 0，转 interrupted
+
+- **目的**：验证对一条**运行中**的 run 调 `run stop`：命令退 `0` 并提示已发送 SIGTERM；被终止的进程停写、不落新状态，此后 `run list` / `run show` 按 pid 判活**派生**为 `interrupted`（run.json 存储态仍为 `running`）；且 `run show` 默认视图在未收尾时给状态摘要 + 「运行总结尚未生成」提示（**行为变更**：未收尾不再打印逐步预览，改打印状态并指路 `--trace`）。
+- **前置**：
+  1. 建隔离环境（临时 HOME）：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`。
+  2. 装一个「只 sleep、零 token」的**假慢引擎**（把该步长时间拖在 `running`，留出终止窗口；conduct 在解析其输出前就会被终止，故 sleep 后随便回什么都行）：
+     ```bash
+     mkdir -p "$WORK/slowbin"
+     cat > "$WORK/slowbin/claude" <<'SH'
+     #!/usr/bin/env bash
+     sleep 30
+     echo '{"result":"DONE","is_error":false,"usage":{}}'
+     SH
+     chmod +x "$WORK/slowbin/claude"
+     export PATH="$WORK/slowbin:$PATH"
+     ```
+  3. 造最小工作流：
+     ```bash
+     cat > "$WORK/min.json" <<'JSON'
+     {"nodes":[{"id":"say","displayName":"打招呼","engine":"claude-code","promptTemplate":"回复：hi。需求：{{sys.userPrompt}}"}]}
+     JSON
+     cat "$WORK/min.json" | "$CONDUCT" workflow create ss --definition
+     ```
+- **步骤**：
+  1. 后台起跑，等 run.json 落盘 `running`：
+     ```bash
+     "$CONDUCT" workflow run ss "慢慢来" --cwd "$WORK" >/dev/null 2>&1 &
+     RUNPID=$!
+     sleep 2
+     RID=$(ls "$WORK/.conduct/runs/" | grep '^ss-' | head -1); echo "RID=$RID"
+     ```
+  2. 途中确认为 running，再终止：
+     ```bash
+     "$CONDUCT" run list | grep -E 'ss-|STATUS'
+     "$CONDUCT" run stop "$RID"; echo "exit=$?"
+     ```
+  3. 终止后查派生态：
+     ```bash
+     sleep 1
+     python3 -c 'import json,glob,os; d=json.load(open(glob.glob(os.path.expanduser("~/.conduct/runs/ss-*/run.json"))[0])); print("stored_status=", d["status"])'
+     "$CONDUCT" run list | grep -E 'ss-'
+     "$CONDUCT" run show "$RID"
+     ```
+- **预期**：
+  - 步骤 1：`RID=ss-<时间戳>`（时间后缀忽略）。
+  - 步骤 2：`run list` 有一行 `ss-...` 且 `STATUS` 列为 `running`；`run stop` 退出码 `0`，stdout 形如 `已向运行 ss-…（pid <n>）发送终止信号 SIGTERM。`（pid 值忽略）。
+  - 步骤 3：`stored_status= running`（run.json 存储态未改，符合「不落新状态」）；但 `run list` 该行 `STATUS` 现派生为 `interrupted`；`run show` 打印状态摘要（`运行 ss-… · interrupted`、`需求：慢慢来`、`步数 1 · 进度 step 0/1 · … 起`）并附一行 `运行总结尚未生成（运行未收尾）；用 conduct run show ss-… --trace 查看已执行步骤。`。
+  - 归一化说明：本用例含时序，依赖 `run stop` 在 `sleep 30` 窗口内命中 running（`sleep 2` 已足够 run.json 落盘）；窗口足够宽松，通常稳定。pid 值、run id 时间后缀忽略。
+- **清理**（务必清掉遗留的假 sleep 子进程与后台 conduct）：
+  ```bash
+  kill "$RUNPID" 2>/dev/null; wait "$RUNPID" 2>/dev/null
+  pkill -f "$WORK/slowbin/claude" 2>/dev/null
+  export HOME="$OLD_HOME"; rm -rf "$WORK"
+  ```

@@ -2,7 +2,7 @@
 
 覆盖 conduct 中**不运行、不烧 token** 的一族命令：`version` 与 workflow 定义的增删改查 —— `workflow create / edit / rename / delete / list / show`。运行工作流与查看运行记录见 [workflow-running.md](./workflow-running.md)。对应 spec：[docs/specs/cli-commands.md](../specs/cli-commands.md)。
 
-> **预期以 spec 为准，不以当前代码为准。** 本文描述 spec 规定的**目标行为**（命令该怎样表现），用来验证实现对不对——不是照现有代码反推。截至编写时，`version` 与 `workflow create / edit / rename / delete / list / show` **均已实现**（见 spec〈实现状态〉），预期可直接对照验证；唯一例外是全局 `--version` 标志（TC-002）尚未接线——当前跑它返回 `unknown flag: --version`、退出 `2`，本文按 spec 目标（退出 `0`）写预期，待其落地。命令若有偏离本文〈预期〉，即为实现未达标。
+> **预期以 spec 为准，不以当前代码为准。** 本文描述 spec 规定的**目标行为**（命令该怎样表现），用来验证实现对不对——不是照现有代码反推。截至编写时，`version`、全局 `--version` 标志（TC-002）与 `workflow create / edit / rename / delete / list / show` **均已实现**（见 spec〈实现状态〉），预期可直接对照验证。命令若有偏离本文〈预期〉，即为实现未达标。
 
 > **本文全部用例零 token**：只做创建 / 编辑 / 改名 / 删除 / 查询 / 校验 / 展开预览，均不调用 AI 引擎。
 
@@ -74,7 +74,6 @@ JSON
 - **预期**：
   - 退出码 `0`。
   - stdout 打印版本号，与 TC-001 同格式。
-  - **现状注**：全局 `--version` 尚未接线，当前实际返回 `unknown flag: --version`、退出 `2`。上述为 spec 目标行为，待落地后本用例即可通过。
 - **清理**：无。
 
 ---
@@ -268,12 +267,31 @@ JSON
   1. 建隔离环境；准备 `min.json`。
   2. `cat "$WORK/min.json" | "$CONDUCT" workflow create t --definition`。
 - **步骤**：
-  1. （自动化，非 TTY 空输入）`"$CONDUCT" workflow edit t < /dev/null; echo "exit=$?"`
-  2. （手工，真 TTY）在**真实终端**直接敲 `"$CONDUCT" workflow edit t`（不接管道、不重定向），观察其是否立即返回。
+  1. （非 TTY 空输入分支）`"$CONDUCT" workflow edit t < /dev/null; echo "exit=$?"`
+  2. （真 TTY 分支，pty 伪终端驱动，可无人值守自动化）把 stdin 接成真终端后运行 `edit`、不喂任何输入，用超时守卫验证它立即失败返回而非挂起等待：
+
+     ```bash
+     python3 - "$CONDUCT" <<'PY'
+     import os, pty, subprocess, sys
+     conduct = sys.argv[1]
+     master, slave = pty.openpty()            # 分配伪终端；slave 端 os.isatty()=True
+     p = subprocess.Popen([conduct, "workflow", "edit", "t"],
+                          stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+     os.close(slave)
+     try:
+         out, err = p.communicate(timeout=5)  # 超时守卫：若停在等待输入即为 bug
+         print(f"exit={p.returncode}"); print("stderr:", err.strip())
+     except subprocess.TimeoutExpired:
+         p.kill(); print("exit=HANG(FAIL)")
+     os.close(master)
+     PY
+     ```
+
+     （沿用〈前置〉里 `export HOME="$WORK"`，python 子进程继承同一隔离 store。）
 - **预期**：
   - 步骤 1：命令立即返回、不挂起；退出码 `1`，stderr 含 `解析定义 JSON 失败: EOF`（空输入非合法 JSON）；`t.json` 不变。
-  - 步骤 2：命令**立即报错返回、不停在等待输入**；退出码 `2`，stderr 报缺少定义并提示改用 `conduct ui`。
-  - 说明：步骤 2 依赖真 TTY，无法在管道 / CI 中自动复现，故列为手工项；`< /dev/null` 走的是非 TTY 分支，与 TTY 分支预期不同，勿混用。
+  - 步骤 2：脚本立即返回（不挂起，耗时 < 1s），打印 `exit=2`，stderr 含 `缺少定义` 与 `conduct ui`；`t.json` 不变。
+  - 说明：步骤 2 验的是「stdin 是真终端」分支——用 pty 伪终端把 stdin 接成 tty 即可在 CI / 无人值守自动化里复现，**不必真人守终端**；`< /dev/null`（步骤 1）走的是非 TTY 空输入分支，两条分支预期不同，勿混用。若要人工复核，也可在真实终端直接敲 `"$CONDUCT" workflow edit t`，观察其立即退出 `2`。
 - **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
 ---
@@ -418,10 +436,10 @@ JSON
   3. `"$CONDUCT" workflow create two`。
 - **步骤**：
   1. `"$CONDUCT" workflow list`
-  2. `"$CONDUCT" workflow list --json | python3 -c 'import sys,json; d=json.load(sys.stdin); print(sorted(x["name"] for x in d))'`
+  2. `"$CONDUCT" workflow list --json | python3 -c 'import sys,json; d=json.load(sys.stdin); print(sorted(x["name"] for x in d)); print("nodes_ok=", all(isinstance(x.get("nodes"), list) and x["nodes"] for x in d))'`
 - **预期**：
-  - 步骤 1 表格有表头 `NAME`/`NODES`/`ENGINES`/`UPDATED`，含 `one` 与 `two` 两行；`one` 的 `ENGINES` 含 `claude-code`。
-  - 步骤 2 打印 `['one', 'two']`（`--json` 为数组、每项含 `name`）。
+  - 步骤 1 表格有表头 `NAME`/`NODES`/`UPDATED`，含 `one` 与 `two` 两行；`NODES` 列为节点 id 流（以 `›` 连接，各工作流至少含一个节点 id），无 `ENGINES` 列。
+  - 步骤 2 打印 `['one', 'two']` 与 `nodes_ok= True`（`--json` 为数组、每项含 `name` 与 `nodes`——`nodes` 为非空节点 id 字符串数组）。
 - **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
 ---

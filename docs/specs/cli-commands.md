@@ -42,6 +42,7 @@ conduct 只有两个模型，像数据库的两张表：
 | `conduct workflow run <name> "<需求>"` | 解释运行一份工作流 | 运行 |
 | `conduct run list` | 列出历史运行记录 | 查询（运行） |
 | `conduct run show <id>` | 查看某次运行的状态与详情 | 查询（运行） |
+| `conduct run stop <id>` | 终止一次进行中的运行 | 终止（运行） |
 | `conduct ui` | 可视化界面：编辑工作流 / 监控运行 / 启动，conduct 的整体 GUI | 人类界面 |
 | `conduct help <主题>` | 输出跨命令的长文档（教程 / 概念 / 最佳实践） | 支撑 |
 | `conduct version` | 打印版本号 | 支撑 |
@@ -52,12 +53,12 @@ conduct 只有两个模型，像数据库的两张表：
 
 ## 全局约定
 
-**全局选项**（所有命令通用）：
+**全局选项**（`-h, --help` 所有命令通用；`--version` 仅根命令）：
 
 | 选项 | 说明 |
 | --- | --- |
 | `-h, --help` | 打印该命令的用法与选项后退出 0 |
-| `--version` | 打印 conduct 版本号后退出 0（等价 `conduct version`） |
+| `--version` | 仅根命令 `conduct --version`：打印版本号后退出 0（等价 `conduct version`；子命令不挂此旗标，与 gh / kubectl 惯例一致） |
 
 **通用选项**（涉及结构化输出的命令支持）：
 
@@ -218,6 +219,7 @@ conduct workflow delete <name>... [--yes] [--json]
 | 选项 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `-y, --yes` | 布尔 | `false` | 跳过确认直接删除 |
+| `--json` | 布尔 | `false` | 以机器可读 JSON 输出（`{"deleted":[...]}`） |
 
 **输出**：
 
@@ -257,8 +259,10 @@ conduct workflow list [--json]
 
 **输出**：
 
-- 人类可读（默认）：表格，列为 `NAME | NODES | ENGINES | UPDATED`——名称、节点数、去重后的引擎集合、最近修改时间；退出 `0`。
-- `--json`：数组，每项 `{"name","nodes":<数>,"engines":[...],"updatedAt":"<RFC3339>"}`（不含存储路径——按名字寻址）。
+- 人类可读（默认）：表格，列为 `NAME | NODES | UPDATED`——名称、节点 id 流（按定义顺序以 `›` 连接；超过 6 个截断为前 6 个 + `+N`）、最近修改时间；退出 `0`。
+- `--json`：数组，每项 `{"name","nodes":["<id>",...],"updatedAt":"<RFC3339>"}`（`nodes` 为节点 id 数组，不含存储路径——按名字寻址）。
+
+> 设计说明：列由早期的 `NODES`（数量）`| ENGINES`（引擎集合）调整为节点 id 流并移除引擎列——节点名比引擎集合信息量更大，列表页保持克制；`conduct ui` 工作流列表与此同列。
 - store 为空：stdout 提示 `（store 为空）`；退出 `0`（空不是错误）。
 
 **示例**：
@@ -271,9 +275,9 @@ conduct workflow list --json | jq '.[].name'
 示意输出：
 
 ```
-NAME       NODES  ENGINES                   UPDATED
-autopilot  4      antigravity, claude-code  2026-07-03 10:22
-my-flow    1      claude-code               2026-07-03 15:40
+NAME       NODES                  UPDATED
+autopilot  plan›code›test›review  2026-07-03 10:22
+my-flow    main                   2026-07-03 15:40
 ```
 
 ---
@@ -349,7 +353,7 @@ conduct workflow run <name> ["<用户需求>"] [--cwd <dir>] [--json]
 
 | 选项 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `--cwd <dir>` | 路径 | 当前工作目录 | AI 引擎读写文件的工作目录，即模板变量 `{{sys.cwd}}` |
+| `--cwd <dir>` | 路径 | 当前工作目录 | AI 引擎读写文件的工作目录，即模板变量 `{{sys.cwd}}`。显式传入时**必须是已存在的目录**（不存在 / 不是目录即报用法错误退 `2`，不带着错误目录去烧引擎）；省略时取当前工作目录 |
 
 **用户需求的来源（按优先级）**：① 命令行位置参数 `<用户需求>`；② 省略它、且 stdin 是管道 / 重定向（非 TTY）时，读取**整个 stdin** 作为需求（如 `cat req.txt | conduct workflow run <name>`）。二者皆无、stdin 又是终端时，报参数缺失并退出 `2`，**不静默挂起等待输入**。
 
@@ -369,6 +373,7 @@ conduct workflow run <name> ["<用户需求>"] [--cwd <dir>] [--json]
 - 落盘副作用：在运行目录 `~/.conduct/runs/<id>/` 下——**开跑即写** `run.json`（`status:"running"`），`trace.jsonl` 逐步追加，**收尾**把 `run.json` 更新为终态并生成 `run-summary.md`；三文件结构见〈落盘存储结构〉，供 `run list` / `run show` 查询。
 - 任一步引擎调用失败：stderr 打印错误（含引擎名、退出码、报错摘要）；该步完整错误写入 trace 对应行的 `error` 字段，`run.json` 记 `status:"failed"` 与失败步号 `failedStep`（指针，错误详情看该步 trace）；已完成步骤的 trace 保留；退出 `1`。
 - 缺少 `<用户需求>` 且 stdin 是终端（无管道输入）：stderr 报参数缺失；退出 `2`。
+- 显式 `--cwd` 指向不存在的路径 / 非目录：stderr 报用法错误；退出 `2`（发射前拦下，不烧引擎）。UI 启动弹窗与服务端 self-exec 预检复用同一校验（同源）。
 
 **示例**：
 
@@ -467,14 +472,14 @@ conduct run show <id> [--trace] [--json]
 
 **输出**：
 
-- 人类可读（默认）：打印 run id / 所属工作流 / 状态 / 用户需求 / 步数 / 耗时（`running` 时显示进度 `step k/N`），随后逐步一行 `● step i [displayName] <engine> <成功|失败> <产物前 80 字预览>`；退出 `0`。
+- 人类可读（默认）：打印 `run-summary.md` 全文（运行总结，见〈落盘存储结构〉）；退出 `0`。运行**未收尾**（`running` / `interrupted`）时总结尚未生成，改打印状态摘要（run id / 状态 / 用户需求 / 步数 / 进度 `step k/N`）并提示用 `--trace` 查看已执行步骤。
 - `--json`：输出 `run.json` 的规范化内容。
-- **`--trace` 与 `--json` 正交**：`--json` 决定**格式**（机读 JSON ↔ 人类文本），`--trace` 决定**深度**（是否附每步**完整** input/output；默认只给 80 字预览）。四种组合：
+- **`--trace` 与 `--json` 正交**：`--json` 决定**格式**（机读 JSON ↔ 人类文本），`--trace` 决定**深度**（是否展开每步**完整** input/output）。四种组合：
 
   | | 人类（默认） | `--json` |
   | --- | --- | --- |
-  | **不加 `--trace`** | 概要 + 每步 80 字预览 | `run.json` 概要 |
-  | **加 `--trace`** | 概要 + 每步完整 trace | `run.json` + `"trace":[…]`（`trace.jsonl` 逐行） |
+  | **不加 `--trace`** | `run-summary.md` 全文（未收尾时退回状态摘要） | `run.json` 概要 |
+  | **加 `--trace`** | 状态摘要 + 每步完整 input/output | `run.json` + `"trace":[…]`（`trace.jsonl` 逐行） |
 
 - 运行态：`status:"running"` 且 `pid` 存活 → 显示实时进度；`status:"running"` 但 `pid` 已死 → 标 `interrupted`、尽力展示已有 trace；退出 `0`。
 - `<id>` 不存在：stderr `运行 <id> 不存在`；退出 `1`。
@@ -489,15 +494,38 @@ conduct run show autopilot-20260703-152233 --json | jq '.status'
 
 示意输出（默认）：
 
+- **已收尾**（completed / failed）：打印 `run-summary.md` 全文，格式见〈落盘存储结构〉的 run-summary.md 示例。
+- **未收尾**（running / interrupted）：总结尚未生成，退回状态摘要——
+
+  ```
+  运行 autopilot-20260703-152233 · running
+  需求：给购物车加一个清空按钮
+  步数 4 · 进度 step 2/4 · 2026-07-03 15:22 起
+  运行总结尚未生成（运行未收尾）；用 conduct run show autopilot-20260703-152233 --trace 查看已执行步骤。
+  ```
+
+---
+
+## run stop — 终止运行
+
+**用途**：终止一次进行中的运行——向该 run 记录的 pid 发送 SIGTERM。**先按进程组发**（`kill(-pid, SIGTERM)`），以连带终止该 run 派生的引擎子进程；若该进程不是组长（`ESRCH`）**回退为向单进程发**（`kill(pid, SIGTERM)`）。
+
+**用法**：
+
 ```
-运行 autopilot-20260703-152233 · completed
-需求：给购物车加一个清空按钮
-步数 4 · 耗时 18.3s · 2026-07-03 15:22:33 → 15:22:51
-● step 0 [规划]     claude-code  成功  # 方案：购物车页头部新增“清空购物车”按钮……
-● step 1 [编码]     claude-code  成功  diff --git a/src/Cart.tsx b/src/Cart.tsx……
-● step 2 [编码评审] claude-code  成功  <verdict>PASS</verdict> 按钮实现完整……
-● step 3 [评审]     claude-code  成功  整体符合需求；建议空车禁用该按钮……
+conduct run stop <id>
 ```
+
+**参数**：`<id>`（必填）——run id（`run list` 里的 `RUN ID`）。
+
+**行为与输出**：
+
+- run 存在、`status:"running"` 且 pid 存活：按上述「先组后单」发送 SIGTERM，stdout 提示已发送；退出 `0`。**不引入新的落盘状态**：被终止的进程不再写盘，此后 `run list` / `run show` 按既有 pid 判活语义显示为 `interrupted`。
+- run 不存在：stderr `<id>: 运行不存在`；退出 `1`。
+- run 已是终态、或 `status:"running"` 但 pid 已死（interrupted）：stderr 提示无可终止；退出 `1`。
+- 信号发送失败（权限等）：stderr 转译原因；退出 `1`。
+
+**诚实边界（进程组连带的适用范围）**：只有 `conduct ui` 以独立会话（`setsid`）发射的 run 才保证 pid 即组长、组信号能一并收割引擎子进程。终端里 `cat req | conduct workflow run` 这类**管道启动**的 run，conduct 不是组长，`kill(-pid)` 得 `ESRCH` → 回退单进程：只终止编排器本身，当前正在跑的引擎子进程会遗留到本步自然结束（编排器已死、不再驱动下一步）——可接受的降级。
 
 ---
 
@@ -508,10 +536,17 @@ conduct run show autopilot-20260703-152233 --json | jq '.status'
 **用法**：
 
 ```
-conduct ui
+conduct ui [--port <n>] [--open]
 ```
 
-**参数**：无——它是 conduct 的整体 GUI，覆盖 store 内全部工作流与运行，不针对单一对象（要按名字操作单个工作流，用 `workflow` 名词下的动词）。
+**参数**：无位置参数——它是 conduct 的整体 GUI，覆盖 store 内全部工作流与运行，不针对单一对象（要按名字操作单个工作流，用 `workflow` 名词下的动词）。
+
+**选项**：
+
+| 选项 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `--port <n>` | 整数 | `7420` | 监听端口；被占则 stderr 报错退出 `1`（不自动递增——可预测、书签友好） |
+| `--open` | 布尔 | `false` | 启动后自动打开浏览器；默认不开（照顾 SSH / 无头环境），仅打印地址 |
 
 **输出**：
 
@@ -528,7 +563,14 @@ conduct ui — 可视化界面已启动
 
 **主次用途**：编辑与监控是主用途；从界面**启动**运行是次要用途——启动主路径是 `conduct workflow run`（面向 AI / bash）。
 
-> **形态待规定**：界面为单一固定形态（预期 x-one-web 式可视化），其启动机制（本地 web 服务端口 / 是否自动开浏览器 / 鉴权）由用户另行规定。工作流的可视化编辑统一由本命令承担，`workflow edit` 只做非交互的 stdin 整体替换。
+**启动与安全边界（定案）**：
+
+- 服务**只绑 `127.0.0.1`**，不监听 `0.0.0.0`。
+- **启动时主动探测一次 store 可读性**（执行一次 `List`）：不可读 → stderr 报原因退出 `1`（不做「启动假成功、首个请求才报错」）。
+- **v1 不做账号鉴权**，但所有 `/api/*` 校验 `Host` / `Origin` 白名单（仅 `127.0.0.1:<port>` / `localhost:<port>`）、变更类端点仅接受 `application/json`。诚实边界：这防的是**浏览器跨站**（恶意网页 fetch 本地端口）与 DNS rebinding，**不防本机进程**——单用户本机工具下可接受。
+- **启动运行走 self-exec 子进程**：UI 服务端以 `os.Executable()` 自呼 `conduct workflow run <name> --cwd <dir>`（`Setsid` 独立成组、stdin 喂需求、stdout→`/dev/null`），使 pid 判活 / `interrupted` 语义与终端启动逐字节一致，且关掉 UI 不连累在跑的 run。这是「UI 无独占能力」不变量的最强证明——启动 ≡ 执行一条 CLI 命令。
+
+工作流的可视化编辑统一由本命令承担，`workflow edit` 只做非交互的 stdin 整体替换。前端（内嵌 SPA）见 `docs/specs/ui.md`〈前端技术栈〉，代码已落地、待浏览器走查验收。
 
 ---
 
@@ -628,6 +670,7 @@ conduct ui — 可视化界面已启动
   "cwd": "/Users/me/proj",          // 引擎工作目录（--cwd）
   "status": "completed",            // running | completed | failed（interrupted 为派生态：status 仍 running 但 pid 已死）
   "pid": 48213,                     // 运行进程 PID；据此判活——status=running 但进程已死 → interrupted
+  "pidStartTime": "1783263565.442591",  // 进程启动时刻令牌，与 pid 联合校验以免 pid 被无关新进程复用时误判/误杀（旧记录或不支持的平台为空，omitempty）
   "steps": 14,                      // 展开后的总步数（开跑即定；进度 = trace.jsonl 行数 / steps）
   "startedAt": "2026-07-03T15:22:33+08:00",  // RFC3339，开跑即写
   "endedAt": "2026-07-03T15:29:10+08:00",    // RFC3339，收尾写；running 时为 null
@@ -640,28 +683,26 @@ conduct ui — 可视化界面已启动
 }
 ```
 
-**`runs/<id>/run-summary.md`** —— 运行总结，给人 / AI 阅读的 Markdown 报告，由 `run.json` 渲染而来（人类读这份、机器读 `run.json`——同一份运行记录的两副面孔）。至少含：所属工作流与**冻结定义的概览**、用户需求、状态、开始 / 结束时间与耗时、逐步结果（每步引擎 / 成败 / 产物摘要）、各节点最终产物（Markdown 原文、XML 标签包裹，见下例）。`run` 结束时 stdout 指向的就是这份文件。示例（`completed` 运行；`failed` 会额外渲染失败步与 `error`）：
+**`runs/<id>/run-summary.md`** —— 运行总结，给人 / AI 阅读的 Markdown 报告，由 `run.json` 渲染而来（人类读这份、机器读 `run.json`——同一份运行记录的两副面孔）。至少含：所属工作流、用户需求、状态、开始 / 结束时间与耗时、逐步结果（每步节点 / 引擎 / 耗时）、各节点最终产物（Markdown 原文、XML 标签包裹，见下例）。`run` 结束时 stdout 指向的就是这份文件。示例（`completed` 运行；`failed` 会额外渲染失败步与 `error`）：
 
 ````markdown
 # autopilot-20260703-152233
 
-**工作流** autopilot · 4 节点（冻结于 updatedAt 2026-07-03 15:40）
+**工作流** autopilot · 4 节点
 **需求** 给购物车加一个清空按钮
 **状态** ✅ completed · 18.3s（2026-07-03 15:22:33 → 15:22:51）
 **工作目录** /Users/me/proj
 
 ## 步骤
 
-| # | 节点 | 引擎 · 模型 | 结果 | 耗时 |
-| --- | --- | --- | --- | --- |
-| 0 | 规划 | claude-code · claude-opus-4-8 | ✅ | 1.2s |
-| 1 | 编码 | claude-code · claude-opus-4-8 | ✅ | 8.0s |
-| 2 | 编码评审 | claude-code · claude-opus-4-8 | ✅ PASS | 2.1s |
-| 3 | 评审 | claude-code · claude-opus-4-8 | ✅ | 3.0s |
+| # | 节点 | 引擎 | 耗时 |
+| --- | --- | --- | --- |
+| 0 | 规划 | claude-code | 1.2s |
+| 1 | 编码 | claude-code | 8.0s |
+| 2 | 编码 · 评测 | claude-code | 2.1s |
+| 3 | 评审 | claude-code | 3.0s |
 
 ## 产物
-
-> 各节点产物多为 Markdown（含 `##` 标题、代码块），故逐节点用 XML 标签包裹其**完整**产物：标签边界无歧义，产物内的标题不会污染本报告大纲、代码块围栏也不与外层冲突，AI 可按标签精确定位读取。（字节级权威仍是 `trace.jsonl` 的 `output` 字段，本节是其可读投影。）
 
 <output node="plan" name="规划">
 # 方案
@@ -707,7 +748,7 @@ conduct ui — 可视化界面已启动
 }
 ```
 
-> **运行态与中断判定**：`run.json` 开跑即写（`status:"running"`）、`trace.jsonl` 边跑边追加、`run-summary.md` 收尾才生成（故 `running` 时尚无 summary）。`run show` / `run list` 读到 `status:"running"` 时按 `pid` 判活：进程在＝真运行中；进程已死＝ `interrupted`（崩溃 / 被强杀），尽力展示已有 trace。终态 `completed` / `failed` 以 run.json 为准。
+> **运行态与中断判定**：`run.json` 开跑即写（`status:"running"`）、`trace.jsonl` 边跑边追加、`run-summary.md` 收尾才生成（故 `running` 时尚无 summary）。`run show` / `run list` 读到 `status:"running"` 时按 `pid` 判活（并核对 `pidStartTime` 启动时刻，防 pid 被无关新进程复用时误判）：进程在＝真运行中；进程已死＝ `interrupted`（崩溃 / 被强杀），尽力展示已有 trace。终态 `completed` / `failed` 以 run.json 为准。
 
 ## 落盘校验规则
 
@@ -741,13 +782,14 @@ conduct ui — 可视化界面已启动
 
 | 命令 | 状态 |
 | --- | --- |
-| `workflow run` | **已实现**（`internal/orchestrator` 主循环：展开 → 渲染 → 逐步驱动引擎 → 串联产物/反馈 → 落盘 trace；`--cwd` / `--json` / stdin 需求就位。顶层 `run` 已改作运行记录 noun） |
-| `workflow create/edit/rename/delete/list/show` | **已实现**（`workflow` 命令族 + `internal/store` 托管层 + `internal/workflow` 校验/展开/渲染；`show --expand` 复用展开算法） |
+| `workflow run` | **已实现**（`internal/orchestrator` 主循环：展开 → 渲染 → 逐步驱动引擎 → 串联产物/反馈 → 落盘 trace；`--cwd` / `--json` / stdin 需求就位。显式 `--cwd` 现做存在性 + 目录校验，无效即退 `2`。顶层 `run` 已改作运行记录 noun） |
+| `workflow create/edit/rename/delete/list/show` | **已实现**（`workflow` 命令族 + `internal/store` 托管层 + `internal/workflow` 校验/展开/渲染；`show --expand` 复用展开算法。校验内核提供 `ValidateStructured` 返回字段级 `[]Problem`，供 UI 定位错误字段） |
 | `run list` / `run show` | **已实现**（读 `~/.conduct/runs/`；`show` 支持 `--trace` / `--json` 四组合；`interrupted` 按 pid 存活读时派生） |
-| `ui` | **未实现**（可视化界面，x-one-web 式，横跨编辑 / 监控 / 启动；形态待规定） |
+| `run stop` | **已实现**（`internal/run.StopProcess` 先按进程组发 SIGTERM、非组长 `ESRCH` 回退单进程；仅 `running` 可终止，不落新状态、进程停写后按 pid 判活派生 `interrupted`。组信号连带引擎子进程仅在 `ui` self-exec 成组路径下真实生效，单进程回退分支经单测） |
+| `ui` | **部分实现**（服务端 + `/api/*` 全端点 + self-exec 发射器就位：`internal/ui` 只绑 127.0.0.1、启动探测 store、Host/Origin 白名单、变更类强制 JSON；`conduct ui --port/--open` 已注册。handler / 预检 / run id 匹配 / 发射全链路经单测 + curl e2e。**内嵌前端 SPA 代码已落地、待浏览器走查验收**——`/` 服务 SPA 外壳（`index.html` + `js/` + `style.css`，随 go:embed 打进二进制）。self-exec 成组连带引擎子进程的组信号待真起引擎手工验） |
 | `version` | 已实现 |
 | 引擎 `claude-code` / `antigravity` / `qoder` | **已实装**（无头 CLI `claude -p` / `agy -p` / `qodercli -p`，三者均经真实调用冒烟通过；单测用假二进制覆盖参数/stdin/cwd 接线与 JSON 解析） |
 | 引擎 `codex` | **暂时下线**（账户欠费，下周恢复）；届时加回注册表（`internal/engine/codex.go`）与能力表 |
 | 引擎 `gemini` | **已移除**：被 `antigravity` 取代（agy 取代 gemini cli） |
 
-解释器内核（展开 `expand` + 渲染 `render` + 主循环 `orchestrator`）已全部落地。尚未做：`ui`、崩溃续跑 / 超时重试 / 多模态附件（原型也刻意不做）。
+解释器内核（展开 `expand` + 渲染 `render` + 主循环 `orchestrator`）已全部落地。尚未做：`ui` 内嵌前端的浏览器走查验收（服务端 + API + SPA 代码均已就位）、崩溃续跑 / 超时重试 / 多模态附件（原型也刻意不做）。
