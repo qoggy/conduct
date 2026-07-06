@@ -46,6 +46,7 @@ func newRootCommand() (*cobra.Command, error) {
 	rootCommand.AddCommand(newWorkflowCommand())
 	rootCommand.AddCommand(newRunCommand())
 	rootCommand.AddCommand(newUICommand())
+	rootCommand.AddCommand(newUpdateCommand())
 	rootCommand.AddCommand(newVersionCommand())
 	if err := addHelpTopics(rootCommand); err != nil {
 		return nil, err
