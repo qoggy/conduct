@@ -1,0 +1,28 @@
+# push 一个 v* tag 即触发：交叉编译 + 打包 + 生成 GitHub Release（GoReleaser）。
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # 创建 Release、上传资产所需
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # GoReleaser 需完整 tag 历史推导版本
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod # 与 go.mod 声明的 Go 版本一致
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

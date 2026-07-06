@@ -1,6 +1,8 @@
 # 构建产物
 /bin/
 /conduct
+# GoReleaser 打包输出
+/dist/
 
 # Go
 *.exe

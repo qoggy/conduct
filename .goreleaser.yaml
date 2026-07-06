@@ -1,0 +1,59 @@
+# GoReleaser 配置：push 一个 SemVer tag（如 v0.2.0）即在 CI 交叉编译、打包、
+# 生成带 checksums 的 GitHub Release。资产命名与校验文件刻意对齐 conduct update
+# 所用的自更新库（creativeprojects/go-selfupdate）约定：
+#   · 归档名 conduct_<os>_<arch>.tar.gz，内含名为 conduct 的可执行文件；
+#   · 单一 checksums.txt 汇总各资产 SHA256。
+# 改动其一必须同步另一处（见 internal/cli/update.go）。
+version: 2
+
+project_name: conduct
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: conduct
+    main: ./cmd/conduct
+    binary: conduct
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    # 版本号注入点与 Makefile 的 LDFLAGS 一致（internal/cli.version）。
+    ldflags:
+      - -s -w -X github.com/qoggy/conduct/internal/cli.version={{ .Version }}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: conduct
+    ids:
+      - conduct
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+release:
+  github:
+    owner: qoggy
+    name: conduct
+  draft: false
+  # tag 含 -beta / -rc 等预发布标记时自动标记为 GitHub 预发布（对齐显式版本 opt-in beta）。
+  prerelease: auto
+
+# CHANGELOG.md 按 Keep a Changelog 手工维护，不用 GoReleaser 从 commit 生成。
+changelog:
+  disable: true
