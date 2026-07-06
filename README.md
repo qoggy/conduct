@@ -26,6 +26,15 @@ conduct update --check    # check for a newer version without installing
 conduct update v0.2.0     # install a specific version (a version tag opts into pre-releases)
 ```
 
+## Uninstall
+
+conduct is a single binary. Remove it, and optionally its data:
+
+```bash
+rm "$(command -v conduct)"   # prefix with sudo if it lives in a system dir like /usr/local/bin
+rm -rf ~/.conduct            # optional: workflows and run records
+```
+
 ## Usage
 
 ```bash
