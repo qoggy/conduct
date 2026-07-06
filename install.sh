@@ -50,12 +50,21 @@ aarch64 | arm64) arch="arm64" ;;
 esac
 
 # 解析目标版本 tag：显式 CONDUCT_VERSION 优先，否则查最新正式版。
+# 优先走 releases/latest 的 302 重定向解析 tag——不打 GitHub API，避开其 60 次/小时
+# 未认证限流；仅 curl 不可用（退到 wget）时才回退 API。
 tag="${CONDUCT_VERSION:-}"
 if [ -z "$tag" ]; then
 	info "查询最新版本 …"
-	api="https://api.github.com/repos/${REPO}/releases/latest"
-	tag="$(download "$api" /dev/stdout | sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p' | head -n 1)"
-	[ -n "$tag" ] || err "无法解析最新版本；可设 CONDUCT_VERSION 指定，或稍后重试（GitHub API 可能限流）"
+	if command -v curl >/dev/null 2>&1; then
+		latest_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
+		tag="${latest_url##*/tag/}"
+		[ "$tag" = "$latest_url" ] && tag="" # 未命中 /tag/ 说明没解析到
+	fi
+	if [ -z "$tag" ]; then # curl 缺失或重定向解析失败 → 回退 API
+		api="https://api.github.com/repos/${REPO}/releases/latest"
+		tag="$(download "$api" /dev/stdout 2>/dev/null | sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p' | head -n 1)"
+	fi
+	[ -n "$tag" ] || err "无法解析最新版本；可设 CONDUCT_VERSION 指定，或稍后重试（GitHub 可能限流）"
 fi
 
 asset="${BINARY}_${os}_${arch}.tar.gz"
