@@ -14,10 +14,39 @@ conduct —— 把 workflow 定义（JSON）解释成确定性步骤、逐步驱
 ## 常用命令
 
 ```bash
-make build     # 构建到 ./bin/conduct
-make test      # go test ./...
-make vet       # go vet ./...
-make fmt       # gofmt -s -w .
+make build      # 构建到 ./bin/conduct（注入 tag 版本号）
+make test       # go test ./...
+make vet        # go vet ./...
+make fmt        # gofmt -s -w .
+make install    # = go install ./cmd/conduct，把本地代码装成全局 conduct（落到 ~/go/bin）
+make uninstall  # 删除已安装的全局 conduct
 ```
 
-发布（beta / 正式）流程见 [README](./README.md#开发)。
+## 发布
+
+遵循语义化版本（SemVer）+ [Keep a Changelog](https://keepachangelog.com/)。发布由 GoReleaser 自动化：push 一个 `v*` tag，GitHub Actions（`.github/workflows/release.yml`）即交叉编译 macOS / Linux 的 amd64+arm64、打包、生成带 `checksums.txt` 的 GitHub Release。`curl | sh` 安装脚本（`install.sh`）与 `conduct update` 自更新都从该 Release 取预编译二进制——资产命名 `conduct_<os>_<arch>.tar.gz` 与 `internal/cli/update.go` 所用自更新库的约定对齐，改 `.goreleaser.yaml` 的命名务必同步改 `update.go`。
+
+本地验证打包（不发布，产物落 `dist/`，已被 gitignore）：
+
+```bash
+goreleaser release --snapshot --clean
+```
+
+### 正式版本
+
+先把 CHANGELOG 的 `[Unreleased]` 归入该版本号并补日期，再打正式 tag 推送，Actions 随即出 Release：
+
+```bash
+git tag v0.0.1
+git push origin v0.0.1
+```
+
+### beta 版本
+
+打一个含预发布标记（`-beta` / `-rc` 等）的 SemVer tag 并推送；GoReleaser 自动将其标记为 GitHub 预发布，`conduct update` 默认不选中它，用户须显式指定版本号安装——即 opt-in 的 beta 通道：
+
+```bash
+git tag v0.1.0-beta.1
+git push origin v0.1.0-beta.1
+# 用户侧：conduct update v0.1.0-beta.1
+```

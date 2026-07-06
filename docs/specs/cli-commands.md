@@ -11,7 +11,7 @@
 - **工作流是「有名字的托管对象」，不是散落文件。** 存储在一个 *store* 里，`create / edit / rename / delete / show / run` 一律按**名字**定位工作流（`list` 作用于整个 store，无需名字）；不接受直接传文件路径——要跑手头的一份 JSON，先 `create --definition` 入库拿到名字，再按名字 `run`。
   - 理由：只有工作流是托管对象时，「删除 / 查询」才值得做成子命令；若只是文件，它们就退化成 `rm` / `ls`。
 - **store 位置（固定）**：工作流统一存放在全局 `~/.conduct/workflows/`（每份一个 `<name>.json`）；运行记录存放在 `~/.conduct/runs/<id>/`（一次运行一个目录）。所有命令固定读写此 store，**不支持自定义存储位置**（完整落盘布局见〈落盘存储结构〉）。
-- **命令风格 noun-first（统一）**：资源操作命令形如 `conduct <noun> <verb>`（对标 `gh` / `kubectl`），无顶层动词命令。当前两个 noun：`workflow`（工作流定义，create/edit/rename/delete/list/show/run）与 `run`（运行记录，list/show）——如 `gh` 里 `gh workflow run` 触发、`gh run list` 查历史，二者并存不冲突。便于未来再扩展 `engine` 等资源族。**例外**是不针对单一资源的顶层工具命令 `conduct version`（版本）与 `conduct ui`（可视化界面，横跨 workflow 与 run 两族）。
+- **命令风格 noun-first（统一）**：资源操作命令形如 `conduct <noun> <verb>`（对标 `gh` / `kubectl`），无顶层动词命令。当前两个 noun：`workflow`（工作流定义，create/edit/rename/delete/list/show/run）与 `run`（运行记录，list/show）——如 `gh` 里 `gh workflow run` 触发、`gh run list` 查历史，二者并存不冲突。便于未来再扩展 `engine` 等资源族。**例外**是不针对单一资源的顶层工具命令 `conduct version`（版本）、`conduct ui`（可视化界面，横跨 workflow 与 run 两族）与 `conduct update`（自更新二进制本身）。
 - **对 AI-bash 与人类双友好（北极星）**：每条能力都以非交互、可脚本化的 CLI 命令提供（查询类带 `--json` 机读，变更类以退出码表达成败）；同时以顶层 `conduct ui` 提供一个 x-one-web 式可视化界面（人类层），聚合「编辑全部工作流 + 监控运行状态 + 启动运行」。**关键不变量：UI 无独占能力**——它能做的每件事都有对应的、可单独完成的 CLI 命令（编辑 ↔ `workflow edit` 喂 stdin、看状态 ↔ `run list` / `run show`、启动 ↔ `workflow run`），UI 只把它们聚合成人看的视图，绝不新增「只有界面能做」的功能。
 - **名称即文件名**：工作流以 `<name>.json` 落盘。`<name>` 限定 `[A-Za-z0-9._-]+`，不含路径分隔符。
 
@@ -46,6 +46,7 @@ conduct 只有两个模型，像数据库的两张表：
 | `conduct ui` | 可视化界面：编辑工作流 / 监控运行 / 启动，conduct 的整体 GUI | 人类界面 |
 | `conduct help <主题>` | 输出跨命令的长文档（教程 / 概念 / 最佳实践） | 支撑 |
 | `conduct version` | 打印版本号 | 支撑 |
+| `conduct update [版本]` | 自更新到最新 / 指定版本的预编译二进制 | 支撑 |
 
 > 没有独立的 `validate` 命令：定义校验已内化进 `create` / `edit` 的落盘环节（不合规即拒绝保存），规则见〈落盘校验规则〉。需要不运行、不花 token 地核对一份定义合不合法、并预览它会展开成什么步骤时，用 `show --expand`（载入即校验，再打印展开）。
 
@@ -574,6 +575,51 @@ conduct ui — 可视化界面已启动
 
 ---
 
+## update — 自更新（工具层）
+
+**用途**：把当前 conduct 可执行文件自更新到最新（或指定）版本——从项目 GitHub Releases 下载匹配本机 `GOOS`/`GOARCH` 的预编译二进制，校验 `checksums.txt` 后**原地替换**正在运行的二进制。更新机制镜像分发机制：conduct 以预编译 Release 分发（见 `AGENTS.md`〈发布〉的 GoReleaser 流水线），故自更新是「下二进制、验签、替换」，**不重新编译、不需要本机装 Go**。
+
+**用法**：
+
+```
+conduct update [版本] [--check] [--pre]
+```
+
+**参数**：
+
+| 参数 | 必填 | 说明 |
+| --- | --- | --- |
+| `<版本>` | 否 | 目标版本 tag（如 `v0.2.0`）；省略则取最新正式版。显式版本可命中预发布版本，是 opt-in beta 的入口 |
+
+**选项**：
+
+| 选项 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `--check` | 布尔 | `false` | 只比对当前版本与最新发布并打印结论，**不下载、不安装** |
+| `--pre` | 布尔 | `false` | 把预发布（`-beta` / `-rc` 等）版本纳入「最新」候选（不加则只认正式版） |
+
+**输出**：
+
+- 有更新且未加 `--check`：stdout 打印 `正在更新：<旧> → <新> …`，下载校验替换成功后打印 `已更新到 <新>（安装于 <路径>）` 及发布说明链接；退出 `0`。
+- 已是最新：stdout 提示无需更新；退出 `0`。
+- `--check`：只打印「已是最新 / 有新版本 / 当前版本非规范无法比较」三态之一；退出 `0`。
+- 尚无任何 Release、或指定版本不存在 / 无匹配本机架构的资产：stderr 明确报错（fail-loud，不静默无动作）；退出 `1`。
+- checksum 校验不过 / 下载失败 / 写入失败：stderr 转译原因；退出 `1`。
+- 经 Homebrew 安装（可执行文件落在 brew 前缀下）：拒绝自替换，stderr 提示改用 `brew upgrade conduct`（不与包管理器打架）；退出 `1`。
+
+**版本比较的诚实边界**：当前版本为 `dev` / git 伪版本 / dirty 等**非规范 semver** 时无法可靠比大小——此时 `--check` 如实说明「无法比较」并列出最新发布版本，绝不假装能算「落后几个版本」。有正式 tag 后比较即精确。
+
+**示例**：
+
+```bash
+conduct update                 # 更新到最新正式版
+conduct update --check         # 只看有没有新版
+conduct update v0.2.0          # 装指定版本（显式版本号可 opt-in 预发布）
+conduct update --pre           # 更新到最新版本，纳入 beta
+```
+
+---
+
 ## workflow 定义 schema（自包含参考）
 
 落盘的一份 workflow 是完整记录 `{ name, createdAt, updatedAt, nodes }`——`name` / `createdAt` / `updatedAt` 是系统管理的元数据，`nodes` 是用户编写的定义主体。字段规格如下（`//` 为注释，实际 JSON 不含）：
@@ -788,6 +834,7 @@ conduct ui — 可视化界面已启动
 | `run stop` | **已实现**（`internal/run.StopProcess` 先按进程组发 SIGTERM、非组长 `ESRCH` 回退单进程；仅 `running` 可终止，不落新状态、进程停写后按 pid 判活派生 `interrupted`。组信号连带引擎子进程仅在 `ui` self-exec 成组路径下真实生效，单进程回退分支经单测） |
 | `ui` | **部分实现**（服务端 + `/api/*` 全端点 + self-exec 发射器就位：`internal/ui` 只绑 127.0.0.1、启动探测 store、Host/Origin 白名单、变更类强制 JSON；`conduct ui --port/--open` 已注册。handler / 预检 / run id 匹配 / 发射全链路经单测 + curl e2e。**内嵌前端 SPA 代码已落地、待浏览器走查验收**——`/` 服务 SPA 外壳（`index.html` + `js/` + `style.css`，随 go:embed 打进二进制）。self-exec 成组连带引擎子进程的组信号待真起引擎手工验） |
 | `version` | 已实现 |
+| `update` | **已实现**（`internal/cli/update.go`：经 `creativeprojects/go-selfupdate` 从 GitHub Releases 下载匹配架构资产、`checksums.txt` 校验、原地替换；`--check` / `--pre` / 显式版本；Homebrew 前缀拒绝自替换；非规范当前版本跳过比较。资产命名与 `.goreleaser.yaml` 对齐，改一处须同步另一处） |
 | 引擎 `claude-code` / `antigravity` / `qoder` | **已实装**（无头 CLI `claude -p` / `agy -p` / `qodercli -p`，三者均经真实调用冒烟通过；单测用假二进制覆盖参数/stdin/cwd 接线与 JSON 解析） |
 | 引擎 `codex` | **暂时下线**（账户欠费，下周恢复）；届时加回注册表（`internal/engine/codex.go`）与能力表 |
 | 引擎 `gemini` | **已移除**：被 `antigravity` 取代（agy 取代 gemini cli） |
