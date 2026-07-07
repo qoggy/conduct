@@ -60,7 +60,7 @@ type versionResponse struct {
 }
 
 // engineInfo 是 GET /api/engines 的单个条目。Capability 为 nil（JSON null）表示引擎已注册但
-// 能力表待实装（如 codex 恢复初期）——不得误报成 allowsModel:false（见 ui.md〈需要额外实现〉①）。
+// 能力表尚未实装——不得误报成 allowsModel:false（见 ui.md〈需要额外实现〉①）。
 type engineInfo struct {
 	Name       string            `json:"name"`
 	Capability *engineCapability `json:"capability"`

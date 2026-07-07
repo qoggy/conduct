@@ -6,7 +6,7 @@ type EngineCapability struct {
 	AllowsModel bool
 	// EffortField 是该引擎接受的调优字段名：
 	//   "effort"          —— claude-code
-	//   "reasoningEffort" —— qoder（codex 恢复后同用此字段，但各自的允许集不同）
+	//   "reasoningEffort" —— qoder / codex（同用此字段，但各自的允许集不同）
 	//   ""                —— 无独立调优字段（如 antigravity，其推理强度编码在 model 标签后缀里）
 	EffortField string
 	// EffortValues 是 EffortField 的合法取值集；EffortField 为空时为 nil。
@@ -36,8 +36,13 @@ var engineCapabilities = map[string]EngineCapability{
 		EffortField:  "reasoningEffort",
 		EffortValues: []string{"disabled", "off", "none", "low", "medium", "high", "xhigh", "max"},
 	},
-	// codex 暂时下线（账户欠费，下周恢复）：恢复时把它加回注册表（codex.go）与此处能力表——
-	//   "codex": {AllowsModel: true, EffortField: "reasoningEffort", EffortValues: []string{"low", "medium", "high", "xhigh"}},
+	"codex": {
+		// OpenAI Codex CLI（codex exec）：--model 接受 GPT 系模型名；调优字段 reasoningEffort 经
+		// -c model_reasoning_effort=<v> 覆盖配置项（codex 无专用调优标志）。见 docs/references/codex.md。
+		AllowsModel:  true,
+		EffortField:  "reasoningEffort",
+		EffortValues: []string{"low", "medium", "high", "xhigh"},
+	},
 }
 
 // Capability 返回某引擎的 engineConfig 能力表；未登记能力表时 ok=false。

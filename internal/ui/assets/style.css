@@ -731,6 +731,7 @@ img.eicon { object-fit: cover; } /* 官方 favicon 填满圆角小块 */
 .pv { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .sdetail { background: var(--surface-subtle); border-bottom: 1px solid var(--border-row); padding: 12px 18px 16px; }
 .dkv { display: flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-bottom: 12px; }
+.dkv .session { min-width: 0; word-break: break-all; }
 /* trace 展开里各代码块（input / output）之间留出呼吸间距——否则输出标题栏直接贴住输入块。 */
 .sdetail .edbar { margin-top: 16px; }
 .sdetail .dkv + .edbar { margin-top: 0; } /* 紧跟引擎行的第一个 bar 不叠加（dkv 已有下距） */

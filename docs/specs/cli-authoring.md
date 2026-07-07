@@ -215,10 +215,10 @@ conduct workflow node set <name> <id> [--evaluator] \
 | 选项 | 类型 | 说明 |
 | --- | --- | --- |
 | `--evaluator` | 布尔 | 把 `--engine` / `--model` / `--effort` / `--reasoning-effort` 的作用域切到该节点的 **evaluator**（评测官）而非节点主体；不加时作用于节点主体。`--loop-count` / `--redo-target` 始终作用于节点级，与本旗标无关。拆除评测官走 `--no-evaluator`（不经本旗标） |
-| `--engine <e>` | 字符串 | 设引擎，取值见〈workflow 定义 schema〉能力表（`claude-code` / `antigravity` / `qoder`）。改 engine 可能使原 `engineConfig` 字段被新 engine 拒收 → 见下「诚实边界」。**配 `--evaluator` 时**：节点无 evaluator 则以此引擎**新建**评测官（补默认提示词 + `loopCount`，见下）；已有则改其引擎 |
+| `--engine <e>` | 字符串 | 设引擎，取值见〈workflow 定义 schema〉能力表（`claude-code` / `antigravity` / `qoder` / `codex`）。改 engine 可能使原 `engineConfig` 字段被新 engine 拒收 → 见下「诚实边界」。**配 `--evaluator` 时**：节点无 evaluator 则以此引擎**新建**评测官（补默认提示词 + `loopCount`，见下）；已有则改其引擎 |
 | `--model <m>` | 字符串 | 设模型；传空串 `--model ""` **清除**该字段（回落引擎默认模型） |
 | `--effort <v>` | 字符串 | 设 claude-code 档位（取值见〈workflow 定义 schema〉能力表，随模型）；传空串清除。仅 `engine=claude-code` 的节点 / 评测官接受 |
-| `--reasoning-effort <v>` | 字符串 | 设 qoder 推理档位（取值见〈workflow 定义 schema〉能力表）；传空串清除。仅 `engine=qoder` 的节点 / 评测官接受 |
+| `--reasoning-effort <v>` | 字符串 | 设 qoder / codex 推理档位（取值见〈workflow 定义 schema〉能力表）；传空串清除。仅 `engine=qoder` 或 `engine=codex` 的节点 / 评测官接受 |
 | `--display-name <s>` | 字符串 | 改节点显示名（纯装饰标签、零引用负担）；须非空。**不受 `--evaluator` 影响**——evaluator 无独立显示名 |
 | `--loop-count <n>` | 整数 | 设循环 / 回跳次数，`1`–`20`（节点级，两种循环共用）。仅当该节点带 `evaluator` 或 `redoTarget` 时有效（否则校验拒绝退 `1`） |
 | `--redo-target <id>` | 字符串 | **挂载 / 改**该节点的 redoTarget 回跳（目标须是**存在且更前**的节点，见〈落盘校验规则〉；与 evaluator 互斥；首次挂载时若未同时给 `--loop-count`，`loopCount` 默认 `1`）。`<id>` 须非空——**拆除**回跳用 `--no-redo`，不是空串 |
@@ -561,10 +561,10 @@ review · 评审 · claude-code · claude-opus-4-8 · redoTarget→code 回跳
   "nodes": [{
     "id": "node-1",                 // 必填，唯一，命名受限（见〈落盘校验规则〉）；模板中以 {{node-1}} 引用其产物
     "displayName": "规划",           // 必填，进度展示用
-    "engine": "claude-code",        // 必填（判别式）：claude-code | antigravity | qoder（codex 暂时下线，见〈实现状态〉）
+    "engine": "claude-code",        // 必填（判别式）：claude-code | antigravity | qoder | codex
     "engineConfig": {               // 选填；shape 由 engine 决定，合法字段见下「引擎载荷」
       "model": "claude-opus-4-8",   // 选填；取值受 engine 约束，省略则用引擎默认模型
-      "effort": "high"              // claude-code 档位（antigravity 无、编码在 model 标签；qoder 用 reasoningEffort）
+      "effort": "high"              // claude-code 档位（antigravity 无、编码在 model 标签；qoder / codex 用 reasoningEffort）
     },
     "promptTemplate": "…{{sys.userPrompt}}…",  // 必填，见下「模板变量」
     "evaluator": {                  // 选填：带评测官 → in-place 内循环（写→评→改）；同构 engine + engineConfig
@@ -580,11 +580,11 @@ review · 评审 · claude-code · claude-opus-4-8 · redoTarget→code 回跳
 
 > 上例是**字段目录**（把可选字段集中展示）：实际同一 node 里 `evaluator` 与 `redoTarget` 二选一（见〈落盘校验规则〉）。
 
-**engine + engineConfig（判别联合）**：`engine` 是判别式（tag），`engineConfig` 是引擎专属载荷，其合法字段由 `engine` 决定——这把「engine / model / effort 三者绑定」编进结构本身，三者不能各自独立填。支持的引擎（`claude-code` / `antigravity` / `qoder`；`codex` 暂时下线）、各引擎接受的 `engineConfig` 字段及枚举、schema 字段到 CLI 参数的映射，见 [engines.md](./engines.md)〈引擎能力表〉——那是引擎层的单一权威来源。
+**engine + engineConfig（判别联合）**：`engine` 是判别式（tag），`engineConfig` 是引擎专属载荷，其合法字段由 `engine` 决定——这把「engine / model / effort 三者绑定」编进结构本身，三者不能各自独立填。支持的引擎（`claude-code` / `antigravity` / `qoder` / `codex`）、各引擎接受的 `engineConfig` 字段及枚举、schema 字段到 CLI 参数的映射，见 [engines.md](./engines.md)〈引擎能力表〉——那是引擎层的单一权威来源。
 
 `model` 省略则用该引擎默认模型；`evaluator` 用**同一套** `engine` + `engineConfig` 结构（含 `engineConfig`——`node set --evaluator` / `node set-prompt --evaluator` 即作用于此）。具体校验（严格、依能力表）见〈落盘校验规则〉。
 
-> **`--help` 与本节须一致**：`create` / `edit` 的 `--help` 里内嵌的定义结构说明由能力表动态生成，须与本节 schema 对齐——**尤其 `evaluator` 同构支持 `engineConfig`**，不可只写成 `{engine, promptTemplate}`（否则调用方仅凭 `--help` 会误以为评测官不能单独配模型 / 档位）。当前差距见〈实现状态〉。
+> **`--help` 与本节须一致**：`create` / `edit` 的 `--help` 里内嵌的定义结构说明由能力表动态生成，须与本节 schema 对齐——**尤其 `evaluator` 同构支持 `engineConfig`**，不可只写成 `{engine, promptTemplate}`（否则调用方仅凭 `--help` 会误以为评测官不能单独配模型 / 档位）。
 
 **模板变量**（`promptTemplate` 内）：
 
@@ -625,7 +625,7 @@ review · 评审 · claude-code · claude-opus-4-8 · redoTarget→code 回跳
 
 - **结构与类型**：`nodes` 数组存在；每个 node 的 `id` / `displayName` / `engine` / `promptTemplate` 必填；`engineConfig` 结构合法；`loopCount` 为 `1`–`20` 的整数（仅当 node 带 `evaluator` / `redoTarget` 时校验）。
 - **元数据字段系统管理**：`name` 若在导入定义中出现，须等于目标名（`create` 的 `<name>` 参数 / `edit` 的目标），否则拒绝；`createdAt`（`create` / `copy` 时写、此后不可变）与 `updatedAt`（每次变更重戳）由系统写入，导入值一律忽略。故导入体（`create --definition` / `edit` 的 stdin）给 `nodes` 即可。改名是独立操作、走 `workflow rename`——不能靠导入体里的 `name` 与目标名不一致来触发（那一律按错误拒绝，绝不做静默改名）。
-- **engine + engineConfig 严格校验（判别联合）**：先按 `engine` 选定该引擎的**能力表**（该引擎接受的调优字段及其枚举，见 [engines.md](./engines.md)〈引擎能力表〉），再校验 `engineConfig`：`engine` 合法（已注册）、调优字段属于该 `engine`（`effort` ↔ claude-code；`reasoningEffort` ↔ qoder；`antigravity` 无独立调优字段、仅认 `model`）、其值在该字段允许集内、无该引擎不认的多余字段；任一不符即拒绝（node 与其 `evaluator` 各自独立校验）。`model` 当前**不做白名单**（接受任意非空串，待有权威模型表再收紧）；能力表随引擎演进维护。`codex` 暂时下线（下周恢复）；`gemini` 被 `antigravity` 取代（见〈实现状态〉）。
+- **engine + engineConfig 严格校验（判别联合）**：先按 `engine` 选定该引擎的**能力表**（该引擎接受的调优字段及其枚举，见 [engines.md](./engines.md)〈引擎能力表〉），再校验 `engineConfig`：`engine` 合法（已注册）、调优字段属于该 `engine`（`effort` ↔ claude-code；`reasoningEffort` ↔ qoder / codex；`antigravity` 无独立调优字段、仅认 `model`）、其值在该字段允许集内、无该引擎不认的多余字段；任一不符即拒绝（node 与其 `evaluator` 各自独立校验）。`model` 当前**不做白名单**（接受任意非空串，待有权威模型表再收紧）；能力表随引擎演进维护。
 - **`evaluator` 与 `redoTarget` 互斥**：同一 node 二者不可并存。
 - **node `id` 合法且唯一**：`id` 须匹配 `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`——首字符为字母或下划线，其余限字母 / 数字 / 连字符 / 下划线，总长 1–64；且同一份定义内不得重复。`redoTarget` 作为对 node 的引用同样须是合法 id。（注意：这套 id 规则与工作流名 `<name>` 的 `[A-Za-z0-9._-]+` 不同——后者是 store 文件名，可含点、可数字开头。）
 - **`redoTarget` 合法回跳**：必须指向一个**存在且位于本 node 之前**的节点；指向不存在的、自身、或后续节点即拒绝。
@@ -658,8 +658,7 @@ review · 评审 · claude-code · claude-opus-4-8 · redoTarget→code 回跳
 | `workflow node show` | **已实现**（`internal/cli/workflow_node_show.go`；导出单节点定义 / 提示词纯文本，`--prompt` 补恰好一个尾换行，与 `node set-prompt` round-trip 字节稳定） |
 | `create` / `edit` 的 `--help` 定义结构说明 | **已实现**（`internal/cli/workflow.go` 的 `workflowDefinitionHelp()` 的 `evaluator` 示例已补 `engineConfig`、去自引用反模式，与〈workflow 定义 schema〉对齐） |
 | 引擎 `claude-code` / `antigravity` / `qoder` | **已实装**（无头 CLI `claude -p` / `agy -p` / `qodercli -p`，均经真实调用冒烟通过；单测用假二进制覆盖参数/stdin/cwd 接线与 JSON 解析） |
-| 引擎 `codex` | **暂时下线**（账户欠费，下周恢复）；届时加回注册表（`internal/engine/codex.go`）与能力表 |
-| 引擎 `gemini` | **已移除**：被 `antigravity` 取代（agy 取代 gemini cli） |
+| 引擎 `codex` | **已实装**（`internal/engine/codex.go` 注册、能力表含 `codex` 行（`model?` + `reasoningEffort ∈ {low, medium, high, xhigh}`）；契约见 [engines.md](./engines.md)〈codex〉） |
 
 ## 待确认
 

@@ -305,10 +305,10 @@ func newWorkflowNodeSetCommand() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVar(&evaluator, "evaluator", false, "把 --engine/--model/--effort/--reasoning-effort 切到该节点的评测官（不加时作用于节点主体）")
-	f.StringVar(&engineFlag, "engine", "", "设引擎（claude-code / antigravity / qoder）；配 --evaluator 且节点无评测官时以此新建评测官")
+	f.StringVar(&engineFlag, "engine", "", "设引擎（claude-code / antigravity / qoder / codex）；配 --evaluator 且节点无评测官时以此新建评测官")
 	f.StringVar(&modelFlag, "model", "", "设模型；传空串 --model \"\" 清除（回落引擎默认）")
 	f.StringVar(&effortFlag, "effort", "", "设 claude-code 档位；传空串清除")
-	f.StringVar(&reasoningEffortFlag, "reasoning-effort", "", "设 qoder 推理档位；传空串清除")
+	f.StringVar(&reasoningEffortFlag, "reasoning-effort", "", "设 qoder / codex 推理档位；传空串清除")
 	f.StringVar(&displayNameFlag, "display-name", "", "改节点显示名（须非空，不受 --evaluator 影响）")
 	f.IntVar(&loopCountFlag, "loop-count", 0, "设循环 / 回跳次数（1–20，仅当节点带评测官或回跳时有效）")
 	f.StringVar(&redoTargetFlag, "redo-target", "", "挂 / 改 redoTarget 回跳（目标须存在且更前，与 evaluator 互斥）；拆除用 --no-redo")

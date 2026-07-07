@@ -206,7 +206,7 @@ stop_ui() { kill "$UIPID" 2>/dev/null; wait "$UIPID" 2>/dev/null; }
      '
      ```
 - **预期**：
-  - `names=` 含 `claude-code`、`antigravity`、`qoder`（`codex` 已下线，不出现）。
+  - `names=` 含 `claude-code`、`antigravity`、`qoder`、`codex`（四引擎均已注册）。
   - `cc_effortField= effort`、`cc_has_high= True`（claude-code 的 effort 档位含 `high`）。
   - **说明**：这是唯一无 CLI 命令等价的只读信息性端点（「无独占能力」不变量的显式豁免）。
 - **清理**：`stop_ui; export HOME="$OLD_HOME"; rm -rf "$WORK"`。

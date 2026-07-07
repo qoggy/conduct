@@ -13,7 +13,7 @@ import (
 )
 
 // ErrNotImplemented 是「引擎已登记但无头执行尚未落地」的约定返回值（承 AGENTS.md「不假装成功」）。
-// 现有三引擎均已实装，暂无使用者；codex 恢复前若先登记 stub，即用它显式占位而非空实现冒充可用。
+// 现有四引擎均已实装，暂无使用者；若将来先登记某引擎 stub，即用它显式占位而非空实现冒充可用。
 var ErrNotImplemented = errors.New("engine not yet implemented")
 
 // RunRequest 是一次无头引擎执行的入参。
@@ -36,6 +36,10 @@ type RunResult struct {
 	DurationMilliseconds int64
 	// Tokens 是本次运行消耗的 token 数；引擎不提供时为 0。
 	Tokens int
+	// SessionID 是本次运行的引擎会话/线程 id，从各引擎自身 JSON 输出取
+	//（claude-code / qoder 的 session_id、antigravity 的 conversation_id、codex 的 thread_id）；
+	// conduct 记入该步 trace，供凭引擎自带工具回放本步。引擎不回报时为空串。
+	SessionID string
 }
 
 // Engine 抽象一个可被无头调用的 AI 编程引擎。

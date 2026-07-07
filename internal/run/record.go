@@ -68,6 +68,7 @@ type TraceEntry struct {
 	Error        *string                `json:"error"`
 	Output       string                 `json:"output"`
 	Tokens       int                    `json:"tokens,omitempty"`
+	SessionID    string                 `json:"sessionId,omitempty"` // 选填：该步引擎的会话/线程 id（引擎回报则记），凭它回放本步
 	DurationMs   int64                  `json:"durationMs"`
 }
 

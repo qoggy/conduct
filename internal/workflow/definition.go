@@ -32,7 +32,7 @@ type Node struct {
 type EngineConfig struct {
 	Model           string `json:"model,omitempty"`
 	Effort          string `json:"effort,omitempty"`          // 仅 claude-code
-	ReasoningEffort string `json:"reasoningEffort,omitempty"` // qoder（及恢复后的 codex）
+	ReasoningEffort string `json:"reasoningEffort,omitempty"` // qoder / codex
 }
 
 // Evaluator 是节点内联的评测官，触发 in-place 内循环；engine + engineConfig 同构于 Node。

@@ -281,6 +281,8 @@ conduct run show <id> [--trace] [--json]
   | **不加 `--trace`** | `run-summary.md` 全文（未收尾时退回状态摘要） | `run.json` 概要 |
   | **加 `--trace`** | 状态摘要 + 每步完整 input/output | `run.json` + `"trace":[…]`（`trace.jsonl` 逐行） |
 
+  人类 `--trace` 视图里，某步若记有 `sessionId`（引擎回报的会话/线程 id，见〈runs/ 落盘结构〉），在该步 input 前附一行会话信息 + 该引擎的回放命令（`claude-code`→`claude -r <id>`、`codex`→`codex resume <id>`、`qoder`→`qodercli -r <id>`、`antigravity`→`agy --conversation <id>`；未知引擎只显示 id）；`--json` 视图经 `trace` 数组的 `sessionId` 字段带出。
+
 - 运行态：`status:"running"` 且 `pid` 存活 → 显示实时进度；`status:"running"` 但 `pid` 已死 → 标 `interrupted`、尽力展示已有 trace；退出 `0`。
 - `<id>` 不存在：stderr `<id>: 运行不存在`；退出 `1`。
 
@@ -509,13 +511,14 @@ conduct run rm demo-20260703-160140 --yes
   "engine": "claude-code",     // 该步实际调用的引擎（同定义的判别式；引擎层如何把它落到 CLI 调用见 engines.md）
   "engineConfig": {            // 该步生效的引擎配置，记节点/evaluator 的声明值，结构同定义（见 cli-authoring.md〈workflow 定义 schema〉、engines.md〈引擎能力表〉）
     "model": "claude-opus-4-8",// 声明的模型；定义省略则此字段缺省（引擎侧用其默认模型，本记录不额外探测该默认名）
-    "effort": "high"           // claude-code 档位（antigravity 无、编码在 model 标签；qoder 用 reasoningEffort）
+    "effort": "high"           // claude-code 档位（antigravity 无、编码在 model 标签；qoder / codex 用 reasoningEffort）
   },
   "input": "…",                // 该步喂给引擎的完整输入（渲染后的 promptTemplate，全文不截断）
   "success": true,             // 该步是否成功
   "error": null,               // 失败（success=false）时的错误信息：引擎报错 / 退出码 / stderr 摘要，全文；成功为 null
   "output": "…",               // 该步产物全文（不截断；进度显示里的 80 字预览只是展示截断）
   "tokens": 1234,              // 选填：本步 token 消耗（引擎回报则记）
+  "sessionId": "0199a213-…",  // 选填：该步引擎的会话/线程 id（引擎回报则记）；凭它用引擎自带工具回放本步（见 engines.md〈引擎抽象〉RunResult.SessionID）
   "durationMs": 8021           // 该步耗时（毫秒）
 }
 ```
@@ -548,8 +551,8 @@ conduct run rm demo-20260703-160140 --yes
 | `run wait` | **已实现**（`internal/cli` 轮询 `run.json` + pid 判活到终态；等到任一终态即退 `0`（对标 docker wait），run 成败在 stdout / `--json` 的 `status`，命令自身出错（不存在 / IO）→`1`、用法错→`2`） |
 | `run rm` | **已实现**（删 `runs/<id>/` 整个目录，`-y/--yes` 守卫、拒删在跑的 run、非法 id 退 `2`、不存在退 `1`；确认约定同 `workflow delete`，见 [cli-authoring.md](./cli-authoring.md)〈workflow delete〉） |
 | 引擎 `claude-code` / `antigravity` / `qoder` | **已实装**（无头 CLI `claude -p` / `agy -p` / `qodercli -p`，三者均经真实调用冒烟通过；单测用假二进制覆盖参数/stdin/cwd 接线与 JSON 解析） |
-| 引擎 `codex` | **暂时下线**（账户欠费，下周恢复）；届时加回注册表（`internal/engine/codex.go`）与能力表 |
-| 引擎 `gemini` | **已移除**：被 `antigravity` 取代（agy 取代 gemini cli） |
+| 引擎 `codex` | **已实装**（`internal/engine/codex.go` 注册、能力表含 `codex` 行；契约见 [engines.md](./engines.md)〈codex〉。codex 输出为 JSONL 事件流，逐行扫描按 type 归一化，单测覆盖各路径） |
+| 每步 `sessionId` | **已实装**（四引擎从各自 JSON 输出的会话 id 填充 `RunResult.SessionID`，编排器写入该步 `trace.jsonl` 的 `sessionId`；`run show --trace` 在该步 input 前附会话行 + 回放命令，`--json` 经 trace 数组带出。见 [engines.md](./engines.md)〈引擎抽象〉） |
 
 > 工具层命令 `version` / `ui` / `update` / `help` 的实现状态见 [cli-tooling.md](./cli-tooling.md)〈实现状态〉。
 

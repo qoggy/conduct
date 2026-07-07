@@ -139,6 +139,7 @@ func (o *Orchestrator) executeStep(ctx context.Context, obs Observer, stepIndex 
 	entry.Success = true
 	entry.Output = result.Text
 	entry.Tokens = result.Tokens
+	entry.SessionID = result.SessionID
 	return entry, nil
 }
 

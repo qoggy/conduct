@@ -159,6 +159,8 @@ const dict = {
   detailInput: "输入",
   detailOutput: "产物",
   detailError: "错误",
+  detailSession: "会话",
+  detailReplay: "回放",
   dlgStopTitleTpl: (rid) => `终止运行 ${rid}？`,
   stopBodyTpl: (pid, rid) => `将发送终止信号 SIGTERM（pid ${pid}，= conduct run stop ${rid}）。`,
   stopNote: "已完成步骤的记录保留；终止后状态显示为 interrupted。",

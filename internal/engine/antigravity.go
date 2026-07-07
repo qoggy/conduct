@@ -20,9 +20,10 @@ const agyPromptLimitBytes = 256 * 1024
 
 // antigravityResult 是 `agy -p ... --output-format json` 的 stdout 单对象（只取用到的字段）。
 type antigravityResult struct {
-	Status   string `json:"status"`
-	Response string `json:"response"`
-	Usage    struct {
+	Status         string `json:"status"`
+	Response       string `json:"response"`
+	ConversationID string `json:"conversation_id"`
+	Usage          struct {
 		TotalTokens int `json:"total_tokens"`
 	} `json:"usage"`
 }
@@ -55,6 +56,7 @@ func (antigravityEngine) Run(ctx context.Context, request RunRequest) (RunResult
 		Text:                 parsed.Response,
 		DurationMilliseconds: out.durationMs,
 		Tokens:               parsed.Usage.TotalTokens,
+		SessionID:            parsed.ConversationID,
 	}, nil
 }
 

@@ -215,10 +215,47 @@ function stepDetail(entry, ci) {
     "div",
     { class: "sdetail" },
     h("div", { class: "dkv" }, engineIconEl(entry.engine), h("span", {}, cfg)),
+    sessionRow(entry),
     codeBar(i18n.detailInput, entry.input),
     h("div", { class: "ed ed-att", html: highlightHTML(entry.input, "markdown") }),
     codeBar(outLabel, outText),
     h("div", { class: outCls, html: highlightHTML(outText, "markdown") }),
+  );
+}
+
+// sessionReplayCmd 镜像 CLI 的 sessionReplayLine（internal/cli/run_show.go）：按引擎给出「凭会话 id
+// 回放本步」的命令；未知引擎无对应命令，返回空串（调用方退化为只显 id）。
+function sessionReplayCmd(engine, sessionId) {
+  switch (engine) {
+    case "claude-code":
+      return "claude -r " + sessionId;
+    case "codex":
+      return "codex resume " + sessionId;
+    case "qoder":
+      return "qodercli -r " + sessionId;
+    case "antigravity":
+      return "agy --conversation " + sessionId;
+    default:
+      return "";
+  }
+}
+
+// sessionRow 是步详情里的会话行：会话 id（+ 该引擎回放命令），凭它用引擎自带工具回放本步；复制按钮
+// 复制回放命令（无对应命令则复制 id）。引擎未回报会话 id 时整行不渲染（返回 null，appendChildren 跳过）。
+function sessionRow(entry) {
+  if (!entry.sessionId) return null;
+  const cmd = sessionReplayCmd(entry.engine, entry.sessionId);
+  const text = cmd
+    ? `${i18n.detailSession} ${entry.sessionId} · ${i18n.detailReplay}：${cmd}`
+    : `${i18n.detailSession} ${entry.sessionId}`;
+  return h(
+    "div",
+    { class: "dkv" },
+    h("span", { class: "session" }, text),
+    copyBtn((e) => {
+      e.stopPropagation();
+      copyText(cmd || entry.sessionId);
+    }, "cpd"),
   );
 }
 

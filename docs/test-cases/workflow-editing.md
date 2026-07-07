@@ -542,16 +542,16 @@ JSON
   - 步骤 2 退出码 `1`，stderr 含 `nodes[1].id: 与前面的节点重复 "a"`。
 - **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
-### TC-031 未知 / 已下线引擎被拒
+### TC-031 未知引擎被拒 / 已注册引擎被接受
 
-- **目的**：验证 `engine` 取未注册值（含已下线的 `codex`）时被拒，并回显可用引擎清单。
+- **目的**：验证 `engine` 取未注册值时被拒并回显可用引擎清单；已注册引擎（`codex`，`model?`+`reasoningEffort` 均选填）空 engineConfig 时被接受。
 - **前置**：建隔离环境。
 - **步骤**：
   1. `printf '{"nodes":[{"id":"a","displayName":"甲","engine":"nope","promptTemplate":"hi"}]}' | "$CONDUCT" workflow create e1 --definition; echo "exit=$?"`
   2. `printf '{"nodes":[{"id":"a","displayName":"甲","engine":"codex","promptTemplate":"hi"}]}' | "$CONDUCT" workflow create e2 --definition; echo "exit=$?"`
 - **预期**：
-  - 步骤 1 退出码 `1`，stderr 含 `nodes[0].engine: 未知引擎 "nope"`，并列出 `可用：antigravity, claude-code, qoder`。
-  - 步骤 2 退出码 `1`，stderr 含 `未知引擎 "codex"`（codex 已下线，按未知引擎处理）。
+  - 步骤 1 退出码 `1`，stderr 含 `nodes[0].engine: 未知引擎 "nope"`，并列出 `可用：antigravity, claude-code, codex, qoder`。
+  - 步骤 2 退出码 `0`，建流成功（codex 已注册，空 engineConfig 合法）。
 - **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
 ### TC-032 engineConfig 引擎-字段匹配与取值被校验

@@ -14,9 +14,10 @@ func (claudeCodeEngine) Name() string { return "claude-code" }
 
 // claudeResult 是 `claude -p --output-format json` 的 stdout 单对象（只取用到的字段）。
 type claudeResult struct {
-	Result  string `json:"result"`
-	IsError bool   `json:"is_error"`
-	Usage   struct {
+	Result    string `json:"result"`
+	IsError   bool   `json:"is_error"`
+	SessionID string `json:"session_id"`
+	Usage     struct {
 		InputTokens  int `json:"input_tokens"`
 		OutputTokens int `json:"output_tokens"`
 	} `json:"usage"`
@@ -47,6 +48,7 @@ func (claudeCodeEngine) Run(ctx context.Context, request RunRequest) (RunResult,
 		Text:                 parsed.Result,
 		DurationMilliseconds: out.durationMs,
 		Tokens:               parsed.Usage.InputTokens + parsed.Usage.OutputTokens,
+		SessionID:            parsed.SessionID,
 	}, nil
 }
 

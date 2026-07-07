@@ -42,7 +42,8 @@ func TestValidateRejections(t *testing.T) {
 		{"缺 displayName", oneNode(Node{ID: "a", Engine: "claude-code", PromptTemplate: "x"}), "displayName"},
 		{"缺 promptTemplate", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code"}), "promptTemplate"},
 		{"未知引擎", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "nope", PromptTemplate: "x"}), "未知引擎"},
-		{"codex 已下线", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "codex", PromptTemplate: "x"}), "未知引擎"},
+		{"codex reasoningEffort 非法值", withEngineConfig("codex", &EngineConfig{ReasoningEffort: "insane"}), "允许集"},
+		{"codex 不认 effort", withEngineConfig("codex", &EngineConfig{Effort: "high"}), "不认 effort"},
 		{"claude-code effort 非法值", withEngineConfig("claude-code", &EngineConfig{Effort: "insane"}), "允许集"},
 		{"claude-code 不认 reasoningEffort", withEngineConfig("claude-code", &EngineConfig{ReasoningEffort: "high"}), "不认 reasoningEffort"},
 		{"antigravity 不认 effort", withEngineConfig("antigravity", &EngineConfig{Effort: "high"}), "不认 effort"},
@@ -86,6 +87,14 @@ func TestValidateQoderModelAndReasoningEffort(t *testing.T) {
 	def := withEngineConfig("qoder", &EngineConfig{Model: "Performance", ReasoningEffort: "high"})
 	if err := Validate(def); err != nil {
 		t.Errorf("qoder + model + reasoningEffort 应通过，却报错: %v", err)
+	}
+}
+
+// TestValidateCodexModelAndReasoningEffort 确认 codex 接受 model + reasoningEffort。
+func TestValidateCodexModelAndReasoningEffort(t *testing.T) {
+	def := withEngineConfig("codex", &EngineConfig{Model: "gpt-5-codex", ReasoningEffort: "high"})
+	if err := Validate(def); err != nil {
+		t.Errorf("codex + model + reasoningEffort 应通过，却报错: %v", err)
 	}
 }
 
