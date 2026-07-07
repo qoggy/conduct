@@ -68,6 +68,9 @@ func (d *Definition) Normalize() {
 	}
 }
 
+// DefaultEvaluatorPrompt 是首次挂载 evaluator 时自动补的默认评测提示词（自包含、不写 {{<节点id>}} 自引用）。
+const DefaultEvaluatorPrompt = "你是独立质量评测官。审阅下面待评产物的正确性、完整性与质量，给出具体、可执行的改进反馈。"
+
 // Scaffold 返回一份最小可用的骨架定义（单节点、claude-code、透传用户需求）。
 // name 与时间戳由 store 写入。
 func Scaffold() *Definition {

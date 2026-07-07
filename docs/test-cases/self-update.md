@@ -1,6 +1,6 @@
 # 自更新 测试用例
 
-覆盖 `conduct update`（从 GitHub Releases 下载预编译二进制、校验 checksum、原地替换）与一行安装脚本 `install.sh`。对应 spec：[docs/specs/cli-commands.md](../specs/cli-commands.md)〈update — 自更新〉；发布流水线见 [AGENTS.md](../../AGENTS.md)〈发布〉。
+覆盖 `conduct update`（从 GitHub Releases 下载预编译二进制、校验 checksum、原地替换）与一行安装脚本 `install.sh`。对应 spec：[docs/specs/cli-tooling.md](../specs/cli-tooling.md)〈update — 自更新（工具层）〉；发布流水线见 [AGENTS.md](../../AGENTS.md)〈发布〉。
 
 > **预期以 spec 为准。** 本文描述 spec 规定的目标行为，用来验证实现对不对。当前实现（见 spec〈实现状态〉）：`update` 已实装（`internal/cli/update.go`，经 `creativeprojects/go-selfupdate`）。
 

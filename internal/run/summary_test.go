@@ -57,6 +57,27 @@ func TestRenderSummaryCompleted(t *testing.T) {
 	}
 }
 
+func TestSummarizePrompt(t *testing.T) {
+	long := strings.Repeat("长", 200) // 200 字，远超 80 上限
+	cases := []struct {
+		name   string
+		prompt string
+		want   string
+	}{
+		{"短单行原样", "给购物车加一个清空按钮", "给购物车加一个清空按钮"},
+		{"多行取首行加指针", "实现 5 项命令。\n\n1. copy\n2. node set", "实现 5 项命令。…（完整需求见 run.json）"},
+		{"超长单行截断加指针", long, strings.Repeat("长", 80) + "…（完整需求见 run.json）"},
+		{"首尾空白裁去", "  加按钮  ", "加按钮"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := summarizePrompt(c.prompt); got != c.want {
+				t.Errorf("summarizePrompt(%q) = %q，期望 %q", c.prompt, got, c.want)
+			}
+		})
+	}
+}
+
 func TestRenderSummaryFailedShowsStepAndError(t *testing.T) {
 	r := sampleRecord()
 	r.Status = StatusFailed

@@ -1,8 +1,8 @@
 # conduct ui 服务端与 /api 测试用例
 
-覆盖 `conduct ui` 的**服务端**：启动行为（入口地址 / 驻留 / 端口 / store 探测）、`/api/*` 全端点（工作流 CRUD、运行查询、引擎能力表、目录浏览、启动 / 终止运行）、以及三层安全防护（Host / Origin 白名单、变更类强制 JSON）。对应 spec：[docs/specs/ui.md](../specs/ui.md)〈API 设计〉与 [docs/specs/cli-commands.md](../specs/cli-commands.md)〈ui〉。CLI 层的 `conduct ui` 冒烟（启动、打印地址、驻留）与 `run stop` 命令见 [workflow-running.md](./workflow-running.md)；工作流定义增删改查的 CLI 侧见 [workflow-editing.md](./workflow-editing.md)。
+覆盖 `conduct ui` 的**服务端**：启动行为（入口地址 / 驻留 / 端口 / store 探测）、`/api/*` 全端点（工作流 CRUD、运行查询、引擎能力表、目录浏览、启动 / 终止运行）、以及三层安全防护（Host / Origin 白名单、变更类强制 JSON）。对应 spec：[docs/specs/ui.md](../specs/ui.md)〈API 设计〉与 [docs/specs/cli-tooling.md](../specs/cli-tooling.md)〈ui〉。CLI 层的 `conduct ui` 冒烟（启动、打印地址、驻留）与 `run stop` 命令见 [workflow-running.md](./workflow-running.md)；工作流定义增删改查的 CLI 侧见 [workflow-editing.md](./workflow-editing.md)。
 
-> **预期以 spec 为准。** 本文描述 spec 规定的**目标行为**，用来验证实现对不对。当前实现状态（见 cli-commands.md〈实现状态〉）：`ui` 服务端 + `/api/*` 全端点 + self-exec 发射器**已实装**，预期可直接对照；**内嵌前端 SPA 代码已落地、待浏览器走查验收**（见 [ui.md](../specs/ui.md)），本文只测 HTTP API（黑盒），页面交互待走查通过后另补前端手工用例。
+> **预期以 spec 为准。** 本文描述 spec 规定的**目标行为**，用来验证实现对不对。当前实现状态（见 cli-tooling.md〈实现状态〉）：`ui` 服务端 + `/api/*` 全端点 + self-exec 发射器**已实装**，预期可直接对照；**内嵌前端 SPA 代码已落地、待浏览器走查验收**（见 [ui.md](../specs/ui.md)），本文只测 HTTP API（黑盒），页面交互待走查通过后另补前端手工用例。
 
 > **全程零 💸（零 token）**：本文所有用例都在**隔离临时 HOME**（`export HOME="$WORK"`，store 落在 `$WORK/.conduct/`）里跑，用后连目录一并删除，不碰真实 store。**唯一会真起子进程的启动运行端点（`POST …/runs`）也用一个「一运行就失败」的假引擎**（见〈环境准备〉`broke_engine`）——self-exec 出的子进程继承这个坏 PATH，秒级失败、不触真实引擎、零 token，却仍产出一条**真实**的 run 记录（`status:"failed"`），足以验证发射链路与 run id 回传。真实引擎的端到端跑通（`completed` + 终止**运行中**的 run）交给 [workflow-running.md](./workflow-running.md) 的 💸 用例，本文不重复烧钱。
 

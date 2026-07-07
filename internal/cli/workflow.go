@@ -46,13 +46,15 @@ func newWorkflowCommand() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return usageErrorf("未知子命令 %q（可用：create / edit / rename / delete / list / show / run）", args[0])
+			return usageErrorf("未知子命令 %q（可用：create / copy / edit / node / rename / delete / list / show / run）", args[0])
 		},
 	}
 	cmd.AddCommand(
 		newWorkflowCreateCommand(),
 		newWorkflowEditCommand(),
 		newWorkflowRenameCommand(),
+		newWorkflowCopyCommand(),
+		newWorkflowNodeCommand(),
 		newWorkflowDeleteCommand(),
 		newWorkflowListCommand(),
 		newWorkflowShowCommand(),
@@ -72,16 +74,21 @@ func stdinIsTerminal() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
-// readStdinDefinition 从 stdin 读入完整定义；stdin 是终端（无管道输入）时报用法错误退出 2，不挂起等待。
-func readStdinDefinition() ([]byte, error) {
+// readStdin 从 stdin 读入原始字节；stdin 是终端（无管道输入）时以 missingMsg 报用法错误退出 2，不挂起等待。
+func readStdin(missingMsg string) ([]byte, error) {
 	if stdinIsTerminal() {
-		return nil, usageErrorf("缺少定义：请通过 stdin 传入（如 cat def.json | conduct workflow ...）；可视化编辑用 conduct ui")
+		return nil, usageErrorf("%s", missingMsg)
 	}
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return nil, fmt.Errorf("读取 stdin 失败: %w", err)
 	}
 	return data, nil
+}
+
+// readStdinDefinition 从 stdin 读入完整定义；stdin 是终端（无管道输入）时报用法错误退出 2，不挂起等待。
+func readStdinDefinition() ([]byte, error) {
+	return readStdin("缺少定义：请通过 stdin 传入（如 cat def.json | conduct workflow ...）；可视化编辑用 conduct ui")
 }
 
 // reconcileImportName 处理导入体里的 name：若出现且与目标名不一致则拒绝（绝不静默改名）。
@@ -120,7 +127,8 @@ func workflowDefinitionHelp() string {
       "engineConfig": { "model": "" },       // 选填，字段随 engine 而定，见下方「引擎」；字段均选填
       "evaluator": {                         // 选填，节点内循环：本节点产出后由 evaluator 评测再重做本节点；与 redoTarget 互斥
         "engine": "claude-code",
-        "promptTemplate": "评价并指出改进点：{{gen}}"
+        "engineConfig": { "model": "" },     // 选填，同构支持——可单独配 model/effort/reasoningEffort，字段随 engine 而定
+        "promptTemplate": "审阅下面待评产物，指出改进点"
       },
       "redoTarget": "gen",                   // 选填，回跳到之前某节点 id、重跑该段；与 evaluator 互斥
       "loopCount": 1                         // 选填，仅配 evaluator/redoTarget 时生效，取值 1–20，默认 1

@@ -1,6 +1,6 @@
 # workflow 编辑管理 测试用例
 
-覆盖 conduct 中**不运行、不烧 token** 的一族命令：`version` 与 workflow 定义的增删改查 —— `workflow create / edit / rename / delete / list / show`。运行工作流与查看运行记录见 [workflow-running.md](./workflow-running.md)。对应 spec：[docs/specs/cli-commands.md](../specs/cli-commands.md)。
+覆盖 conduct 中**不运行、不烧 token** 的一族命令：`version` 与 workflow 定义的增删改查 —— `workflow create / edit / rename / delete / list / show`。运行工作流与查看运行记录见 [workflow-running.md](./workflow-running.md)。对应 spec：[docs/specs/cli-authoring.md](../specs/cli-authoring.md)。
 
 > **预期以 spec 为准，不以当前代码为准。** 本文描述 spec 规定的**目标行为**（命令该怎样表现），用来验证实现对不对——不是照现有代码反推。截至编写时，`version`、全局 `--version` 标志（TC-002）与 `workflow create / edit / rename / delete / list / show` **均已实现**（见 spec〈实现状态〉），预期可直接对照验证。命令若有偏离本文〈预期〉，即为实现未达标。
 
@@ -262,7 +262,7 @@ JSON
 
 ### TC-014 edit 无有效 stdin 定义时报错、不挂起
 
-- **目的**：验证 edit 缺有效定义时**不挂起等待、显式失败**。区分 spec 的两条路径（见 cli-commands.md）：stdin 是**终端** → 退出 `2`（报缺少定义、提示 `conduct ui`）；stdin 是**非 TTY 空输入**（如 `< /dev/null`）→ 按非法 JSON 处理、退出 `1`。
+- **目的**：验证 edit 缺有效定义时**不挂起等待、显式失败**。区分 spec 的两条路径（见 cli-authoring.md）：stdin 是**终端** → 退出 `2`（报缺少定义、提示 `conduct ui`）；stdin 是**非 TTY 空输入**（如 `< /dev/null`）→ 按非法 JSON 处理、退出 `1`。
 - **前置**：
   1. 建隔离环境；准备 `min.json`。
   2. `cat "$WORK/min.json" | "$CONDUCT" workflow create t --definition`。

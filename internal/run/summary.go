@@ -19,7 +19,7 @@ func RenderSummary(record *Record, trace []TraceEntry) string {
 		nodeCount = len(record.WorkflowSnapshot.Nodes)
 	}
 	fmt.Fprintf(&b, "**工作流** %s · %d 节点\n", record.Workflow, nodeCount)
-	fmt.Fprintf(&b, "**需求** %s\n", record.UserPrompt)
+	fmt.Fprintf(&b, "**需求** %s\n", summarizePrompt(record.UserPrompt))
 	fmt.Fprintf(&b, "**状态** %s\n", statusLine(record))
 	fmt.Fprintf(&b, "**工作目录** %s\n", record.Cwd)
 	if record.Status == StatusFailed {
@@ -51,6 +51,25 @@ func RenderSummary(record *Record, trace []TraceEntry) string {
 		}
 	}
 	return b.String()
+}
+
+// summarizePrompt 把用户需求压成头部一行摘要：取首行、按字数截断，超出 / 多行则以 … 收尾并注明全文在 run.json。
+// run-summary.md 是「给人读的那副面孔」，需求可能是整份 PRD（数十 KB），整段塞进头部会淹掉步骤表与产物；
+// 故此处只留一行摘要，全文由 run.json 的 userPrompt 保留——与 run list 人读截断、机读留全文的同一分工。
+func summarizePrompt(prompt string) string {
+	const maxRunes = 80
+	full := strings.TrimSpace(prompt)
+	line := full
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = strings.TrimSpace(line[:i])
+	}
+	if runes := []rune(line); len(runes) > maxRunes {
+		line = string(runes[:maxRunes])
+	}
+	if line == full {
+		return line // 需求本就是未超长的单行，原样呈现
+	}
+	return line + "…（完整需求见 run.json）"
 }
 
 // statusLine 渲染「状态」行：图标 + 状态词 +（终结时）耗时与起止时刻。

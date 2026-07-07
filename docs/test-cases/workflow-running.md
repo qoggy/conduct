@@ -1,6 +1,6 @@
 # workflow 运行 测试用例
 
-覆盖 conduct 中**跑工作流、查运行记录、终止运行**的一族命令：`workflow run`、`run list`、`run show`、`run stop`。工作流定义的增删改查见 [workflow-editing.md](./workflow-editing.md)；聚合视图 `ui` 的 CLI 冒烟见本文 TC-012，其服务端与 `/api/*` 端点的黑盒覆盖见 [ui-server.md](./ui-server.md)。对应 spec：[docs/specs/cli-commands.md](../specs/cli-commands.md)。
+覆盖 conduct 中**跑工作流、查运行记录、终止运行**的一族命令：`workflow run`、`run list`、`run show`、`run stop`。工作流定义的增删改查见 [workflow-editing.md](./workflow-editing.md)；聚合视图 `ui` 的 CLI 冒烟见本文 TC-012，其服务端与 `/api/*` 端点的黑盒覆盖见 [ui-server.md](./ui-server.md)。对应 spec：[docs/specs/cli-runtime.md](../specs/cli-runtime.md)（`ui` 见 [cli-tooling.md](../specs/cli-tooling.md)〈ui〉）。
 
 > **预期以 spec 为准，不以当前代码为准。** 本文描述 spec 规定的**目标行为**（命令该怎样表现），用来验证实现对不对——不是照现有代码反推。当前实现状态（见 spec〈实现状态〉）：`workflow run`、`run list`、`run show`（含 `--trace`/`--json`）、`run stop` 与 `ui` 服务端**均已实装**，预期可直接对照验证。两点行为变更需注意：① `run show` 默认视图（不加 `--trace`）现打印 `run-summary.md` 全文（终态）/ 状态摘要（未收尾），不再是旧版「概要 + 每步 80 字预览」（见 TC-007 / TC-008）；② `ui` 已从占位骨架变为可用服务端（TC-012 现可通过），内嵌前端 SPA 代码已落地、待浏览器走查验收。命令若有偏离本文〈预期〉，即为实现未达标。
 

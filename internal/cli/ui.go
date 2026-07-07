@@ -8,7 +8,7 @@ import (
 )
 
 // newUICommand 构造 `conduct ui` —— 启动可视化界面（横跨 workflow 与 run 两族的整体 GUI）。
-// 它把 CLI 动词镜像成人看的视图，无独占能力（见 docs/specs/cli-commands.md〈ui〉）。
+// 它把 CLI 动词镜像成人看的视图，无独占能力（见 docs/specs/cli-tooling.md〈ui〉）。
 func newUICommand() *cobra.Command {
 	var port int
 	var open bool
