@@ -73,6 +73,25 @@ func (s *Store) CreateRun(record *run.Record) error {
 	return s.WriteRun(record)
 }
 
+// RemoveRun 删除一条运行记录的整个目录（runs/<id>/，三件套连同目录一并移除）；不存在时返回
+// ErrRunNotExist。id 非法（防路径穿越）时报错。其它运行分毫不动——各 run 靠自身快照自解释、互不依赖。
+func (s *Store) RemoveRun(id string) error {
+	dir, err := s.runDir(id)
+	if err != nil {
+		return err
+	}
+	if _, statErr := os.Stat(dir); statErr != nil {
+		if errors.Is(statErr, os.ErrNotExist) {
+			return fmt.Errorf("%s: %w", id, ErrRunNotExist)
+		}
+		return fmt.Errorf("访问运行目录 %s 失败: %w", id, statErr)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("删除运行目录 %s 失败: %w", id, err)
+	}
+	return nil
+}
+
 // WriteRun 原子重写 run.json（增量更新 artifacts / 收尾写终态都走它）。
 func (s *Store) WriteRun(record *run.Record) error {
 	dir, err := s.runDir(record.ID)

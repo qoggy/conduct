@@ -18,14 +18,17 @@ import (
 func newWorkflowRunCommand() *cobra.Command {
 	var cwd string
 	var asJSON bool
+	var detach bool
 	cmd := &cobra.Command{
 		Use:   `run <name> ["<需求>"]`,
 		Short: "解释运行一份工作流",
 		Long: "解释运行名为 <name> 的工作流：按定义逐节点驱动 AI 引擎执行，前台同步阻塞并打印进度，结束后用 conduct run show <id> 看记录。\n" +
-			"用户需求经第二个位置参数或 stdin 传入（二者其一必填；均缺且 stdin 是终端则报错退 2，不挂起）。\n\n" +
+			"用户需求经第二个位置参数或 stdin 传入（二者其一必填；均缺且 stdin 是终端则报错退 2，不挂起）。\n" +
+			"-d / --detach 后台起跑：预检通过后以独立会话 spawn 子进程，打印 run id 立刻退 0，用 run show / run wait / run stop 查等停。\n\n" +
 			"示例：\n" +
 			"  conduct workflow run myflow \"把 README 翻译成英文\"\n" +
-			"  echo \"把 README 翻译成英文\" | conduct workflow run myflow",
+			"  echo \"把 README 翻译成英文\" | conduct workflow run myflow\n" +
+			"  conduct workflow run myflow \"重构结算流程\" -d",
 		Args: requireArgs(cobra.RangeArgs(1, 2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -53,6 +56,11 @@ func newWorkflowRunCommand() *cobra.Command {
 				return err // 载入即校验，防手改损坏
 			}
 
+			// 预检全部同步做完（fail-loud），到这里才分道：-d 后台发射，否则前台跑到底。
+			if detach {
+				return runDetached(cmd, st, name, userPrompt, workingDir, asJSON)
+			}
+
 			orch := orchestrator.New(st)
 			if asJSON {
 				return runWithJSON(cmd, orch, def, userPrompt, workingDir)
@@ -62,6 +70,7 @@ func newWorkflowRunCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&cwd, "cwd", "", "AI 引擎读写文件的工作目录（默认当前目录），即 {{sys.cwd}}")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "逐步输出机器可读事件 JSON（每步一行），无进度装饰")
+	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "后台起跑：打印 run id 后立刻退 0，不阻塞到运行结束")
 	return cmd
 }
 

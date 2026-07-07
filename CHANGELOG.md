@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `conduct workflow run -d` / `--detach`: launch a run in the background (own session via `setsid`) and print its run id immediately, like `docker run -d`. Preflight (name, requirement, `--cwd`) still fails loud synchronously; the parent confirms the initial `run.json` before returning, so exit `0` always means a usable run id was printed. `-d --json` prints a single-line handle `{"id","workflow"}` — a pure addressable handle with no status field (the run may already have left `running` by the time it prints; read real status via `run wait` / `run show`).
+- `conduct run wait <id>`: block until a run reaches a terminal state, then exit — like `docker wait` / Unix `wait`, the exit code reflects whether the wait itself succeeded (0 once any terminal state is reached), not the run's outcome. The run's outcome (`completed` / `failed` / `interrupted`) is on stdout (summary / `--json` `status`); only the command's own errors (missing id / IO) exit non-zero (1), and a missing / malformed id is a usage error (2).
+- `conduct run rm <id>`: delete a run record (`runs/<id>/`). Refuses to delete a still-running run, confirms interactively unless `-y` / `--yes` is given, and accepts only a single id (no batch, no force).
+- `conduct run list --status <state>`: filter the run list by derived state (`running` / `completed` / `failed` / `interrupted`); the default still lists all runs.
+
 ### Fixed
 
 - `install.sh` now resolves the latest release tag via the `releases/latest` redirect instead of the GitHub API, avoiding unauthenticated rate-limit (403) failures during `curl | sh`.
+- `conduct run show` / `run stop` now exit `2` (usage error) for a malformed run id (empty / path separators), consistent with `run wait` / `run rm` and the exit-code convention; previously they exited `1`.
 
 ## [0.0.1] - 2026-07-06
 

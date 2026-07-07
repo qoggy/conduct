@@ -240,3 +240,32 @@ func TestWriteRunAndSummary(t *testing.T) {
 		t.Errorf("summary 内容错: %q", string(data))
 	}
 }
+
+func TestRemoveRun(t *testing.T) {
+	s := New(t.TempDir())
+	rec := sampleRun("flow-20260703-150000")
+	if err := s.CreateRun(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveRun(rec.ID); err != nil {
+		t.Fatalf("RemoveRun 失败: %v", err)
+	}
+	// 目录连同三件套一并移除：再读即不存在。
+	if _, err := s.LoadRun(rec.ID); !errors.Is(err, ErrRunNotExist) {
+		t.Fatalf("删除后应读不到运行记录，得到 %v", err)
+	}
+}
+
+func TestRemoveRunNotExist(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.RemoveRun("ghost-20260101-000000"); !errors.Is(err, ErrRunNotExist) {
+		t.Fatalf("删除不存在的运行应返回 ErrRunNotExist，得到 %v", err)
+	}
+}
+
+func TestRemoveRunInvalidID(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.RemoveRun("../escape"); err == nil {
+		t.Fatalf("非法 id 应报错（防路径穿越）")
+	}
+}

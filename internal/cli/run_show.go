@@ -22,6 +22,9 @@ func newRunShowCommand() *cobra.Command {
 		Args: requireArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
+			if err := run.ValidateID(id); err != nil {
+				return &usageError{err: err} // 非法 id → 退 2（与 run wait / run rm 对齐，遵全局退出码约定）
+			}
 			st, err := openStore()
 			if err != nil {
 				return err

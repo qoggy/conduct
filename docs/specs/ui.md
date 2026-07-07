@@ -138,8 +138,10 @@ UI 服务端以 `os.Executable()` 自呼 `conduct workflow run <name> --cwd <dir
 | 子进程 stdout | 重定向 `/dev/null` | 进度已逐步落盘 trace，无需管道；**绝不可用 pipe**——UI 先退出会令子进程写 stdout 时 EPIPE，Go 运行时对 fd 1/2 的写失败重升 SIGPIPE 杀死 run，恰好击穿「UI 退出 run 继续跑」的承诺 |
 | 子进程 stderr | 重定向 UI 会话私有临时文件 | 兜底「CreateRun 之前就失败」（store IO 等罕见路径）的原因回传；读后即弃，绝不在界面出现该路径 |
 | 发射前预检 | spawn 前服务端进程内跑 `store.Load + workflow.Validate`（只读）+ 需求非空 + **工作目录存在性**校验 | 把「workflow 不存在 / 定义损坏 / 目录不存在」在起子进程前以 400/422 拦下，失败反馈从秒级缩到毫秒级；stderr 临时文件收窄为罕见路径兜底 |
-| run id 获取 | spawn 后轮询 run 列表，**组合条件匹配**：`workflow == 目标名 && status == running && startedAt >= spawn 时刻（留时钟余量） && record.pid == 子进程 pid` | run.json 开跑即写（含 pid），通常亚秒命中。单靠 pid 不够——历史 interrupted 记录里残留的 pid 可能被新进程复用，组合条件消歧 |
+| run id 获取 | spawn 后轮询 run 列表，**组合条件匹配**：`workflow == 目标名 && record.pid == 子进程 pid && startedAt >= spawn 时刻（留时钟余量）` | run.json 开跑即写（含 pid），通常亚秒命中。**不要求停留在 `running`**——子进程秒级完成 / 失败、状态已转终态时它仍是刚发射的这次，仍要交回 id（与共用发射器 `internal/launch` 的 `matchRunID` 一致）。单靠 pid 不够——历史 interrupted 记录残留的 pid 可能被新进程复用，故加 workflow 名 + 时钟余量消歧 |
 | 超时与撞车 | 约 10s 未命中且子进程已退出 → 读 stderr 临时文件回传启动失败原因；同秒并发启动同 workflow 的 run id 撞车由 `store.CreateRun` 拒绝、子进程报错退出 | 超时但子进程仍在跑时**文案不得误报失败**——run 可能正常在跑，提示去运行列表核对 |
+
+> **此发射器与 CLI 共用（已落地）**：`conduct workflow run -d`（`--detach`，见 [cli-runtime.md](./cli-runtime.md)〈后台运行（`-d` / `--detach`）〉）复用同一条 self-exec + setsid 发射路径——它已从 `internal/ui` 私有抽成 `internal/launch`、CLI `-d` 与 UI 共用；「UI 后台起 run」不再是独占能力，二者落盘与 pid 判活逐字节一致。
 
 ## 监控机制（手动刷新，不自动轮询）
 
@@ -220,8 +222,9 @@ UI 自身（`internal/ui` 服务端 + 内嵌前端 + `internal/cli/ui.go` 注册
 internal/ui/            # 新包：HTTP 服务端
 ├── server.go           # 启动、绑定、store 探测、Host/Origin 校验
 ├── handlers.go         # /api/* 路由（薄映射到 store / workflow / engine）
-├── launch.go           # self-exec 发射器（Setsid / stdin / 预检 / run id 匹配）
+├── launch.go           # UI 侧发射：HTTP 味 preflight（400/404/422）+ 调用共用发射器 + 错误映射
 └── assets/             # 内嵌前端（index.html / *.js / style.css / zh-CN 字典 / vendor/）
+internal/launch/        # CLI -d 与 UI 共用的发射器（Setsid / stdin / run id 组合匹配 / 有界等待）
 internal/cli/ui.go      # 注册 conduct ui 命令（--port / --open）
 ```
 
