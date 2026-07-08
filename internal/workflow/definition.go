@@ -68,6 +68,46 @@ func (d *Definition) Normalize() {
 	}
 }
 
+// CopyAs 从本定义深拷出一份名为 name 的新定义（造变体）：只带 name 与深拷来的 nodes，
+// 不携带时间戳（CreatedAt / UpdatedAt 留空，交给 store.Create 重戳当前时刻）。
+// nodes 必须深拷——Node 内含指针字段（EngineConfig / Evaluator / LoopCount），逐个 new 一份，
+// 避免新旧定义共享底层指针后互相串改。CLI `workflow copy` 与 UI 复制端点共用此方法。
+func (d *Definition) CopyAs(name string) *Definition {
+	nodes := make([]Node, len(d.Nodes))
+	for i := range d.Nodes {
+		nodes[i] = copyNode(d.Nodes[i])
+	}
+	return &Definition{
+		Name:  name,
+		Nodes: nodes,
+	}
+}
+
+// copyNode 深拷单个节点：值字段直接复制，三个指针字段各 new 一份新的底层值。
+func copyNode(node Node) Node {
+	copied := node // 先浅拷值字段（ID / DisplayName / Engine / PromptTemplate / RedoTarget）
+	copied.EngineConfig = copyEngineConfig(node.EngineConfig)
+	if node.Evaluator != nil {
+		evaluator := *node.Evaluator
+		evaluator.EngineConfig = copyEngineConfig(node.Evaluator.EngineConfig)
+		copied.Evaluator = &evaluator
+	}
+	if node.LoopCount != nil {
+		loopCount := *node.LoopCount
+		copied.LoopCount = &loopCount
+	}
+	return copied
+}
+
+// copyEngineConfig 深拷 EngineConfig 指针（nil 原样返回 nil）。
+func copyEngineConfig(config *EngineConfig) *EngineConfig {
+	if config == nil {
+		return nil
+	}
+	cloned := *config
+	return &cloned
+}
+
 // DefaultEvaluatorPrompt 是首次挂载 evaluator 时自动补的默认评测提示词（自包含、不写 {{<节点id>}} 自引用）。
 const DefaultEvaluatorPrompt = "你是独立质量评测官。审阅下面待评产物的正确性、完整性与质量，给出具体、可执行的改进反馈。"
 

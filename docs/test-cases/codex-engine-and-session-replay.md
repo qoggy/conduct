@@ -207,10 +207,10 @@ make_codex_flow() {
   3. `make_codex_flow tf`。
 - **步骤**：
   1. `"$CONDUCT" workflow run tf "go" --cwd "$WORK"; echo "exit=$?"`
-  2. `python3 -c 'import json,glob,os; r=json.load(open(glob.glob(os.path.expanduser("~/.conduct/runs/tf-*/run.json"))[0])); print("status=",r["status"],"failedStep=",r["failedStep"],"error=",r["error"])'`
+  2. `"$CONDUCT" run show "$(ls "$HOME/.conduct/runs/" | grep '^tf-' | head -1)" --json --trace | python3 -c 'import sys,json; r=json.load(sys.stdin); tr=r["trace"]; print("status=",r["status"],"failedTrace=",[(e["stepIndex"], e["success"]) for e in tr],"error=",r["error"])'`
 - **预期**：
   - 步骤 1 退出码 `1`（进程虽退 0，但事件流报失败 → 该步失败 → 运行失败）。
-  - 步骤 2 打印 `status= failed failedStep= 0 error= codex 报错: turn.failed`（失败信息真实落盘；`turn.failed` 的错误体嵌在 `error.message`、非顶层 `message`，故回退给出事件类型 `turn.failed` 作占位，不静默丢失失败信号）。
+  - 步骤 2 打印 `status= failed failedTrace= [(0, False)] error= codex 报错: turn.failed`（失败信息真实落盘；失败步由 trace 的 `stepIndex=0 success=false` 记录体现；`turn.failed` 的错误体嵌在 `error.message`、非顶层 `message`，故回退给出事件类型 `turn.failed` 作占位，不静默丢失失败信号）。
 - **清理**：`export HOME="$OLD_HOME"; export PATH="$OLD_PATH"; rm -rf "$WORK"`。
 
 ### TC-006 codex error 事件报错（附 message）

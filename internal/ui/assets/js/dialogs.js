@@ -57,6 +57,39 @@ export function openLaunchDialog(name) {
   });
 }
 
+// openCopyDialog 复制工作流造变体；成功后调用 onSuccess(newName)——由调用方决定去向。
+export function openCopyDialog(name, onSuccess) {
+  const input = h("input", { class: "inp inp-mono" });
+  input.value = name + "-copy"; // 预填一个常见副本名，用户可改（若已存在，保存时服务端返回 409）
+  const err = h("div", { class: "ferr", style: { display: "none" } });
+  const okBtn = h("button", { class: "btn btn-ink" }, i18n.copy);
+  okBtn.addEventListener("click", async () => {
+    const newName = input.value.trim();
+    okBtn.disabled = true;
+    err.style.display = "none";
+    try {
+      await api.copyWorkflow(name, newName);
+      ctl.close();
+      onSuccess(newName);
+    } catch (e) {
+      err.textContent = e.message;
+      err.style.display = "block";
+      okBtn.disabled = false;
+    }
+  });
+  const ctl = openModal({
+    title: i18n.dlgCopyTitleTpl(name),
+    body: h(
+      "div",
+      {},
+      h("label", { class: "flabel" }, i18n.fNewName, h("span", { class: "info" }, "i", h("span", { class: "tip" }, i18n.copyNote))),
+      input,
+      err,
+    ),
+    footer: [h("button", { class: "btn", onClick: () => ctl.close() }, i18n.cancel), okBtn],
+  });
+}
+
 // openRenameDialog 改名；成功后调用 onSuccess(newName)——由调用方决定去向。
 export function openRenameDialog(name, onSuccess) {
   const input = h("input", { class: "inp inp-mono" });

@@ -36,7 +36,7 @@ const (
 )
 
 // Record 是 run.json 的结构——运行概要 + 开始那一刻冻结的 workflow 快照，使这次运行永远可复现。
-// endedAt / failedStep / error 用指针，未终结时显式序列化为 null（对齐 spec 示例）。
+// endedAt / error 用指针，未终结时显式序列化为 null（对齐 spec 示例）。
 type Record struct {
 	ID               string               `json:"id"`
 	Workflow         string               `json:"workflow"`
@@ -50,7 +50,6 @@ type Record struct {
 	StartedAt        string               `json:"startedAt"`
 	EndedAt          *string              `json:"endedAt"`
 	Artifacts        map[string]string    `json:"artifacts"`
-	FailedStep       *int                 `json:"failedStep"`
 	Error            *string              `json:"error"`
 }
 
@@ -115,6 +114,36 @@ func deriveStatus(status Status, alive bool) Status {
 		return StatusInterrupted
 	}
 	return status
+}
+
+// ProgressCount 返回进度分子 k = trace 中「唯一 stepIndex 且（最后一次记录）success」的步数。
+// 与「数物理行」不同：resume 会保留失败行 + 续写补跑行，同一 stepIndex 有多条，数行数会让 k 越过
+// 分母 N（如 11/10）。按 stepIndex 去重、以每步最后一次记录（＝执行序最新）为准，保证 k ≤ N 恒成立。
+// 审计视角要看全部历史记录仍走 run show --trace（不去重）。
+func ProgressCount(trace []TraceEntry) int {
+	lastSuccess := make(map[int]bool, len(trace))
+	for _, entry := range trace {
+		lastSuccess[entry.StepIndex] = entry.Success // 同一 stepIndex 后写覆盖前写，末条为准
+	}
+	count := 0
+	for _, ok := range lastSuccess {
+		if ok {
+			count++
+		}
+	}
+	return count
+}
+
+// LastUnsuccessfulStepIndex 返回 trace 中最后一条失败记录的 stepIndex。run.json 不保存失败步；需要展示失败位置时
+// 从 trace 推断。没有失败记录时返回 nil。
+func LastUnsuccessfulStepIndex(trace []TraceEntry) *int {
+	for i := len(trace) - 1; i >= 0; i-- {
+		if !trace[i].Success {
+			stepIndex := trace[i].StepIndex
+			return &stepIndex
+		}
+	}
+	return nil
 }
 
 // StepLabel 返回一步在报告/列表里的展示名：evaluator 步加「· 评测」后缀，与 agent 步区分

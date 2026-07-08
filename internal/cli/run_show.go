@@ -74,6 +74,10 @@ func showRunJSON(cmd *cobra.Command, record *run.Record, trace []run.TraceEntry,
 // showRunSummary 打印 run-summary.md 全文（默认视图）；未收尾（running / interrupted）时总结尚未生成，
 // 退回状态 + 进度视图并指路 --trace 查看已执行步骤。
 func showRunSummary(out io.Writer, st *store.Store, id string, record *run.Record) error {
+	status := record.EffectiveStatus()
+	if status == run.StatusRunning || status == run.StatusInterrupted {
+		return showRunSummaryFallback(out, st, id, record)
+	}
 	md, err := st.ReadSummary(id)
 	if err == nil {
 		fmt.Fprint(out, md)
@@ -85,6 +89,10 @@ func showRunSummary(out io.Writer, st *store.Store, id string, record *run.Recor
 	if !errors.Is(err, store.ErrSummaryNotExist) {
 		return err // 读文件真出错（权限等）：如实上抛，不静默
 	}
+	return showRunSummaryFallback(out, st, id, record)
+}
+
+func showRunSummaryFallback(out io.Writer, st *store.Store, id string, record *run.Record) error {
 	// 收尾节点还没写 summary：打印状态与进度，需逐步数据算进度。
 	trace, terr := st.LoadTrace(id)
 	if terr != nil {
@@ -114,8 +122,9 @@ func showRunStatus(out io.Writer, record *run.Record, trace []run.TraceEntry) {
 	fmt.Fprintf(out, "需求：%s\n", record.UserPrompt)
 	// running 与 interrupted 都未正常收尾（无 endedAt），显示进度 step k/N 比「耗时 ?」更有意义。
 	if status == run.StatusRunning || status == run.StatusInterrupted {
+		// 进度分子按唯一 stepIndex 且 success 去重（防 resume 后 k>N），审计全量走 --trace。
 		fmt.Fprintf(out, "步数 %d · 进度 step %d/%d · %s 起\n",
-			record.Steps, len(trace), record.Steps, formatTimestamp(record.StartedAt))
+			record.Steps, run.ProgressCount(trace), record.Steps, formatTimestamp(record.StartedAt))
 	} else {
 		fmt.Fprintf(out, "步数 %d · 耗时 %s · %s → %s\n",
 			record.Steps, elapsed(record), formatTimestamp(record.StartedAt), endedDisplay(record))

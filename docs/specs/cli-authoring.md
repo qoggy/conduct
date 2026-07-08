@@ -476,8 +476,8 @@ conduct workflow list [--json]
 
 **输出**：
 
-- 人类可读（默认）：表格，列为 `NAME | NODES | UPDATED`——名称、节点 id 流（按定义顺序以 `›` 连接；超过 6 个截断为前 6 个 + `+N`）、最近修改时间；退出 `0`。
-- `--json`：数组，每项 `{"name","nodes":["<id>",...],"updatedAt":"<RFC3339>"}`（`nodes` 为节点 id 数组，不含存储路径——按名字寻址）。
+- 人类可读（默认）：表格，列为 `NAME | NODES | UPDATED`——名称、节点 id 流（按定义顺序以 `›` 连接；超过 6 个截断为前 6 个 + `+N`）、最近修改时间；**按 `updatedAt` 倒序**（最近修改的在前，`updatedAt` 相同再按 `name` 升序兜底、免同刻并列抖动），与 `run list` 的时间倒序同一「最近优先」心智；退出 `0`。
+- `--json`：数组，每项 `{"name","nodes":["<id>",...],"updatedAt":"<RFC3339>"}`（`nodes` 为节点 id 数组，不含存储路径——按名字寻址）；顺序同上（`updatedAt` 倒序、`name` 升序兜底）。
 - store 为空：stdout 提示 `（store 为空）`；退出 `0`（空不是错误）。
 
 > 设计说明：列由早期的 `NODES`（数量）`| ENGINES`（引擎集合）调整为节点 id 流并移除引擎列——节点名比引擎集合信息量更大，列表页保持克制；`conduct ui` 工作流列表与此同列。
@@ -493,8 +493,8 @@ conduct workflow list --json | jq '.[].name'
 
 ```
 NAME       NODES                  UPDATED
-autopilot  plan›code›test›review  2026-07-03 10:22
 my-flow    main                   2026-07-03 15:40
+autopilot  plan›code›test›review  2026-07-03 10:22
 ```
 
 ---
@@ -651,7 +651,7 @@ review · 评审 · claude-code · claude-opus-4-8 · redoTarget→code 回跳
 
 | 命令 | 状态 |
 | --- | --- |
-| `workflow create / edit / rename / delete / list / show` | **已实现**（`workflow` 命令族 + `internal/store` 托管层 + `internal/workflow` 校验/展开/渲染；`show --expand` 复用展开算法。校验内核提供 `ValidateStructured` 返回字段级 `[]Problem`） |
+| `workflow create / edit / rename / delete / list / show` | **已实现**（`workflow` 命令族 + `internal/store` 托管层 + `internal/workflow` 校验/展开/渲染；`show --expand` 复用展开算法。校验内核提供 `ValidateStructured` 返回字段级 `[]Problem`）。**`list` 排序已按规格调整**：`store.List` 改为先加载各 workflow 取 `updatedAt`、再按 `updatedAt` 倒序排（`name` 升序兜底，新增 `updatedAt` 比较器 `updatedAfter`，不复用 `ListRuns` 的 `startedAfter`），CLI `workflow list` 与 `ui` 工作流列表由此同源同序（`ui` 的 `handleListWorkflows` 直接沿用 `store.List` 顺序、前端不二次排序） |
 | `workflow copy` | **已实现**（`internal/cli/workflow_copy.go`；语义同 `create`，深拷 `nodes`、时间戳由 `store.Create` 重戳，落盘前复用整份校验） |
 | `workflow node set` | **已实现**（`internal/cli/workflow_node_set.go`；带类型 flag 改节点 / 评测官引擎·模型·档位、节点显示名、循环次数，并挂 / 拆 evaluator 自循环（`--evaluator --engine` / `--no-evaluator`）与 redoTarget 回跳（`--redo-target` / `--no-redo`），故 node 层无需 `set-evaluator` / `set-redo` 独立动词；空串清除标量、`--loop-count` 无循环命令级退 1、engine 级联走整份校验，改完复用整份校验再落盘） |
 | `workflow node set-prompt` | **已实现**（`internal/cli/workflow_node_set_prompt.go`；提示词原始文本经 stdin 入、conduct 负责 JSON 编码，剥恰好一个尾换行与 `node show --prompt` 配对） |

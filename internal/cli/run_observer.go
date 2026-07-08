@@ -16,9 +16,18 @@ type humanObserver struct {
 	out io.Writer
 }
 
-func (h humanObserver) OnExpand(steps []workflow.ExecutionStep) {
-	fmt.Fprintf(h.out, "▶ 展开为 %d 步：\n", len(steps))
-	for index, step := range steps {
+func (h humanObserver) OnExpand(steps []workflow.ExecutionStep, startIndex int) {
+	// startIndex>0 即 resume：打印「从第几步恢复、共剩几步」的恢复头，且只列将实际重跑的剩余步（不列已跳过
+	// 的前序步），避免把 resume 误显为整趟 N 步都会跑（承 spec〈run resume〉〈输出〉）。startIndex==0 是整趟
+	// workflow run，照旧打印「展开为 N 步」全量清单。
+	if startIndex > 0 {
+		fmt.Fprintf(h.out, "▶ 从第 %d 步恢复：共 %d 步、跳过前 %d 步，续跑剩余 %d 步：\n",
+			startIndex, len(steps), startIndex, len(steps)-startIndex)
+	} else {
+		fmt.Fprintf(h.out, "▶ 展开为 %d 步：\n", len(steps))
+	}
+	for index := startIndex; index < len(steps); index++ {
+		step := steps[index]
 		fmt.Fprintf(h.out, "  [%d] %-9s node=%-10s iter=%d\n", index, step.Type, step.NodeID, step.Iteration)
 	}
 }
@@ -52,8 +61,8 @@ type jsonObserver struct {
 	err error
 }
 
-func (j *jsonObserver) OnExpand([]workflow.ExecutionStep) {}
-func (j *jsonObserver) OnStepStart(orchestrator.StepInfo) {}
+func (j *jsonObserver) OnExpand([]workflow.ExecutionStep, int) {}
+func (j *jsonObserver) OnStepStart(orchestrator.StepInfo)      {}
 func (j *jsonObserver) OnStepDone(entry run.TraceEntry) {
 	if j.err != nil {
 		return

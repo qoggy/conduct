@@ -98,6 +98,7 @@ func (s *Server) routes(port int) http.Handler {
 	mux.HandleFunc("PUT /api/workflows/{name}", s.handlePutWorkflow)
 	mux.HandleFunc("DELETE /api/workflows/{name}", s.handleDeleteWorkflow)
 	mux.HandleFunc("POST /api/workflows/{name}/rename", s.handleRenameWorkflow)
+	mux.HandleFunc("POST /api/workflows/{name}/copy", s.handleCopyWorkflow)
 	mux.HandleFunc("POST /api/workflows/{name}/runs", s.handleLaunchRun)
 
 	mux.HandleFunc("GET /api/fs", s.handleFS)
@@ -106,6 +107,7 @@ func (s *Server) routes(port int) http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}", s.handleGetRun)
 	mux.HandleFunc("GET /api/runs/{id}/summary", s.handleGetSummary)
 	mux.HandleFunc("POST /api/runs/{id}/stop", s.handleStopRun)
+	mux.HandleFunc("POST /api/runs/{id}/resume", s.handleResumeRun)
 
 	// 前端静态资源（内嵌）。hash 路由使浏览器只请求 / 与资源文件本身，无需 history fallback。
 	mux.Handle("/", http.FileServer(http.FS(s.assets)))

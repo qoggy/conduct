@@ -16,10 +16,16 @@ type fakeDetachLauncher struct {
 	err         error
 
 	gotName, gotPrompt, gotCwd string
+	gotResumeID                string
 }
 
 func (f *fakeDetachLauncher) Launch(name, userPrompt, absCwd string) (string, string, error) {
 	f.gotName, f.gotPrompt, f.gotCwd = name, userPrompt, absCwd
+	return f.runID, f.note, f.err
+}
+
+func (f *fakeDetachLauncher) LaunchResume(id string) (string, string, error) {
+	f.gotResumeID = id
 	return f.runID, f.note, f.err
 }
 

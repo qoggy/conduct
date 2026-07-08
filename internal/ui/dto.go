@@ -48,6 +48,10 @@ type renameRequest struct {
 	NewName string `json:"newName"`
 }
 
+type copyRequest struct {
+	NewName string `json:"newName"`
+}
+
 type launchRequest struct {
 	UserPrompt string `json:"userPrompt"`
 	Cwd        string `json:"cwd"`
@@ -103,7 +107,8 @@ type workflowsResponse struct {
 }
 
 // runSummary 是运行列表的精简单项：裁掉 workflowSnapshot / artifacts 大字段（等价 run list）。
-// Status 是读时派生的 EffectiveStatus；Progress 是已落盘 trace 行数（k/N 的 k）。
+// Status 是读时派生的 EffectiveStatus；Progress 是 k/N 的 k——按唯一 stepIndex 且 success 去重的
+// 进度分子（store.CountProgress，非物理行数，防 resume 后 k>N）。
 type runSummary struct {
 	ID         string     `json:"id"`
 	Workflow   string     `json:"workflow"`
@@ -124,8 +129,10 @@ type runsResponse struct {
 // 内嵌 *run.Record 使其字段提升到顶层，与 run show --json 的形态一致。
 type runDetail struct {
 	*run.Record
-	Progress int              `json:"progress"`
-	Trace    []run.TraceEntry `json:"trace,omitempty"`
+	Progress int `json:"progress"`
+	// Trace 用指针区分「未请求」与「请求了但为空」：未带 ?trace=1 → nil → omitempty 省略；
+	// 带 ?trace=1 → 非 nil（空则为 []），恒有 trace 字段（数组语义，与 run show --json --trace 一致）。
+	Trace *[]run.TraceEntry `json:"trace,omitempty"`
 }
 
 type launchResponse struct {

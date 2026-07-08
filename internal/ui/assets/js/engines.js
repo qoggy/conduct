@@ -4,11 +4,12 @@ import { h } from "./dom.js";
 import { api } from "./api.js";
 
 // 引擎品牌 icon：各家官方图标（favicon，内嵌于 vendor/engine-icons/，取自 claude.com /
-// antigravity.google / qoder.com）。未登记的引擎回退到中性首字母徽标。
+// antigravity.google / qoder.com / openai.com/codex）。未登记的引擎回退到中性首字母徽标。
 const ICON_FILES = {
   "claude-code": "claude-code.png", // Claude 星芒（claude.com）
   antigravity: "antigravity.png", // Antigravity 彩虹峰（antigravity.google）
   qoder: "qoder.png", // Qoder app 图标（qoder.com）
+  codex: "codex.png", // OpenAI Codex blossom + 终端提示符 >_（openai.com/codex，白 mark 黑底）
 };
 
 // engineIconEl 构建一个 .eicon 徽标元素：已知引擎渲染官方图标 <img>，未知引擎回退首字母。

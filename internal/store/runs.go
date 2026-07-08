@@ -140,6 +140,21 @@ func (s *Store) WriteSummary(id, markdown string) error {
 	return atomicWrite(summaryPath(dir), []byte(markdown))
 }
 
+// RemoveSummary 删除某 run 的 run-summary.md；文件不存在视为已删除，供 resume 切回 running 时清理旧终态报告。
+func (s *Store) RemoveSummary(id string) error {
+	dir, err := s.runDir(id)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(summaryPath(dir)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("删除运行总结 %s 失败: %w", id, err)
+	}
+	return nil
+}
+
 // ReadSummary 读 run-summary.md 全文；尚未生成（running 期收尾节点还没写）返回 ErrSummaryNotExist。
 // WriteSummary 走 atomicWrite（rename 原子），故不存在读到半文件的情况。
 func (s *Store) ReadSummary(id string) (string, error) {
@@ -188,12 +203,12 @@ func (s *Store) LoadTrace(id string) ([]run.TraceEntry, error) {
 	file, err := os.Open(tracePath(dir))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return []run.TraceEntry{}, nil
 		}
 		return nil, fmt.Errorf("读取 trace %s 失败: %w", id, err)
 	}
 	defer file.Close()
-	var entries []run.TraceEntry
+	entries := make([]run.TraceEntry, 0)
 	reader := bufio.NewReader(file)
 	for lineNumber := 1; ; lineNumber++ {
 		chunk, readErr := reader.ReadBytes('\n')
@@ -217,9 +232,11 @@ func (s *Store) LoadTrace(id string) ([]run.TraceEntry, error) {
 	}
 }
 
-// CountTrace 统计某 run 的 trace 完整行数（= 已记录步骤数），列表页进度 k/N 的 k。
+// CountTrace 统计某 run 的 trace 完整行数（= 落盘的物理记录条数，含 resume 后同一 stepIndex 的多条）。
 // 只数 '\n' 字节、绝不解析 JSON——单行可达 MB 级，全量 LoadTrace 只为数行数会拖垮列表。
 // 文件缺失视为 0；末尾无换行的半行（正在写入）自然不计入。
+// 注意：进度分子 k 已改用按 stepIndex 去重的 CountProgress（防 resume 后 k>N，见其文档与 cli-runtime.md
+// 〈run resume〉），本函数数的是全量物理行数，语义是「已落盘多少条 trace」，非「完成到第几步」。
 func (s *Store) CountTrace(id string) (int, error) {
 	dir, err := s.runDir(id)
 	if err != nil {
@@ -245,6 +262,59 @@ func (s *Store) CountTrace(id string) (int, error) {
 				return count, nil
 			}
 			return 0, fmt.Errorf("统计 trace %s 行数失败: %w", id, readErr)
+		}
+	}
+}
+
+// progressLine 只取算进度所需的两字段：逐行流式解析 trace.jsonl 时避免把 MB 级 input/output 也解出来。
+type progressLine struct {
+	StepIndex int  `json:"stepIndex"`
+	Success   bool `json:"success"`
+}
+
+// CountProgress 统计一次运行的进度分子 k = trace 中「唯一 stepIndex 且（最后一次记录）success」的步数
+// （去重逻辑同 run.ProgressCount）。列表页为每个 run 算进度时用它替代 CountTrace 的数行数——resume 保留
+// 失败行 + 续写补跑行会让同一 stepIndex 出现多条，数行数会使 k 越过分母 N；按 stepIndex 去重保 k ≤ N。
+// 逐行流式解析、只取 stepIndex/success 两字段（不 materialize MB 级 input/output）；行读取健壮性同
+// LoadTrace（只认完整行、容忍 \r\n、末尾半行丢弃不报损坏）。文件缺失视为 0。
+func (s *Store) CountProgress(id string) (int, error) {
+	dir, err := s.runDir(id)
+	if err != nil {
+		return 0, err
+	}
+	file, err := os.Open(tracePath(dir))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("读取 trace %s 失败: %w", id, err)
+	}
+	defer file.Close()
+	lastSuccess := map[int]bool{}
+	reader := bufio.NewReader(file)
+	for lineNumber := 1; ; lineNumber++ {
+		chunk, readErr := reader.ReadBytes('\n')
+		if len(chunk) > 0 && chunk[len(chunk)-1] == '\n' {
+			line := bytes.TrimRight(chunk[:len(chunk)-1], "\r")
+			if len(line) > 0 {
+				var pl progressLine
+				if err := json.Unmarshal(line, &pl); err != nil {
+					return 0, fmt.Errorf("trace %s 第 %d 行损坏: %w", id, lineNumber, err)
+				}
+				lastSuccess[pl.StepIndex] = pl.Success // 后写覆盖前写，末条为准
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				count := 0
+				for _, ok := range lastSuccess {
+					if ok {
+						count++
+					}
+				}
+				return count, nil
+			}
+			return 0, fmt.Errorf("读取 trace %s 失败: %w", id, readErr)
 		}
 	}
 }

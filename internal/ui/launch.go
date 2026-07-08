@@ -47,6 +47,19 @@ func (s *Server) launchRun(name, userPrompt, cwd string) (runID, note string, er
 	return runID, note, nil
 }
 
+// resumeRun 从中断处恢复一次运行并返回其 run id（即原 id，续写原 run）：调用方（handleResumeRun）已做
+// 「派生态为 failed / interrupted」的 409 前置校验，此处只负责 spawn。复用共用发射器的 LaunchResume
+// ——因续写原 run、run id 即入参，无需 workflow run 那套轮询匹配。返回的 note 非空表示「已发射但超时未
+// 确认子进程接管（子进程仍在跑）」，非失败。发射器的失败对 UI 一律是 500。
+func (s *Server) resumeRun(id string) (runID, note string, err error) {
+	launcher := launch.NewLauncher(s.exePath, s.store, s.stderrDir, s.now)
+	runID, note, err = launcher.LaunchResume(id)
+	if err != nil {
+		return "", "", newLaunchError(http.StatusInternalServerError, "%s", err.Error())
+	}
+	return runID, note, nil
+}
+
 // preflight 在起子进程前进程内做只读校验，把「workflow 不存在 / 定义损坏 / 需求空 / 目录不存在」
 // 从秒级子进程失败缩到毫秒级 400/404/422。真正的权威闸门仍是子进程 workflow run 自身的
 // resolveCwd（跑同一份 run.ValidateWorkingDir）。返回绝对化后的工作目录。

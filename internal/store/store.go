@@ -152,9 +152,13 @@ func (s *Store) Delete(name string) error {
 	return nil
 }
 
-// List 列出 store 内全部工作流，按名字排序；store 为空 / 目录尚未创建时返回空切片、不报错。
-// 单个文件解析失败不连累其余：跳过并计入第二个返回值 skipped（每项一个解析错误），由调用方
-// 决定如何告警。第三个返回值仅在目录不可读等致命情形非 nil。
+// List 列出 store 内全部工作流，按 updatedAt 倒序（最近修改在前，updatedAt 相同再按 name 升序兜底）；
+// store 为空 / 目录尚未创建时返回空切片、不报错。单个文件解析失败不连累其余：跳过并计入第二个返回值
+// skipped（每项一个解析错误），由调用方决定如何告警。第三个返回值仅在目录不可读等致命情形非 nil。
+//
+// 排序须先加载各 workflow 取 updatedAt 再排（而非加载前按名排）——与 ListRuns 的时间倒序同一「最近优先」
+// 心智，但比较字段是 updatedAt（不复用比较 startedAt 的 startedAfter）。一处改则 CLI workflow list 与 UI
+// 工作流列表（handleListWorkflows 直接沿用本顺序、前端不二次排序）同源同序。
 func (s *Store) List() ([]*workflow.Definition, []error, error) {
 	entries, err := os.ReadDir(s.workflowsDir())
 	if err != nil {
@@ -163,17 +167,13 @@ func (s *Store) List() ([]*workflow.Definition, []error, error) {
 		}
 		return nil, nil, fmt.Errorf("读取 store 失败: %w", err)
 	}
-	var names []string
+	defs := make([]*workflow.Definition, 0, len(entries))
+	var skipped []error
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		names = append(names, strings.TrimSuffix(entry.Name(), ".json"))
-	}
-	sort.Strings(names)
-	defs := make([]*workflow.Definition, 0, len(names))
-	var skipped []error
-	for _, name := range names {
+		name := strings.TrimSuffix(entry.Name(), ".json")
 		def, err := s.Load(name)
 		if err != nil {
 			skipped = append(skipped, err) // 单个文件损坏不连累其余
@@ -181,7 +181,24 @@ func (s *Store) List() ([]*workflow.Definition, []error, error) {
 		}
 		defs = append(defs, def)
 	}
+	sort.SliceStable(defs, func(i, j int) bool {
+		if defs[i].UpdatedAt != defs[j].UpdatedAt {
+			return updatedAfter(defs[i].UpdatedAt, defs[j].UpdatedAt) // 最近修改在前
+		}
+		return defs[i].Name < defs[j].Name // updatedAt 相同按 name 升序兜底，免同刻并列抖动
+	})
 	return defs, skipped, nil
+}
+
+// updatedAfter 报告 a 是否晚于 b（按 RFC3339 解析比较真实时刻；解析失败退化为字符串比较，不同时区
+// 偏移下字典序会失真，故不裸用字典序）。与 runs.go 的 startedAfter 同策略，但语义是 updatedAt 比较。
+func updatedAfter(a, b string) bool {
+	timeA, errA := time.Parse(time.RFC3339, a)
+	timeB, errB := time.Parse(time.RFC3339, b)
+	if errA != nil || errB != nil {
+		return a > b
+	}
+	return timeA.After(timeB)
 }
 
 // write 把定义规范化落盘（原子写：临时文件 + rename），首用自动建目录。

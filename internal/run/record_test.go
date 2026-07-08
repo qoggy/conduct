@@ -44,6 +44,29 @@ func TestStepLabel(t *testing.T) {
 	}
 }
 
+func TestProgressCount(t *testing.T) {
+	// 空 trace → 0。
+	if k := ProgressCount(nil); k != 0 {
+		t.Errorf("空 trace 应为 0，得到 %d", k)
+	}
+	// resume 后的 trace：step2 先失败、后被补跑成功——同一 stepIndex 两条，末条 success 为准，只算 1 次。
+	trace := []TraceEntry{
+		{StepIndex: 0, Success: true},
+		{StepIndex: 1, Success: true},
+		{StepIndex: 2, Success: false}, // 首次失败（保留）
+		{StepIndex: 2, Success: true},  // 补跑成功
+		{StepIndex: 3, Success: true},
+	}
+	if k := ProgressCount(trace); k != 4 {
+		t.Errorf("唯一成功 stepIndex {0,1,2,3} 应为 4，得到 %d", k)
+	}
+	// 末条为失败（尚未补跑成功）：该 stepIndex 不计。
+	failing := []TraceEntry{{StepIndex: 0, Success: true}, {StepIndex: 1, Success: false}}
+	if k := ProgressCount(failing); k != 1 {
+		t.Errorf("末条失败的 step 不计，应为 1，得到 %d", k)
+	}
+}
+
 func TestEffectiveStatusRunningSelfIsRunning(t *testing.T) {
 	// 用当前进程 pid：running + 存活 → 仍 running。
 	r := &Record{Status: StatusRunning, Pid: os.Getpid()}

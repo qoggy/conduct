@@ -649,3 +649,79 @@ TC-008 已验单节点自循环的 `--expand`；本节验**自循环与 redo 段
     ```
   - 语义对照：`A→B→B评→B→C→A→B→B评→B→C`——redo 段循环第 2 轮把 `A、B` 连同 B 的自循环重跑，段内各步 iter 取段循环轮号。
 - **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
+
+---
+
+## 补充：workflow list 排序契约（零 token）
+
+TC-024 只验 `list` 与 `--json` **都列出全部**（用 `sorted(...)` 归一化名字、不看行序），会掩盖排序 bug。本节补 spec [cli-authoring.md](../specs/cli-authoring.md)〈workflow list〉规定的**顺序契约**：按 `updatedAt` **倒序**（最近修改在前），`updatedAt` 相同再按 `name` **升序**兜底；CLI 表格与 `--json` 同序（UI 工作流列表 `handleListWorkflows` 直接沿用此顺序、前端不二次排序，见 [ui.md](../specs/ui.md)）。
+
+### TC-037 workflow list 按 updatedAt 倒序、name 升序兜底
+
+- **目的**：验证 `workflow list` / `--json` 的行序遵守排序契约——**最近修改在最前**（`updatedAt` 倒序），同一 `updatedAt` 内按 `name` **升序兜底**；该序**不是**单纯按名字排（否则 `updatedAt` 维度未生效）；且 **CLI 与 UI `/api/workflows` 同源同序**（前端不二次排序）。
+- **前置**：
+  1. 建隔离环境。
+  2. 造出**跨两个修改时刻**的四个工作流：先建 `apple`，隔 >1s 再建 `banana`/`zebra`/`mango`（后三者力求同一秒、构成 `name` 兜底组；`apple` 更早、构成 `updatedAt` 更旧组）。因 run id / `updatedAt` 是**秒级**粒度，用 `sleep 1.1` 确保 `apple` 与后三者落在不同秒：
+     ```bash
+     "$CONDUCT" workflow create apple >/dev/null
+     sleep 1.1
+     "$CONDUCT" workflow create banana >/dev/null
+     "$CONDUCT" workflow create zebra  >/dev/null
+     "$CONDUCT" workflow create mango  >/dev/null
+     ```
+  3. 起 UI 服务端供步骤 3 校验 UI 同序（无需引擎，仅列表）：
+     ```bash
+     "$CONDUCT" ui --port 0 > "$WORK/ui.log" 2>&1 & UIPID=$!
+     for i in $(seq 1 50); do
+       B=$(grep -oE 'http://127\.0\.0\.1:[0-9]+' "$WORK/ui.log" | head -1)
+       [ -n "$B" ] && curl -s -o /dev/null "$B/api/version" && break; sleep 0.1
+     done
+     ```
+- **步骤**：
+  1. 取表格首列的行序：
+     `"$CONDUCT" workflow list | awk 'NR>1{print $1}'`
+  2. 对 `--json` 校验行序恰是「`updatedAt` 倒序、`name` 升序兜底」、非纯字母序，**并显式确认 `name` 兜底组真的形成、组内升序**（否则同 `updatedAt` 下的 name 兜底其实没被触发到，须重跑前置）：
+     ```bash
+     "$CONDUCT" workflow list --json | python3 -c '
+     import sys, json
+     from collections import Counter
+     d = json.load(sys.stdin)
+     actual = [x["name"] for x in d]
+     exp = sorted(d, key=lambda p: p["name"])                        # 先 name 升序
+     exp = sorted(exp, key=lambda p: p["updatedAt"], reverse=True)   # 再 updatedAt 倒序（稳定排序保 name 兜底）
+     expected = [x["name"] for x in exp]
+     c = Counter(x["updatedAt"] for x in d)                          # 找出同 updatedAt（≥2 个）的兜底组
+     groups = [[x["name"] for x in d if x["updatedAt"] == u] for u, n in c.items() if n > 1]
+     print("actual  =", actual)
+     print("expected=", expected)
+     print("contract_match=", actual == expected)
+     print("not_pure_alpha=", actual != sorted(actual))
+     print("tie_group_found=", len(groups) > 0)                      # 兜底组是否真形成
+     print("tie_group=", groups)
+     print("tie_group_name_ascending=", all(g == sorted(g) for g in groups))
+     '
+     ```
+  3. 校验 UI `/api/workflows` 行序与 CLI **逐位一致**（CLI 与 UI 同源同序）：
+     ```bash
+     CLI=$("$CONDUCT" workflow list --json); UI=$(curl -s "$B/api/workflows")
+     CLI_JSON="$CLI" UI_JSON="$UI" python3 -c '
+     import os, json
+     cli = [x["name"] for x in json.loads(os.environ["CLI_JSON"])]
+     ui  = [x["name"] for x in json.loads(os.environ["UI_JSON"])["workflows"]]
+     print("cli_order=", cli)
+     print("ui_order =", ui)
+     print("cli_ui_same_order=", cli == ui)
+     '
+     ```
+- **预期**：
+  - 步骤 1 表格数据行按 `updatedAt` 倒序：`apple`（更旧）排在**最后**，`banana`/`zebra`/`mango`（更新的同秒组）排在前、组内按名升序（`banana` → `mango` → `zebra`）。典型输出：
+    ```
+    banana
+    mango
+    zebra
+    apple
+    ```
+  - 步骤 2 打印 `contract_match= True`（`--json` 行序 == 由各项自身 `updatedAt`+`name` 按契约算出的期望序）、`not_pure_alpha= True`（行序不等于把名字直接字母排序的结果，证明 `updatedAt` 维度确实参与）、`tie_group_found= True` 且 `tie_group_name_ascending= True`（同 `updatedAt` 的兜底组**确实形成**且组内 name 升序——`name` 兜底被真触发，而非因四者各占一秒而空过）。**若 `tie_group_found= False`**：说明后三者未落在同一秒（机器过慢跨了秒），兜底维度没测到，须重跑前置直至形成兜底组。
+  - 步骤 3 打印 `cli_ui_same_order= True`——UI `/api/workflows` 行序与 CLI 逐位相同（`handleListWorkflows` 直接沿用 `store.List`、前端不二次排序）。
+  - **归一化说明**：`updatedAt` 时间戳本身忽略（每次不同），只校验**行序**符合契约；`contract_match` 由数据自身算出的期望序对照，验的是「CLI 按契约排」；`name` 兜底另由 `tie_group_*` 显式确认「同秒组存在且升序」，不再默许「跨秒时 `contract_match` 照样过」而漏测兜底。
+- **清理**：`kill "$UIPID" 2>/dev/null; wait "$UIPID" 2>/dev/null; export HOME="$OLD_HOME"; rm -rf "$WORK"`。

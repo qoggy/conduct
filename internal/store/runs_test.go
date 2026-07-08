@@ -57,6 +57,13 @@ func TestAppendAndLoadTrace(t *testing.T) {
 	if err := s.CreateRun(rec); err != nil {
 		t.Fatal(err)
 	}
+	empty, err := s.LoadTrace(rec.ID)
+	if err != nil {
+		t.Fatalf("空 trace LoadTrace 失败: %v", err)
+	}
+	if empty == nil || len(empty) != 0 {
+		t.Fatalf("空 trace 应返回非 nil 空切片，得到 %#v", empty)
+	}
 	for i := 0; i < 3; i++ {
 		if err := s.AppendTrace(rec.ID, run.TraceEntry{StepIndex: i, Type: "agent", NodeID: "a", Output: "o", Success: true}); err != nil {
 			t.Fatal(err)
@@ -161,6 +168,35 @@ func TestCountTrace(t *testing.T) {
 	}
 }
 
+// TestCountProgress 覆盖去重语义：唯一 stepIndex 且（最后一次记录）success 才计数，防 resume 后 k>N。
+func TestCountProgress(t *testing.T) {
+	s := New(t.TempDir())
+	rec := sampleRun("flow-20260703-150000")
+	if err := s.CreateRun(rec); err != nil {
+		t.Fatal(err)
+	}
+	// 缺 / 空 trace → 0。
+	if n, err := s.CountProgress(rec.ID); err != nil || n != 0 {
+		t.Fatalf("空 trace 应为 0，得到 %d/%v", n, err)
+	}
+	// 模拟一次 resume 后的 trace：step5 先失败、后被补跑成功——同一 stepIndex 两条，只应算 1 次。
+	// 物理 5 行、但唯一成功 stepIndex 为 {0,1,5,6} 共 4 个（step5 末条 success 覆盖失败）。
+	writeRawTrace(t, s, rec.ID,
+		`{"stepIndex":0,"success":true}`+"\n"+
+			`{"stepIndex":1,"success":true}`+"\n"+
+			`{"stepIndex":5,"success":false}`+"\n"+ // 首次失败行（保留）
+			`{"stepIndex":5,"success":true}`+"\n"+ // resume 补跑成功
+			`{"stepIndex":6,"success":true}`+"\n") // 真实 trace 每行以 \n 结尾（AppendTrace 保证）
+	if n, err := s.CountProgress(rec.ID); err != nil || n != 4 {
+		t.Fatalf("去重后应为 4（唯一成功 stepIndex 0/1/5/6），得到 %d/%v", n, err)
+	}
+	// 缺文件的 id → 0。
+	missing := New(t.TempDir())
+	if n, err := missing.CountProgress("ghost-20260703-150000"); err != nil || n != 0 {
+		t.Fatalf("缺 trace 文件应为 0，得到 %d/%v", n, err)
+	}
+}
+
 // TestLoadTraceIgnoresTrailingHalfLine 确认末尾半行不被当成完整行解析（不报「行损坏」）。
 func TestLoadTraceIgnoresTrailingHalfLine(t *testing.T) {
 	s := New(t.TempDir())
@@ -201,6 +237,26 @@ func TestReadSummary(t *testing.T) {
 	}
 	if got != "# 报告\n完成\n" {
 		t.Errorf("总结内容错: %q", got)
+	}
+}
+
+func TestRemoveSummary(t *testing.T) {
+	s := New(t.TempDir())
+	rec := sampleRun("flow-20260703-150000")
+	if err := s.CreateRun(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteSummary(rec.ID, "# 旧报告\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveSummary(rec.ID); err != nil {
+		t.Fatalf("RemoveSummary 失败: %v", err)
+	}
+	if _, err := s.ReadSummary(rec.ID); !errors.Is(err, ErrSummaryNotExist) {
+		t.Fatalf("删除后应读不到 summary，得到 %v", err)
+	}
+	if err := s.RemoveSummary(rec.ID); err != nil {
+		t.Fatalf("RemoveSummary 应幂等，得到 %v", err)
 	}
 }
 

@@ -52,6 +52,7 @@ function view(outlet, d) {
     h("span", { class: "grow" }),
     h("span", { class: "pid" }, "pid " + d.pid),
     running ? h("button", { class: "btn btn-stop", onClick: () => openStop(outlet, d) }, i18n.stopBtn) : null,
+    failed || interrupted ? h("button", { class: "btn btn-ink", onClick: () => openResume(outlet, d) }, i18n.resumeBtn) : null,
   );
 
   const wfName = h("span", { class: "mono link", style: { fontSize: "12.5px" } }, d.workflow);
@@ -82,10 +83,10 @@ function view(outlet, d) {
 
   // ---- failed：error 全文置顶 ----
   if (failed && d.error) {
-    const failedStepText =
-      d.failedStep !== null && d.failedStep !== undefined ? i18n.failedAtStepTpl(d.failedStep) : i18n.failedPrefix;
+    const traceStepIndex = lastUnsuccessfulStepIndex(d.trace || []);
+    const failureTitle = traceStepIndex !== null ? i18n.failedAtStepTpl(traceStepIndex) : i18n.failedPrefix;
     page.appendChild(
-      h("div", { class: "errpanel" }, h("h5", {}, failedStepText), h("p", {}, d.error)),
+      h("div", { class: "errpanel" }, h("h5", {}, failureTitle), h("p", {}, d.error)),
     );
   }
 
@@ -146,6 +147,9 @@ function stepsView(trace, colorIndex) {
   // 仅含循环（评测内循环 / 回跳，任一步 iteration>1）的运行才按轮次分组；线性运行全是第 1 轮，
   // 插「第 1 轮」头纯属噪音，不插。
   const grouped = trace.some((e) => e.iteration > 1);
+  // 被 resume 取代的失败行：某失败步之后又出现同一 stepIndex 的记录（补跑那次），旧失败行标注
+  //「已重跑取代」——保留旧记录是有意的审计轨迹（与 run show --trace 一致）。
+  const superseded = supersededIndices(trace);
   let lastIteration = null;
   trace.forEach((entry, i) => {
     if (grouped && entry.iteration !== lastIteration) {
@@ -159,12 +163,32 @@ function stepsView(trace, colorIndex) {
         ),
       );
     }
-    container.appendChild(stepRow(entry, i, colorIndex, i === trace.length - 1));
+    container.appendChild(stepRow(entry, i, colorIndex, i === trace.length - 1, superseded.has(i)));
   });
   return container;
 }
 
-function stepRow(entry, index, colorIndex, isLast) {
+// supersededIndices 找出被后续同 stepIndex 记录取代的失败行的物理下标集合（resume 保留的旧失败行）。
+function supersededIndices(trace) {
+  const laterOf = new Set();
+  const seenAfter = {}; // stepIndex → 该步最后一次出现的物理下标
+  trace.forEach((e, i) => {
+    seenAfter[e.stepIndex] = i;
+  });
+  trace.forEach((e, i) => {
+    if (!e.success && seenAfter[e.stepIndex] > i) laterOf.add(i); // 失败行且其后还有同步记录 → 被取代
+  });
+  return laterOf;
+}
+
+function lastUnsuccessfulStepIndex(trace) {
+  for (let i = trace.length - 1; i >= 0; i--) {
+    if (!trace[i].success) return trace[i].stepIndex;
+  }
+  return null;
+}
+
+function stepRow(entry, index, colorIndex, isLast, superseded) {
   const ci = colorIndex[entry.nodeId] ?? 0;
   const label = entry.type === "evaluator" ? entry.displayName + " " + i18n.evalSuffix : entry.displayName;
   const meta = entry.success
@@ -177,12 +201,13 @@ function stepRow(entry, index, colorIndex, isLast) {
 
   const row = h(
     "div",
-    { class: "step clickable" + (entry.success ? "" : " failrow") + (isLast ? " steplast" : "") },
+    { class: "step clickable" + (entry.success ? "" : " failrow") + (isLast ? " steplast" : "") + (superseded ? " superseded" : "") },
     h("span", { class: "no" }, "step " + entry.stepIndex),
     h("span", { class: "idchip", style: chipStyle(ci) }, entry.nodeId),
     h("span", { class: "lbl" }, label),
     h("span", { class: "engc" }, engineIconEl(entry.engine), entry.engine),
     entry.success ? h("span", { class: "ok" }, "✓") : h("span", { class: "bad" }, "✗"),
+    superseded ? h("span", { class: "superseded-tag" }, i18n.supersededNote) : null,
     h("span", { class: "meta" }, meta),
     h("span", { class: "pv" }, previewLine(preview)),
   );
@@ -369,6 +394,22 @@ function openStop(outlet, d) {
     ],
     onConfirm: async () => {
       await api.stopRun(d.id);
+      reload(outlet, d.id);
+    },
+  });
+}
+
+// ---- 重跑（从中断处恢复） ----
+function openResume(outlet, d) {
+  confirmModal({
+    title: i18n.dlgResumeTitleTpl(d.id),
+    confirmLabel: i18n.resumeConfirm,
+    body: [
+      h("p", { style: { margin: "0" } }, i18n.resumeBodyTpl(d.id)),
+      h("p", { class: "muted", style: { margin: "6px 0 0" } }, i18n.resumeNote),
+    ],
+    onConfirm: async () => {
+      await api.resumeRun(d.id); // 202 返回 {runId}（即原 id）；续跑后该 run 转 running，刷新即见推进
       reload(outlet, d.id);
     },
   });

@@ -7,46 +7,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// buildCopiedDefinition 从 src 造一份新定义：只带 dstName 与深拷来的 nodes，
-// 不携带时间戳（CreatedAt / UpdatedAt 留空，交给 store.Create 重戳当前时刻）。
-// nodes 必须深拷——Node 内含指针字段（EngineConfig / Evaluator / LoopCount），
-// 逐个 new 一份，避免 dst 与 src 共享底层指针后互相串改。
-func buildCopiedDefinition(src *workflow.Definition, dstName string) *workflow.Definition {
-	nodes := make([]workflow.Node, len(src.Nodes))
-	for i := range src.Nodes {
-		nodes[i] = copyNode(src.Nodes[i])
-	}
-	return &workflow.Definition{
-		Name:  dstName,
-		Nodes: nodes,
-	}
-}
-
-// copyNode 深拷单个节点：值字段直接复制，三个指针字段各 new 一份新的底层值。
-func copyNode(node workflow.Node) workflow.Node {
-	copied := node // 先浅拷值字段（ID / DisplayName / Engine / PromptTemplate / RedoTarget）
-	copied.EngineConfig = copyEngineConfig(node.EngineConfig)
-	if node.Evaluator != nil {
-		evaluator := *node.Evaluator
-		evaluator.EngineConfig = copyEngineConfig(node.Evaluator.EngineConfig)
-		copied.Evaluator = &evaluator
-	}
-	if node.LoopCount != nil {
-		loopCount := *node.LoopCount
-		copied.LoopCount = &loopCount
-	}
-	return copied
-}
-
-// copyEngineConfig 深拷 EngineConfig 指针（nil 原样返回 nil）。
-func copyEngineConfig(config *workflow.EngineConfig) *workflow.EngineConfig {
-	if config == nil {
-		return nil
-	}
-	cloned := *config
-	return &cloned
-}
-
 func newWorkflowCopyCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "copy <src> <dst>",
@@ -74,7 +34,7 @@ func newWorkflowCopyCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			copied := buildCopiedDefinition(def, dst)
+			copied := def.CopyAs(dst)
 			// 防御式校验：<src> 已在库应已合法，仍校验一遍；不过即拒、不写盘。
 			if err = workflow.Validate(copied); err != nil {
 				return err

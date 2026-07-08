@@ -38,6 +38,7 @@ conduct 有两个模型，像数据库的两张表；本文详述 **run** 表，
 | `conduct run show <id>` | 查看某次运行的状态与详情 | 查询（运行） |
 | `conduct run stop <id>` | 终止一次进行中的运行 | 终止（运行） |
 | `conduct run wait <id>` | 阻塞等待一次运行到终态，退出码即成败 | 编排（运行） |
+| `conduct run resume <id> [-d]` | 从中断处恢复一次未完成的运行（`failed` / `interrupted`，跳过已成功步续跑；`-d` 后台起） | 恢复（运行） |
 | `conduct run rm <id>` | 删除一条运行记录 | 清理（运行） |
 
 > 工具层命令 `conduct version` / `conduct ui` / `conduct update` / `conduct help` 不属于 workflow / run 资源族，见 [cli-tooling.md](./cli-tooling.md)。
@@ -91,6 +92,8 @@ conduct workflow run <name> ["<用户需求>"] [--cwd <dir>] [-d | --detach] [--
 
 **用户需求的来源（按优先级）**：① 命令行位置参数 `<用户需求>`；② 省略它、且 stdin 是管道 / 重定向（非 TTY）时，读取**整个 stdin** 作为需求（如 `cat req.txt | conduct workflow run <name>`）。二者皆无、stdin 又是终端时，报参数缺失并退出 `2`，**不静默挂起等待输入**。
 
+**给引擎看图片**：需求文本里直接写图片的**本地绝对路径**即可——各引擎自带的文件工具会自行读取该图（已实测 claude / codex / qoder / antigravity 均能仅凭绝对路径识别本地图片）。conduct **不提供**专门的图片旗标、也不做 URL 下载；细节与边界见 [engines.md](./engines.md)〈图片输入〉。
+
 **输出**：
 
 - 人类可读（默认）：
@@ -105,7 +108,7 @@ conduct workflow run <name> ["<用户需求>"] [--cwd <dir>] [-d | --detach] [--
   ```
 
 - 落盘副作用：在运行目录 `~/.conduct/runs/<id>/` 下——**开跑即写** `run.json`（`status:"running"`），`trace.jsonl` 逐步追加，**收尾**把 `run.json` 更新为终态并生成 `run-summary.md`；三文件结构见〈runs/ 落盘结构〉，供 `run list` / `run show` 查询。
-- 任一步引擎调用失败：人读模式下该步在 stdout 打一行 `✗ <耗时>ms 失败：<错误摘要>` 进度标记（与成功的 `✓` 对称）；**权威错误另走 stderr**（含引擎名、退出码、报错摘要）；该步完整错误写入 trace 对应行的 `error` 字段，`run.json` 记 `status:"failed"` 与失败步号 `failedStep`（指针，错误详情看该步 trace）；已完成步骤的 trace 保留；退出 `1`。
+- 任一步引擎调用失败：人读模式下该步在 stdout 打一行 `✗ <耗时>ms 失败：<错误摘要>` 进度标记（与成功的 `✓` 对称）；**权威错误另走 stderr**（含引擎名、退出码、报错摘要）；该步完整错误写入 trace 对应行的 `error` 字段，`run.json` 记 `status:"failed"` 并把该错误摘要落进 `error`（失败步号不单独存字段——即 trace 末条 `success:false` 记录的 `stepIndex`）；已完成步骤的 trace 保留；退出 `1`。
 - 缺少 `<用户需求>` 且 stdin 是终端（无管道输入）：stderr 报参数缺失；退出 `2`。
 - 显式 `--cwd` 指向不存在的路径 / 非目录：stderr 报用法错误；退出 `2`（发射前拦下，不烧引擎）。UI 启动弹窗与服务端 self-exec 预检复用同一校验（同源）。
 
@@ -372,6 +375,87 @@ conduct run wait "$id" && conduct run show "$id"   # 等它跑完再读总结（
 
 ---
 
+## run resume — 从中断处恢复运行
+
+**用途**：恢复一次**未正常完成**的运行——无论是引擎报错中止（`failed`）还是进程被杀 / 崩溃（`interrupted`），都跳过前面已成功的步骤、从**中断处**整步重跑、续到终态。一个 N 步 workflow 在第 K 步中断时，前 K-1 步的产物（真实引擎调用、往往很贵）已落盘，`resume` 直接复用它们、只重跑第 K 步及其后，不从头再来。语义对标「从断点续跑」。`failed` 与 `interrupted` 对「从哪续」没有区别——重入点一律由 `trace.jsonl` 推断（见下文「恢复来源」），二者只是**中断方式**不同（引擎拒绝 vs 进程被杀）。
+
+**为什么是「整步重跑」而非「引擎续跑」**：中断步的引擎会话 id 拿不到——`failed` 时引擎返回空结果、不带会话 id，`interrupted` 时进程在记录会话 id 前就被杀——故无法用引擎自带工具接着那次会话续跑；`resume` 一律对中断步发起**一次全新调用**（输入由落盘数据重建、与首次一致）。整步重跑对绝大多数步骤无副作用——上游产物一致、prompt 一致。
+
+**用法**：
+
+```
+conduct run resume <id> [-d | --detach] [--json]
+```
+
+**参数**：
+
+| 参数 | 必填 | 说明 |
+| --- | --- | --- |
+| `<id>` | 是 | run id（`run list` 里的 `RUN ID`），须是一次 `failed` 或 `interrupted` 的运行 |
+
+**选项**：
+
+| 选项 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `-d, --detach` | 布尔 | `false` | 后台恢复：预检通过后以独立会话（`setsid`）spawn 子进程续跑，父进程打印 run id 后退 `0`，机制与语义同 `workflow run -d`（见〈后台运行（`-d` / `--detach`）〉），唯一差异是无需经 stdin 喂需求（沿用原 run 的 `userPrompt`） |
+| `--json` | 布尔 | `false` | 逐步输出机器可读事件 JSON（每步一行，无进度装饰），同 `workflow run --json`；与 `-d` 并用时改为吐单行句柄 `{"id","workflow"}` |
+
+resume **不接受新的用户需求，也不接受 `--cwd`**——二者都从原 run 记录（`run.json` 的 `userPrompt` / `cwd`）沿用，保证与首次运行同一上下文（`{{sys.userPrompt}}` / `{{sys.cwd}}` 不变）。
+
+**恢复来源（从落盘数据重建「进入中断步那一刻」的状态）**。**`trace.jsonl` 是唯一事实源**——重入点、已完成步的产物 / 反馈全从它推断，`run.json` 不再存 `failedStep` 之类的重入指针：
+
+- **workflow 定义**：取 `run.json` 的 `workflowSnapshot`（**不**回读 store 里可能已被 `edit` / `delete` 的活 workflow），`expand` 后确定性还原线性步骤序列 `[0, N)`（含内循环 / 回跳，每轮占一个线性下标）。
+- **重入下标 R（从 trace 推断，`failed` / `interrupted` 同一规则）**：对每个 `stepIndex` 取其 trace **末条记录**（去重、后写覆盖前写）；**`R` = 最小的「末条记录不是 `success`」的 `stepIndex`**——即该步要么 trace 里根本没有记录（`interrupted`：进程在写该步 trace 前就被杀），要么末条记录 `success:false`（`failed`：引擎报错那步）。若 `[0, N)` 每一步末条都是 `success`，则该 run 实为完成、不应进入恢复（见前置校验）。`trace` 为空（展开前就中断）→ `R = 0`，等价从头跑。
+- **上游产物与评测反馈**：回放 `trace.jsonl` 中 **`stepIndex < R` 且末条 `success` 为真**的记录，按 `stepIndex` 升序**覆盖重建**——`type:"agent"` 还原节点产物（`{{node-id}}` 引用源）、`type:"evaluator"` 还原评测反馈（供带评测节点的下一轮 agent 步消费）。`run.json` 的 `artifacts` 只存 agent 产物、**不含评测反馈**，故以 `trace.jsonl` 为权威回放源。**注意不可按文件物理行切片**（「取前 `R` 行」）：一次 `resume` 又中断后 trace 已混入旧中断行与上一轮补跑行、不是干净前缀，只有按 `stepIndex` + `success` 去重过滤才正确。
+
+**前置校验**（不满足即退 `1`，信息明确，fail-loud）。按**派生态**判定（`running` 且进程已死读时派生为 `interrupted`，判活逻辑见〈runs/ 落盘结构〉「运行态与中断判定」）——**派生态是 `failed` 或 `interrupted` 即可恢复**，二者的重入点由 trace 统一推断：
+
+- `completed` → stderr `<id>: 已成功完成，无需恢复`。
+- `running`（进程存活）→ stderr `<id>: 仍在运行中，无法恢复`（要恢复请先让它自然结束或崩溃；`run stop` 会把它变成 `interrupted`，那之后可 `resume`）。
+- `failed` / `interrupted` → 放行。无需 `failedStep`（已删除该字段）——重入点从 trace 推断，即便 trace 为空也能续（`R = 0`，从头跑）。
+
+**行为**：
+
+1. 前置校验通过后，从 trace 推断重入下标 `R`、重建 `artifacts` / `feedback`，把 run 状态改回 `running`、更新 `pid` / `pidStartTime`、**清空 `endedAt`（置回 `null`）/ `error`**——`endedAt` 在中断收尾时可能已被写入（`failed` 会写），续跑期间必须复归 `null`，守住「`running` 时 `endedAt` 为 `null`」的落盘不变量（见〈runs/ 落盘结构〉示例）。
+2. 从 `R` 起逐步执行（复用 `workflow run` 同一主循环）：每步渲染 → 驱动引擎 → **追加**到**同一** `trace.jsonl`、`artifacts` 增量写回**同一** `run.json`。
+3. 终态：全部成功 → `completed`；再次失败 → `failed`（`error` 写新的失败信息，可再次 `resume`——下次重入点仍由 trace 推断）。
+
+**在原 run 记录上续写（不新建 run）**：`resume` 续写原 `runs/<id>/`、run id 不变——语义上「恢复这次运行」＝同一次 run 继续。中断步的旧 trace 记录**保留**（`failed` 那步留有一条 `success:false` 记录；`interrupted` 那步本就没记录），新记录续写在其后，故 `run show --trace` 会同时看到中断那次与重跑那次的记录，是有意保留的审计轨迹。
+
+> **进度 `k/N` 的计数按 `stepIndex` 去重**：`run show` 的未完成态进度分子与 UI 的进度分子取「trace 中**唯一 `stepIndex` 且 `success`** 的条目数」（`store.CountProgress` → `run.ProgressCount`，同一步以最后一次记录为准），而非 `trace.jsonl` 的物理行数。`run list` 人类表格与 JSON 只输出总步数 `STEPS` / `steps`，不输出 `k/N` 进度分子（见〈run list〉输出）。因为 resume 保留旧失败行 + 续写补跑行会让**同一 `stepIndex` 出现多条**，若数物理行，`k` 会越过分母 `N`（如 `11/10`）、逐步列表也会出现重复的「step 5」；按 `stepIndex` + `success` 去重使 `k ≤ N` 恒成立。审计视角要看全部历史记录仍走 `run show --trace`（不去重）。
+
+**输出**：
+
+- 前台（默认）：同 `workflow run` 前台——先打印从第几步恢复、共剩几步，再逐步打印进度，收尾指向 `run-summary.md`；退出码表达**整趟恢复**的成败（全部成功退 `0`、任一步失败退 `1`）。
+- `--json`（前台）：stdout 每步一行事件 JSON，同 `workflow run --json`；逐步事件即续写进 `trace.jsonl` 的记录。
+- `-d`：同 `workflow run -d`——打印 run id（`--json` 吐单行句柄 `{"id","workflow"}`，`id` 即原 run id）后退 `0`；恢复的真实成败去 `run show <id>` / `run wait <id>` 查。
+- 落盘副作用：原 `runs/<id>/` 的 `run.json` / `trace.jsonl` 续写更新，`run-summary.md` 收尾重生成。
+
+**退出码**：
+
+| 码 | 含义 |
+| --- | --- |
+| `0` | 前台：整趟恢复成功到 `completed`；`-d`：后台已发射、run id 已打印到 stdout |
+| `1` | 前台：恢复中某步失败；或前置校验不通过（`completed` / `running` 存活）、`<id>` 不存在、IO 失败；`-d`：fork / setsid 发射失败或有界等待内未取得句柄 |
+| `2` | 用法错误（缺 `<id>`、`<id>` 非法） |
+
+**示例**：
+
+```bash
+# 某次运行在第 5 步失败，跳过前 4 步、从第 5 步续跑到底
+conduct run resume autopilot-20260703-152233
+
+# 后台恢复，拿到 id 立刻脱手，再等它收尾
+id=$(conduct run resume autopilot-20260703-152233 -d --json | jq -r .id)
+conduct run wait "$id" && conduct run show "$id"
+```
+
+**边界**：`resume` 恢复 `failed`（引擎报错中止）与 `interrupted`（进程被杀 / 崩溃）两类未完成的 run；重入点统一由 trace 推断，二者无差别对待。`interrupted` 的中断步可能在进程被杀前已产生**半途副作用**（引擎实际改了文件但没记进 trace），整步重跑会重复执行该步——与 `failed` 重跑同属「prompt 未必幂等」的已知取舍，绝大多数步骤无副作用故可接受。resume 不改变 run 记录三件套结构、`status` 语义，也不影响 `run list` / `run show` / `run stop` / `run wait`。
+
+> **待确认（`error` 字段是否也一并 derive）**：本次删了 `failedStep`（纯重入指针，可从 trace 末条失败记录的 `stepIndex` 推断）。`run.json` 仍保留的 `error`（失败信息摘要）同理也在 trace 里（末条 `success:false` 记录的 `error`）。当前设计**保留 `error` 作快速排查头条**（`run list` / `run show` / `run-summary.md` 免解析 trace 即可显示失败摘要）。若你要更彻底的「trace 唯一事实源」，可把 `error` 也删掉、显示时从 trace 推断——请拍板。
+
+---
+
 ## run rm — 删除运行记录
 
 **用途**：删除一条历史运行记录（清掉 `runs/<id>/` 整个目录），供长期使用后清理（对标 `docker rm`）。run 是不可变历史，本命令不改写、只**整条移除**。默认在交互终端下二次确认；非交互环境必须显式 `--yes`，避免脚本误删。
@@ -445,15 +529,14 @@ conduct run rm demo-20260703-160140 --yes
   "status": "completed",            // running | completed | failed（interrupted 为派生态：status 仍 running 但 pid 已死）
   "pid": 48213,                     // 运行进程 PID；据此判活——status=running 但进程已死 → interrupted
   "pidStartTime": "1783263565.442591",  // 进程启动时刻令牌，与 pid 联合校验以免 pid 被无关新进程复用时误判/误杀（旧记录或不支持的平台为空，omitempty）
-  "steps": 14,                      // 展开后的总步数（开跑即定；进度 = trace.jsonl 行数 / steps）
+  "steps": 14,                      // 展开后的总步数（开跑即定；进度分母 N，分子为 trace 中唯一 stepIndex 且 success 的条目数，见〈run resume〉进度去重说明）
   "startedAt": "2026-07-03T15:22:33+08:00",  // RFC3339，开跑即写
   "endedAt": "2026-07-03T15:29:10+08:00",    // RFC3339，收尾写；running 时为 null
   "artifacts": {                    // 各节点最终产物：nodeId → 该 node 最后一次成功的 output（随运行推进增量写）
     "node-1": "…",
     "node-2": "…"
   },
-  "failedStep": null,               // status=failed 时的失败步序（stepIndex），否则 null
-  "error": null                     // status=failed 时的失败信息（汇总自 failedStep 那步 trace 的 error，便于快速排查），否则 null
+  "error": null                     // status=failed 时的失败信息（取自失败那步 trace 的 error，便于快速排查），否则 null。无 failedStep 字段——失败步 = trace 末条 success:false 记录的 stepIndex，恢复重入点亦由 trace 推断（见〈run resume〉恢复来源）
 }
 ```
 
@@ -549,6 +632,7 @@ conduct run rm demo-20260703-160140 --yes
 | `workflow run -d`（`--detach`） | **已实现**（self-exec + setsid 发射器已从 `ui` 私有抽为 CLI `-d` 与 UI 共用的 `internal/launch`；父进程同步预检复用前台的 `resolveUserPrompt` / `resolveCwd` / 载入校验，非 UI 那套 HTTP 味 preflight。有界等待确认初始 `run.json` 后打印 run id 退 `0`，确认不了退 `1`；`--json` 吐单行句柄） |
 | `run list --status` | **已实现**（在既有 `run list` 上加状态过滤，按派生态计，非法取值退 `2`；默认仍列全部，不改既有默认） |
 | `run wait` | **已实现**（`internal/cli` 轮询 `run.json` + pid 判活到终态；等到任一终态即退 `0`（对标 docker wait），run 成败在 stdout / `--json` 的 `status`，命令自身出错（不存在 / IO）→`1`、用法错→`2`） |
+| `run resume` | **已实现，对齐本规格**。`internal/orchestrator` 步骤主循环抽成可复用内核 `runSteps`，`Run` / `Resume` 共用；重入下标 `R` 由 `resumeStartIndex` 从 `trace.jsonl` 推断（每步取末条，返回最小的「无记录或末条非 success」下标，空 trace → `R=0`）；`replayState` 只回放 `stepIndex < R 且末条 success` 的记录重建 artifacts / evaluator feedback；`checkResumable` 按 `EffectiveStatus` 放行 `failed` / `interrupted`、拒 `completed` 与存活 `running`；`run.Record` 的 `failedStep` 字段已删除，失败步改由 trace 末条 `success:false` 推断（run show / summary / UI 一致）；原地续写同一 trace（中断步旧记录保留作审计）、恢复时清 `endedAt` / `error`、进度去重（`run.ProgressCount` / `store.CountProgress`）；`internal/launch` 泛化发射 `workflow run` 与 `run resume <id>`（`LaunchResume`，run id 即入参、无 `matchRunID` 轮询），`-d` 后台恢复就位 |
 | `run rm` | **已实现**（删 `runs/<id>/` 整个目录，`-y/--yes` 守卫、拒删在跑的 run、非法 id 退 `2`、不存在退 `1`；确认约定同 `workflow delete`，见 [cli-authoring.md](./cli-authoring.md)〈workflow delete〉） |
 | 引擎 `claude-code` / `antigravity` / `qoder` | **已实装**（无头 CLI `claude -p` / `agy -p` / `qodercli -p`，三者均经真实调用冒烟通过；单测用假二进制覆盖参数/stdin/cwd 接线与 JSON 解析） |
 | 引擎 `codex` | **已实装**（`internal/engine/codex.go` 注册、能力表含 `codex` 行；契约见 [engines.md](./engines.md)〈codex〉。codex 输出为 JSONL 事件流，逐行扫描按 type 归一化，单测覆盖各路径） |
@@ -556,4 +640,4 @@ conduct run rm demo-20260703-160140 --yes
 
 > 工具层命令 `version` / `ui` / `update` / `help` 的实现状态见 [cli-tooling.md](./cli-tooling.md)〈实现状态〉。
 
-解释器内核（展开 `expand` + 渲染 `render` + 主循环 `orchestrator`）已全部落地。尚未做：崩溃续跑 / 超时重试 / 多模态附件（原型也刻意不做）。
+解释器内核（展开 `expand` + 渲染 `render` + 主循环 `orchestrator`）已全部落地。**续跑**（`run resume`，见〈run resume〉）已实现并对齐本规格：**`failed` 与 `interrupted` 统一恢复**、trace 推断重入点、删 `failedStep` 字段（见〈实现状态〉表 `run resume` 行）。**图片**无需专门管道——引擎自带读本地路径图片（见 [engines.md](./engines.md)〈图片输入〉），`workflow run` help 已补「怎么给引擎传图片」文案。尚未做：超时重试。

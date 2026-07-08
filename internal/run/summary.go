@@ -2,6 +2,7 @@ package run
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -23,8 +24,8 @@ func RenderSummary(record *Record, trace []TraceEntry) string {
 	fmt.Fprintf(&b, "**状态** %s\n", statusLine(record))
 	fmt.Fprintf(&b, "**工作目录** %s\n", record.Cwd)
 	if record.Status == StatusFailed {
-		if record.FailedStep != nil {
-			fmt.Fprintf(&b, "**失败步** step %d\n", *record.FailedStep)
+		if traceStepIndex := LastUnsuccessfulStepIndex(trace); traceStepIndex != nil {
+			fmt.Fprintf(&b, "**失败步** step %d\n", *traceStepIndex)
 		}
 		if record.Error != nil {
 			fmt.Fprintf(&b, "**错误** %s\n", *record.Error)
@@ -34,7 +35,10 @@ func RenderSummary(record *Record, trace []TraceEntry) string {
 	b.WriteString("\n## 步骤\n\n")
 	b.WriteString("| # | 节点 | 引擎 | 耗时 |\n")
 	b.WriteString("| --- | --- | --- | --- |\n")
-	for _, entry := range trace {
+	// 按 stepIndex 去重取末条：resume 保留旧失败行 + 续写补跑行会让同一 stepIndex 出现多条，步骤表若逐行
+	// 全量渲染会出现重复的「step 1」且无从区分成败。此处收敛为每步一行（最终那次），与进度 k/N 的去重口径
+	// （run.ProgressCount / store.CountProgress）一致；完整审计轨迹仍走 run show --trace（不去重）。
+	for _, entry := range lastPerStep(trace) {
 		fmt.Fprintf(&b, "| %d | %s | %s | %s |\n",
 			entry.StepIndex, entry.StepLabel(), entry.Engine, formatDurationMs(entry.DurationMs))
 	}
@@ -51,6 +55,26 @@ func RenderSummary(record *Record, trace []TraceEntry) string {
 		}
 	}
 	return b.String()
+}
+
+// lastPerStep 按 stepIndex 去重取末条（同一步以最后一次记录为准，语义同 ProgressCount），升序返回，供步骤表
+// 收敛 resume 后同一 stepIndex 的多条记录为每步一行。非 resume 运行每个 stepIndex 本就只出现一次，输出与
+// 原样逐行渲染完全一致；仅在 resume 保留旧失败行 + 补跑行时才发生去重。
+func lastPerStep(trace []TraceEntry) []TraceEntry {
+	last := make(map[int]TraceEntry, len(trace))
+	for _, entry := range trace {
+		last[entry.StepIndex] = entry
+	}
+	indices := make([]int, 0, len(last))
+	for index := range last {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	result := make([]TraceEntry, 0, len(indices))
+	for _, index := range indices {
+		result = append(result, last[index])
+	}
+	return result
 }
 
 // summarizePrompt 把用户需求压成头部一行摘要：取首行、按字数截断，超出 / 多行则以 … 收尾并注明全文在 run.json。

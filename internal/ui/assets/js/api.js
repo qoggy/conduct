@@ -78,10 +78,13 @@ export const api = {
     }),
   renameWorkflow: (name, newName) =>
     request("POST", `/api/workflows/${encodeURIComponent(name)}/rename`, { body: { newName } }),
+  copyWorkflow: (name, newName) =>
+    request("POST", `/api/workflows/${encodeURIComponent(name)}/copy`, { body: { newName } }),
   deleteWorkflow: (name) => request("DELETE", `/api/workflows/${encodeURIComponent(name)}`),
   launchRun: (name, userPrompt, cwd) =>
     request("POST", `/api/workflows/${encodeURIComponent(name)}/runs`, { body: { userPrompt, cwd } }),
   stopRun: (id) => request("POST", `/api/runs/${encodeURIComponent(id)}/stop`, { body: {} }),
+  resumeRun: (id) => request("POST", `/api/runs/${encodeURIComponent(id)}/resume`, { body: {} }),
 };
 
 function queryString(query) {

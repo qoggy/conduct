@@ -1,4 +1,4 @@
-// 工作流列表页（#/workflows）：workflow list 的表格镜像，兼 create / rename / delete / run 四动词入口。
+// 工作流列表页（#/workflows）：workflow list 的表格镜像，兼 create / rename / copy / delete / run 五动词入口。
 
 import { h, mount } from "../dom.js";
 import { api } from "../api.js";
@@ -6,7 +6,7 @@ import { navigate } from "../router.js";
 import { i18n } from "../i18n.js";
 import { fmtTime } from "../format.js";
 import { openModal, confirmModal } from "../modal.js";
-import { openLaunchDialog, openRenameDialog } from "../dialogs.js";
+import { openLaunchDialog, openRenameDialog, openCopyDialog } from "../dialogs.js";
 import { loadInto } from "./common.js";
 
 const MAX_CHIPS = 6;
@@ -96,6 +96,7 @@ function rowView(outlet, wf, isLast) {
         { class: "acts" },
         h("button", { class: "ghost", onClick: () => openLaunchDialog(wf.name) }, i18n.actRun),
         h("button", { class: "ghost", onClick: () => openRenameDialog(wf.name, () => reload(outlet)) }, i18n.rename),
+        h("button", { class: "ghost", onClick: () => openCopyDialog(wf.name, () => reload(outlet)) }, i18n.copy),
         h("button", { class: "ghost", onClick: () => openDelete(outlet, wf.name) }, i18n.delete),
       ),
     ),

@@ -169,6 +169,40 @@ func (s *Server) handleRenameWorkflow(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, def)
 }
 
+// handleCopyWorkflow 从 {name} 复制出一份名为 newName 的新工作流（造变体），语义同 CLI `workflow copy`：
+// 复制定义主体（nodes）、newName 为全新托管对象（时间戳由 store 重戳）、newName 已存在则拒绝不覆盖。
+func (s *Server) handleCopyWorkflow(w http.ResponseWriter, r *http.Request) {
+	src := r.PathValue("name")
+	if err := workflow.ValidateName(src); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var req copyRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if err := workflow.ValidateName(req.NewName); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	def, err := s.store.Load(src) // 源不存在 → ErrNotExist → 404
+	if err != nil {
+		writeError(w, statusForStoreError(err), err.Error())
+		return
+	}
+	copied := def.CopyAs(req.NewName)
+	// 防御式校验：源已在库应已合法，仍校验一遍；不过即拒、不写盘（与 CLI copy 同）。
+	if err := workflow.Validate(copied); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	if err := s.store.Create(copied); err != nil { // 目标已存在 → ErrExists → 409；内部戳时间戳 + Normalize + 落盘
+		writeError(w, statusForStoreError(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, copied)
+}
+
 func (s *Server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := workflow.ValidateName(name); err != nil {
@@ -226,7 +260,8 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 		if statusFilter != "" && string(effective) != statusFilter {
 			continue
 		}
-		progress, err := s.store.CountTrace(record.ID)
+		// 进度分子按唯一 stepIndex 且 success 去重（防 resume 后 k>N，见 cli-runtime.md〈run resume〉）。
+		progress, err := s.store.CountProgress(record.ID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -264,10 +299,11 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		detail.Trace = trace
-		detail.Progress = len(trace)
+		detail.Trace = &trace // 恒非 nil（LoadTrace 空时返回 []），故 ?trace=1 恒有 trace 字段（空则为 []）
+		// 进度按唯一 stepIndex 且 success 去重（trace 已在手，直接用纯函数），防 resume 后 k>N。
+		detail.Progress = run.ProgressCount(trace)
 	} else {
-		progress, err := s.store.CountTrace(id)
+		progress, err := s.store.CountProgress(id)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -281,6 +317,15 @@ func (s *Server) handleGetSummary(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := run.ValidateID(id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	record, err := s.store.LoadRun(id)
+	if err != nil {
+		writeError(w, statusForStoreError(err), err.Error())
+		return
+	}
+	if status := record.EffectiveStatus(); status == run.StatusRunning || status == run.StatusInterrupted {
+		writeError(w, http.StatusNotFound, store.ErrSummaryNotExist.Error())
 		return
 	}
 	markdown, err := s.store.ReadSummary(id)
@@ -318,6 +363,38 @@ func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, stopResponse{ID: id, Pid: record.Pid, Signal: "SIGTERM"})
+}
+
+// handleResumeRun 从中断处恢复一次运行（= conduct run resume <id>）：self-exec 分离子进程续跑，续写原
+// run、run id 不变。派生态 failed / interrupted 可恢复，否则 409（对齐 CLI checkResumable 的 fail-loud）；
+// 成功 202 返回 {runId}（即原 id）。发射机制复用泛化后的 internal/launch（LaunchResume）。
+func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := run.ValidateID(id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	record, err := s.store.LoadRun(id)
+	if err != nil {
+		writeError(w, statusForStoreError(err), err.Error())
+		return
+	}
+	if status := record.EffectiveStatus(); status != run.StatusFailed && status != run.StatusInterrupted {
+		writeError(w, http.StatusConflict,
+			fmt.Sprintf("运行 %s 当前状态为 %s，无法恢复（仅 failed / interrupted 可恢复）", id, status))
+		return
+	}
+	runID, note, err := s.resumeRun(id)
+	if err != nil {
+		var launchErr *launchError
+		if errors.As(err, &launchErr) {
+			writeError(w, launchErr.status, launchErr.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, launchResponse{RunID: runID, Note: note})
 }
 
 // handleFS 为工作目录选择器列出某目录下的子目录（应用内目录浏览器的后端）。conduct ui 只绑

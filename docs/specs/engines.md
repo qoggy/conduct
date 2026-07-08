@@ -111,6 +111,17 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
   ```
 - 实现见 `internal/engine/codex.go`；CLI 参考 `docs/references/codex.md`。
 
+## 图片输入
+
+需要引擎「看」一张图片时，把图片的**本地绝对路径**写进 prompt 文本即可——各引擎自带的文件读取工具会自行打开该路径的图片并理解其内容。conduct **不提供**专门的图片入参（`RunRequest` 无图片字段）、也不做任何 URL 下载或附件管道。
+
+- **已验证行为**：`claude-code` / `codex` / `qoder` / `antigravity` 四引擎在无头模式下，仅凭 prompt 里给出的本地绝对路径，均能读出并识别图片内容（同一张图实测，四者都正确认出）。
+- **为什么不接专门旗标**：四引擎里只有个别有图片附件旗标（如 `qoder` 的 `--attachment <file>`，见 `docs/references/qodercli-print.md`），`claude` 与 `agy` 根本没有，且 conduct 走的 `codex exec` 非交互子命令其参考文档（`docs/references/codex.md`）也未列图片旗标；已知的图片旗标都只吃**本地文件路径**、无一接受 URL。既然「路径写进 prompt」对四引擎全部生效，就没必要为少数引擎接一套不统一、还得先把 URL 下载成本地文件的图片管道——那是不必要的复杂度（承〈引擎抽象〉「`RunRequest` 没有的旋钮一律不下传、走引擎自身默认」）。
+- **边界**：
+  - 路径须是引擎进程**可访问**的本地文件；sandbox 场景下图片必须先存在于 sandbox 文件系统内（这是文件可达性问题，与有没有图片旗标无关）。
+  - 只支持本地路径、**不支持 URL**——远端图片请调用方自行下载到本地，再把本地路径写进 prompt。
+  - 能否正确理解图片取决于引擎 / 模型自身的多模态能力，conduct 不做保证、也无从代劳。
+
 ## conduct 默认写死的参数
 
 无论 `engineConfig` 怎么填，下列参数由 conduct 对每次调用**无条件附加**（不暴露给 workflow 定义、不可覆盖）：

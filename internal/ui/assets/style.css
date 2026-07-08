@@ -720,6 +720,10 @@ img.eicon { object-fit: cover; } /* 官方 favicon 填满圆角小块 */
 .clickable:hover { background: var(--surface-subtle); }
 .cur { background: var(--run-bg); }
 .failrow { background: var(--danger-bg); }
+/* 被 resume 取代的旧失败行：淡化并加删除线徽标，示意「已重跑取代」，仍保留供审计。 */
+.superseded { opacity: 0.62; }
+.superseded .lbl { text-decoration: line-through; }
+.superseded-tag { flex: none; font-size: 10.5px; color: #8a897f; border: 1px solid var(--border-row); border-radius: 3px; padding: 0 5px; }
 .no { font-family: var(--font-mono); font-size: 11.5px; color: #8a897f; width: 52px; flex: none; }
 .step .idchip { font-size: 11px; padding: 1px 7px; flex: none; min-width: 2.8em; text-align: center; box-sizing: border-box; }
 .lbl { width: 7.5em; flex: none; font-weight: 500; }

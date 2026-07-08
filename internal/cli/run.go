@@ -7,14 +7,14 @@ import "github.com/spf13/cobra"
 func newRunCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "查询 / 编排运行记录（列表 / 详情 / 终止 / 等待 / 删除）",
-		Long:  "conduct run —— 运行记录（不可变历史）的查询、终止、等待与删除。跑一份工作流用 conduct workflow run。",
+		Short: "查询 / 编排运行记录（列表 / 详情 / 终止 / 等待 / 恢复 / 删除）",
+		Long:  "conduct run —— 运行记录（不可变历史）的查询、终止、等待、恢复与删除。跑一份工作流用 conduct workflow run。",
 		// 无参裸命令打印帮助；拼错的子命令 fail-loud 报用法错误（退出码 2），不静默当成功。
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return usageErrorf("未知子命令 %q（可用：list / show / stop / wait / rm）", args[0])
+			return usageErrorf("未知子命令 %q（可用：list / show / stop / wait / resume / rm）", args[0])
 		},
 	}
 	cmd.AddCommand(
@@ -22,6 +22,7 @@ func newRunCommand() *cobra.Command {
 		newRunShowCommand(),
 		newRunStopCommand(),
 		newRunWaitCommand(),
+		newRunResumeCommand(),
 		newRunRmCommand(),
 	)
 	return cmd

@@ -226,6 +226,51 @@ func TestRenameWorkflow(t *testing.T) {
 	}
 }
 
+func TestCopyWorkflow(t *testing.T) {
+	s := newTestServer(t)
+	do(t, s, http.MethodPost, "/api/workflows", `{"name":"demo"}`, nil)
+	do(t, s, http.MethodPost, "/api/workflows", `{"name":"taken"}`, nil)
+
+	// 复制成功 → 201，源仍在、副本新建
+	ok := do(t, s, http.MethodPost, "/api/workflows/demo/copy", `{"newName":"demo-copy"}`, nil)
+	if ok.Code != http.StatusCreated {
+		t.Fatalf("复制应 201，得到 %d（%s）", ok.Code, ok.Body.String())
+	}
+	// 副本时间戳由 store 重戳，非空（不继承源）
+	var copied workflow.Definition
+	decodeBody(t, ok, &copied)
+	if copied.Name != "demo-copy" || copied.CreatedAt == "" || copied.UpdatedAt == "" {
+		t.Fatalf("副本应重戳非空时间戳，得到 %+v", copied)
+	}
+	if src := do(t, s, http.MethodGet, "/api/workflows/demo", "", nil); src.Code != http.StatusOK {
+		t.Fatalf("源应仍在 200，得到 %d", src.Code)
+	}
+	if dst := do(t, s, http.MethodGet, "/api/workflows/demo-copy", "", nil); dst.Code != http.StatusOK {
+		t.Fatalf("副本应 200，得到 %d", dst.Code)
+	}
+	// 复制成同名（源即目标）→ 409（目标已存在，不覆盖）
+	same := do(t, s, http.MethodPost, "/api/workflows/demo/copy", `{"newName":"demo"}`, nil)
+	if same.Code != http.StatusConflict {
+		t.Fatalf("复制成同名应 409，得到 %d", same.Code)
+	}
+
+	// 复制到占用名 → 409
+	occupied := do(t, s, http.MethodPost, "/api/workflows/demo/copy", `{"newName":"taken"}`, nil)
+	if occupied.Code != http.StatusConflict {
+		t.Fatalf("复制到占用应 409，得到 %d", occupied.Code)
+	}
+	// 源不存在 → 404
+	missing := do(t, s, http.MethodPost, "/api/workflows/nope/copy", `{"newName":"x"}`, nil)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("源不存在应 404，得到 %d", missing.Code)
+	}
+	// 非法新名 → 400
+	bad := do(t, s, http.MethodPost, "/api/workflows/demo/copy", `{"newName":"bad name"}`, nil)
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("非法新名应 400，得到 %d", bad.Code)
+	}
+}
+
 func TestDeleteWorkflow(t *testing.T) {
 	s := newTestServer(t)
 	do(t, s, http.MethodPost, "/api/workflows", `{"name":"demo"}`, nil)
@@ -239,6 +284,30 @@ func TestDeleteWorkflow(t *testing.T) {
 }
 
 // seedRun 直接在 store 落一条运行记录（绕过发射器），供列表 / 详情 / 停止 / 总结的 handler 测试。
+// TestResumeRunPrecheck 覆盖 POST /api/runs/{id}/resume 的 409 前置校验（不触发 self-exec spawn）：
+// completed / running（进程存活）→ 409。成功续跑路径会真 spawn 子进程，交由 CLI/launch 层单测与
+// 端到端验证，此处只锁 handler 的拒绝分支。
+func TestResumeRunPrecheck(t *testing.T) {
+	s := newTestServer(t)
+	// completed → 409。
+	seedRun(t, s, "demo-20260101-000000", "demo", run.StatusCompleted, 1)
+	rec := do(t, s, http.MethodPost, "/api/runs/demo-20260101-000000/resume", "", nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("completed 恢复应 409，得到 %d", rec.Code)
+	}
+	// running 且进程存活 → 409。
+	seedRun(t, s, "demo-20260101-000001", "demo", run.StatusRunning, os.Getpid())
+	rec = do(t, s, http.MethodPost, "/api/runs/demo-20260101-000001/resume", "", nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("running 恢复应 409，得到 %d", rec.Code)
+	}
+	// 不存在 → 404。
+	rec = do(t, s, http.MethodPost, "/api/runs/ghost-20260101-000000/resume", "", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("不存在的 run 恢复应 404，得到 %d", rec.Code)
+	}
+}
+
 func seedRun(t *testing.T, s *Server, id, workflowName string, status run.Status, pid int) {
 	t.Helper()
 	record := &run.Record{
@@ -254,9 +323,9 @@ func TestListRunsWithProgressAndFilter(t *testing.T) {
 	s := newTestServer(t)
 	seedRun(t, s, "demo-20260101-000000", "demo", run.StatusCompleted, 1)
 	seedRun(t, s, "other-20260101-000001", "other", run.StatusCompleted, 1)
-	// 给 demo 追两行 trace，进度应为 2
+	// 给 demo 追两条成功 trace（进度按唯一 stepIndex 且 success 去重计），进度应为 2。
 	for i := 0; i < 2; i++ {
-		if err := s.store.AppendTrace("demo-20260101-000000", run.TraceEntry{StepIndex: i}); err != nil {
+		if err := s.store.AppendTrace("demo-20260101-000000", run.TraceEntry{StepIndex: i, Success: true}); err != nil {
 			t.Fatalf("追加 trace 失败: %v", err)
 		}
 	}
@@ -290,8 +359,30 @@ func TestGetRunWithTrace(t *testing.T) {
 	if detail.Record == nil || detail.Record.ID != "demo-20260101-000000" {
 		t.Fatalf("详情缺 record")
 	}
-	if len(detail.Trace) != 1 || detail.Trace[0].Output != "hi" {
+	if detail.Trace == nil || len(*detail.Trace) != 1 || (*detail.Trace)[0].Output != "hi" {
 		t.Fatalf("trace 全文缺失: %+v", detail.Trace)
+	}
+}
+
+// TestGetRunEmptyTraceIsEmptyArray 锁住数组语义：?trace=1 对空 trace 的 run（如中断在 step 0 之前的
+// interrupted）必须返回 `"trace":[]`（字段存在、值为空数组），不能因 omitempty 把字段整个省略；
+// 不带 ?trace=1 时则不应出现 trace 字段。回归 spec-test 发现的 TC-013。
+func TestGetRunEmptyTraceIsEmptyArray(t *testing.T) {
+	s := newTestServer(t)
+	// 空 trace 的 run（状态与本断言无关，用 completed 作固定态；真实场景是中断在 step 0 之前的 interrupted）。
+	seedRun(t, s, "empty-20260101-000000", "empty", run.StatusCompleted, 1) // 不追加任何 trace
+
+	withTrace := do(t, s, http.MethodGet, "/api/runs/empty-20260101-000000?trace=1", "", nil)
+	if withTrace.Code != http.StatusOK {
+		t.Fatalf("详情应 200，得到 %d", withTrace.Code)
+	}
+	if body := withTrace.Body.String(); !strings.Contains(body, `"trace":[]`) {
+		t.Fatalf("?trace=1 空 trace 应含 \"trace\":[]，得到 %s", body)
+	}
+
+	noTrace := do(t, s, http.MethodGet, "/api/runs/empty-20260101-000000", "", nil)
+	if body := noTrace.Body.String(); strings.Contains(body, `"trace"`) {
+		t.Fatalf("未请求 trace 不应出现 trace 字段，得到 %s", body)
 	}
 }
 
@@ -301,6 +392,21 @@ func TestSummaryNotGeneratedReturns404(t *testing.T) {
 	rec := do(t, s, http.MethodGet, "/api/runs/demo-20260101-000000/summary", "", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("总结未生成应 404，得到 %d", rec.Code)
+	}
+}
+
+func TestSummaryStaleForUnfinishedRunReturns404(t *testing.T) {
+	s := newTestServer(t)
+	seedRun(t, s, "demo-20260101-000000", "demo", run.StatusRunning, os.Getpid())
+	if err := s.store.WriteSummary("demo-20260101-000000", "# 旧失败总结\n"); err != nil {
+		t.Fatal(err)
+	}
+	rec := do(t, s, http.MethodGet, "/api/runs/demo-20260101-000000/summary", "", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("未收尾运行即使残留旧 summary 也应 404，得到 %d（%s）", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "旧失败总结") {
+		t.Fatalf("响应不应包含旧 summary，实际: %s", rec.Body.String())
 	}
 }
 

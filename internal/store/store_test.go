@@ -144,7 +144,7 @@ func TestStoreDelete(t *testing.T) {
 	}
 }
 
-func TestStoreListSortedAndEmpty(t *testing.T) {
+func TestStoreListSortedByUpdatedAtAndEmpty(t *testing.T) {
 	s := newTestStore(t)
 	defs, skipped, err := s.List() // 目录尚未创建
 	if err != nil {
@@ -153,8 +153,10 @@ func TestStoreListSortedAndEmpty(t *testing.T) {
 	if len(defs) != 0 || len(skipped) != 0 {
 		t.Errorf("空 store 应返回 0 条、0 跳过，得到 %d 条 / %d 跳过", len(defs), len(skipped))
 	}
-	_ = s.Create(sampleDef("banana"))
+	// 递增时钟：apple 先建（updatedAt 更早）、banana 后建（updatedAt 更晚）。按 updatedAt 倒序应
+	// [banana apple]——恰与按名升序相反，坐实排序键是 updatedAt 而非 name。
 	_ = s.Create(sampleDef("apple"))
+	_ = s.Create(sampleDef("banana"))
 	defs, skipped, err = s.List()
 	if err != nil {
 		t.Fatal(err)
@@ -162,8 +164,26 @@ func TestStoreListSortedAndEmpty(t *testing.T) {
 	if len(skipped) != 0 {
 		t.Errorf("无损坏文件时不应有跳过项，得到 %d", len(skipped))
 	}
-	if len(defs) != 2 || defs[0].Name != "apple" || defs[1].Name != "banana" {
-		t.Errorf("List 应按名排序 [apple banana]，得到 %v", names(defs))
+	if len(defs) != 2 || defs[0].Name != "banana" || defs[1].Name != "apple" {
+		t.Errorf("List 应按 updatedAt 倒序 [banana apple]，得到 %v", names(defs))
+	}
+}
+
+// TestStoreListTieBreaksByName 覆盖 updatedAt 相同时按 name 升序兜底（免同刻并列抖动）。
+func TestStoreListTieBreaksByName(t *testing.T) {
+	s := New(t.TempDir())
+	s.now = func() time.Time { return time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC) } // 恒定时钟 → 同刻
+	for _, name := range []string{"gamma", "alpha", "beta"} {
+		if err := s.Create(sampleDef(name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defs, _, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := names(defs); len(got) != 3 || got[0] != "alpha" || got[1] != "beta" || got[2] != "gamma" {
+		t.Errorf("updatedAt 相同应按 name 升序 [alpha beta gamma]，得到 %v", got)
 	}
 }
 

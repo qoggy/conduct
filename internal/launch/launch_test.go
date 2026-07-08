@@ -39,3 +39,26 @@ func TestMatchRunIDNoMatch(t *testing.T) {
 		t.Fatalf("pid 不匹配不应命中")
 	}
 }
+
+// TestResumeTaken 覆盖 LaunchResume 的接管判据（run resume 路径）：run.json 的 pid 已是子进程 pid 即算接管，
+// 且不因状态非 running 而漏判（子进程可能秒级再次失败已转终态）；nil / pid 未更新（仍是旧 pid）时不算接管。
+func TestResumeTaken(t *testing.T) {
+	const childPid = 4242
+	cases := []struct {
+		name   string
+		record *run.Record
+		want   bool
+	}{
+		// pid 已更新为子进程 pid：接管成立。状态特意用 failed——秒级再次失败已转终态，但 pid 已是它，仍算接管。
+		{"pid 已更新_终态也算接管", &run.Record{Pid: childPid, Status: run.StatusFailed}, true},
+		{"pid 已更新_running", &run.Record{Pid: childPid, Status: run.StatusRunning}, true},
+		// pid 仍是原 run 的旧 pid（子进程尚未改写 run.json）：未接管。
+		{"pid 未更新", &run.Record{Pid: 21474836, Status: run.StatusFailed}, false},
+		{"record 为 nil", nil, false},
+	}
+	for _, c := range cases {
+		if got := resumeTaken(c.record, childPid); got != c.want {
+			t.Errorf("%s：resumeTaken 应为 %v，得到 %v", c.name, c.want, got)
+		}
+	}
+}

@@ -238,7 +238,7 @@ JSON
 
 ### TC-010 引擎坏掉时节点失败、失败信息落盘并可查（零成本）
 
-- **目的**：验证被测引擎的二进制**不可用 / 报错退出**时，conduct 让该节点失败、把失败信息**真实落盘**（`run.json` 的 `status:"failed"`+`failedStep`+`error`，`trace.jsonl` 的 `success:false`+`error`），且 `run show` 能呈现失败。**引擎是 conduct 的外部依赖**，弄坏它是复现「用户机器上引擎真坏了」的真实场景，不是伪造数据——run 记录仍全由 conduct 自己产出。
+- **目的**：验证被测引擎的二进制**不可用 / 报错退出**时，conduct 让该节点失败、把失败信息**真实落盘**（`run.json` 的 `status:"failed"`+`error`，`trace.jsonl` 的 `success:false`+`error`），且 `run show` 能呈现失败。**引擎是 conduct 的外部依赖**，弄坏它是复现「用户机器上引擎真坏了」的真实场景，不是伪造数据——run 记录仍全由 conduct 自己产出。
 - **前置**：
   1. 建隔离环境（临时 HOME）：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`。引擎会立即失败、不真调 API，故无需登录、零 token。
   2. **弄坏引擎**：在 PATH 前置一个「一运行就报错退出」的假 `claude`，遮蔽真 `claude`：
@@ -256,12 +256,12 @@ JSON
 - **步骤**：
   1. `"$CONDUCT" workflow run bf "会失败" --cwd "$PROJ"; echo "exit=$?"`
   2. `RID=$(ls "$WORK/.conduct/runs/" | grep '^bf-' | head -1)`
-  3. `python3 -c 'import json,glob,os; d=json.load(open(glob.glob(os.path.expanduser("~/.conduct/runs/bf-*/run.json"))[0])); print(d["status"], d["failedStep"], "|", d["error"])'`
+  3. `"$CONDUCT" run show "$RID" --json --trace | python3 -c 'import sys,json; d=json.load(sys.stdin); tr=d["trace"]; print(d["status"], "|", d["error"], "|", tr[0]["stepIndex"], tr[0]["success"])'`
   4. `python3 -c 'import json,glob,os; p=glob.glob(os.path.expanduser("~/.conduct/runs/bf-*"))[0]; t=[json.loads(l) for l in open(p+"/trace.jsonl") if l.strip()]; print(t[0]["success"], "|", t[0]["error"])'`
   5. `"$CONDUCT" run show "$RID"; echo "exit=$?"`
 - **预期**：
   - 步骤 1 退出码 `1`；stdout/stderr 报该步失败。
-  - 步骤 3 打印 `failed 0 | claude 退出码 1: claude: 引擎不可用（模拟故障）`（`status:"failed"`、`failedStep:0`、`error` 以引擎二进制名 `claude` 打头，含退出码 / stderr 摘要）。
+  - 步骤 3 打印 `failed | claude 退出码 1: claude: 引擎不可用（模拟故障） | 0 False`（`status:"failed"`、`error` 以引擎二进制名 `claude` 打头，含退出码 / stderr 摘要；失败步由 trace 的 `stepIndex=0 success=false` 记录体现）。
   - 步骤 4 打印 `False | claude 退出码 1: claude: 引擎不可用（模拟故障）`（trace 首步 `success:false` 且带同一 error）。
   - 步骤 5 退出码 `0`；`run show` 呈现状态 `failed`、失败步 `step 0`、错误摘要。
   - **现状注（已知瑕疵）**：conduct 转译引擎失败时**只读子进程 stderr**（`internal/engine/exec.go` 的 `commandError`）。本用例的假引擎把错误写在 stderr，故被完整记录；若引擎把诊断写在 **stdout**（真 `claude` 的 `is_error` JSON 即在 stdout），非零退出时那段诊断会被吞掉、`error` 里只剩退出码。此为当前实现的取舍，非本用例断言失败。
@@ -564,3 +564,31 @@ TC-006~009 查的都是**已终结**的 run。本节验一条**仍在途**的 ru
   pkill -f "$WORK/slowbin/claude" 2>/dev/null
   export HOME="$OLD_HOME"; rm -rf "$WORK"
   ```
+
+---
+
+## 补充：图片输入的 help 文案（零 token，只读）
+
+conduct **不提供图片旗标、也不做 URL 下载**：给引擎看图片的方式是把图片的**本地绝对路径**直接写进需求文本，各引擎自带的文件工具自行读取。此约定须在 `workflow run --help` 里向用户交代清楚。对应 spec：[docs/specs/engines.md](../specs/engines.md)〈图片输入〉、[cli-runtime.md](../specs/cli-runtime.md)〈workflow run〉。
+
+### TC-022 workflow run --help 说明「把图片本地绝对路径写进需求文本」
+
+- **目的**：验证 `workflow run --help` 的说明文案覆盖图片输入的三个要点——① 把图片**本地绝对路径**写进需求文本；② conduct **不提供图片旗标**；③ **不做 URL 下载**。防止「怎么给引擎传图」这一常见疑问在 help 里失载，也防未来误加图片旗标 / URL 下载而与本约定漂移。
+- **前置**：无（只读，`--help` 不触碰 store、不调引擎、零 token）。
+- **步骤**：
+  1. `"$CONDUCT" workflow run --help; echo "exit=$?"`
+- **预期**：
+  - 退出码 `0`。
+  - stdout（help 文本）同时含以下关键子串（用 `grep -q` 逐条校验，不比对整段排版）：
+    - `本地绝对路径`（写进需求文本的方式）；
+    - `不提供图片旗标`（conduct 无 `--image` 之类的旗标）；
+    - `不做 URL 下载`（不替用户抓取网络图片）。
+  - 一条命令校验：
+    ```bash
+    "$CONDUCT" workflow run --help | grep -q 本地绝对路径 \
+      && "$CONDUCT" workflow run --help | grep -q 不提供图片旗标 \
+      && "$CONDUCT" workflow run --help | grep -q '不做 URL 下载' \
+      && echo "help_image_ok=yes" || echo "help_image_ok=no"
+    ```
+    应打印 `help_image_ok=yes`。
+- **清理**：无。

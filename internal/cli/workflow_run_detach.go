@@ -19,11 +19,12 @@ type detachHandle struct {
 	Workflow string `json:"workflow"`
 }
 
-// detachLauncher 是 runDetached 消费的最小发射器能力：发射一次后台运行并确认初始 run.json，返回
-// 三态 (runID, note, err)。*launch.Launcher 满足它；抽成接口是为了让 runDetachedWith 注入假实现、
-// 单测「发射失败 / 未确认 / 成功出句柄」三条路径，而不真 self-exec。
+// detachLauncher 是 runDetached / runResumeDetached 消费的最小发射器能力：发射一次后台运行 /
+// 恢复并确认子进程落定，返回三态 (runID, note, err)。*launch.Launcher 满足它；抽成接口是为了让
+// runDetachedWith 注入假实现、单测「发射失败 / 未确认 / 成功出句柄」三条路径，而不真 self-exec。
 type detachLauncher interface {
 	Launch(name, userPrompt, absCwd string) (runID, note string, err error)
+	LaunchResume(id string) (runID, note string, err error)
 }
 
 // runDetached 后台起跑：预检已在调用方同步做完（fail-loud），此处只负责发射。以独立会话 spawn 一个
@@ -52,26 +53,34 @@ func runDetached(cmd *cobra.Command, st *store.Store, name, userPrompt, workingD
 // os.Executable / 临时目录准备分离，便于注入假发射器单测三条路径（发射失败 / 未确认 / 成功出句柄）。
 func runDetachedWith(cmd *cobra.Command, launcher detachLauncher, name, userPrompt, workingDir string, asJSON bool) error {
 	runID, note, err := launcher.Launch(name, userPrompt, workingDir)
+	return emitDetach(cmd, runID, note, err, name, asJSON, func(id string) string {
+		return fmt.Sprintf("已在后台启动 %s；conduct run show %s 查看进度、conduct run stop %s 终止。", id, id, id)
+	})
+}
+
+// emitDetach 把发射器的三态 (runID, note, err) 映射为退出码与输出，供 workflow run -d 与 run resume -d
+// 共用。强约定「退 0 ⟺ stdout 已打印可用 run id」：发射失败 / 未确认一律退 1，绝不退 0 却给不出句柄。
+// -d 的退出码只表达发射成败，不表达 run 跑得成不成功（run 成败去 run show / run wait 看）。
+// workflowName 供 --json 单行句柄；humanLine 生成人读成功提示（入参为已确认的 run id）。
+func emitDetach(cmd *cobra.Command, runID, note string, err error, workflowName string, asJSON bool, humanLine func(id string) string) error {
 	if err != nil {
 		// 发射失败（spawn / setsid / 子进程夭折）→ 退 1。直接透传发射器的错误：它已自解释
-		//（「启动子进程失败: …」/「运行启动失败：<stderr>」），再包一层「后台启动失败:」只会叠出重复的「失败」。
+		//（「启动子进程失败: …」/「运行启动失败：<stderr>」），再包一层只会叠出重复的「失败」。
 		return err
 	}
 	if runID == "" {
 		// 有界等待内未确认 run id：子进程可能仍在跑——不退 0（给不出句柄就不算发射成功），引导核对。
 		return fmt.Errorf("%s", note)
 	}
-
 	if asJSON {
 		// 单行句柄（机读 handle），非前台 --json 的逐步事件流——故 compact 而非缩进。
-		line, err := json.Marshal(detachHandle{ID: runID, Workflow: name})
+		line, err := json.Marshal(detachHandle{ID: runID, Workflow: workflowName})
 		if err != nil {
 			return fmt.Errorf("序列化句柄 JSON 失败: %w", err)
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), string(line))
 		return nil
 	}
-	fmt.Fprintf(cmd.OutOrStdout(),
-		"已在后台启动 %s；conduct run show %s 查看进度、conduct run stop %s 终止。\n", runID, runID, runID)
+	fmt.Fprintln(cmd.OutOrStdout(), humanLine(runID))
 	return nil
 }

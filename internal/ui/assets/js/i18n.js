@@ -13,6 +13,7 @@ const dict = {
   create: "创建",
   save: "保存",
   rename: "改名",
+  copy: "复制",
   delete: "删除",
   refresh: "↻ 刷新",
   copied: "已复制",
@@ -59,6 +60,8 @@ const dict = {
   dlgRenameTitleTpl: (name) => `重命名 ${name}`,
   fNewName: "新名称",
   renameNote: "已有运行记录保留旧名。",
+  dlgCopyTitleTpl: (name) => `复制 ${name}`,
+  copyNote: "复制定义主体（节点），生成一份新名称的工作流；原工作流与其运行记录不受影响。",
 
   // 删除弹窗
   dlgDeleteTitleTpl: (name) => `删除工作流 ${name}？`,
@@ -166,6 +169,12 @@ const dict = {
   stopNote: "已完成步骤的记录保留；终止后状态显示为 interrupted。",
   stopConfirm: "终止",
   interruptedNote: "进程已不在，尽力展示已有 trace。",
+  resumeBtn: "重跑",
+  dlgResumeTitleTpl: (rid) => `恢复运行 ${rid}？`,
+  resumeBodyTpl: (rid) => `将跳过已成功步、从中断处续跑（= conduct run resume ${rid}），同一 run 续写、id 不变。`,
+  resumeNote: "旧失败记录会保留用于审计，续跑记录接在其后。",
+  resumeConfirm: "重跑",
+  supersededNote: "已重跑取代",
   loadingText: "加载中…",
   notFoundTpl: (what) => `${what}不存在或已被删除。`,
 };

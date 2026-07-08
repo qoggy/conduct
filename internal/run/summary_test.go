@@ -81,9 +81,7 @@ func TestSummarizePrompt(t *testing.T) {
 func TestRenderSummaryFailedShowsStepAndError(t *testing.T) {
 	r := sampleRecord()
 	r.Status = StatusFailed
-	failed := 1
 	errMsg := "claude 退出码 1: boom"
-	r.FailedStep = &failed
 	r.Error = &errMsg
 	delete(r.Artifacts, "code") // 失败步没有产物
 	trace := []TraceEntry{
@@ -98,5 +96,29 @@ func TestRenderSummaryFailedShowsStepAndError(t *testing.T) {
 	}
 	if strings.Contains(md, `node="code"`) {
 		t.Error("失败步无产物，不应出现 code 的 output 块")
+	}
+}
+
+// TestRenderSummaryDedupsResumedSteps 覆盖 resume 后的步骤表去重：同一 stepIndex 的旧失败行 + 补跑行只渲染
+// 末条（成功那次），不出现重复的「step 1」；完整审计仍走 run show --trace。
+func TestRenderSummaryDedupsResumedSteps(t *testing.T) {
+	r := sampleRecord()
+	// 模拟一次 resume 后的 trace：step1（编码）先失败、后补跑成功——同一 stepIndex 两条。
+	trace := []TraceEntry{
+		{StepIndex: 0, Type: "agent", NodeID: "plan", DisplayName: "规划", Engine: "claude-code", Success: true, DurationMs: 1000},
+		{StepIndex: 1, Type: "agent", NodeID: "code", DisplayName: "编码", Engine: "claude-code", Success: false, DurationMs: 500},
+		{StepIndex: 1, Type: "agent", NodeID: "code", DisplayName: "编码", Engine: "claude-code", Success: true, DurationMs: 8000},
+	}
+	md := RenderSummary(r, trace)
+	// 步骤表 step1 只渲染末条（补跑成功、8.0s），不出现失败那次的 0.5s。
+	if !strings.Contains(md, "| 1 | 编码 | claude-code | 8.0s |") {
+		t.Errorf("步骤表 step1 应取补跑末条（8.0s），完整:\n%s", md)
+	}
+	if strings.Contains(md, "| 1 | 编码 | claude-code | 0.5s |") {
+		t.Errorf("步骤表不应出现失败那次的重复 step1（0.5s），完整:\n%s", md)
+	}
+	// 步骤表整体应为每步一行：数 "| 1 |" 出现次数应恰为 1。
+	if n := strings.Count(md, "| 1 | 编码"); n != 1 {
+		t.Errorf("步骤表 step1 应去重为 1 行，得到 %d 行\n完整:\n%s", n, md)
 	}
 }
