@@ -7,17 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-07-08
+
 ### Added
 
-- `conduct workflow run -d` / `--detach`: launch a run in the background (own session via `setsid`) and print its run id immediately, like `docker run -d`. Preflight (name, requirement, `--cwd`) still fails loud synchronously; the parent confirms the initial `run.json` before returning, so exit `0` always means a usable run id was printed. `-d --json` prints a single-line handle `{"id","workflow"}` — a pure addressable handle with no status field (the run may already have left `running` by the time it prints; read real status via `run wait` / `run show`).
+- `conduct workflow run -d` / `--detach`: launch a run in the background (detached from your terminal) and print its run id immediately, like `docker run -d`. Preflight (name, requirement, `--cwd`) still fails loudly before returning, so exit `0` always means a usable run id was printed. `-d --json` prints a single-line handle `{"id","workflow"}` — a pure addressable handle with no status field (the run may already have left `running` by the time it prints; read real status via `run wait` / `run show`).
 - `conduct run wait <id>`: block until a run reaches a terminal state, then exit — like `docker wait` / Unix `wait`, the exit code reflects whether the wait itself succeeded (0 once any terminal state is reached), not the run's outcome. The run's outcome (`completed` / `failed` / `interrupted`) is on stdout (summary / `--json` `status`); only the command's own errors (missing id / IO) exit non-zero (1), and a missing / malformed id is a usage error (2).
 - `conduct run rm <id>`: delete a run record (`runs/<id>/`). Refuses to delete a still-running run, confirms interactively unless `-y` / `--yes` is given, and accepts only a single id (no batch, no force).
 - `conduct run list --status <state>`: filter the run list by derived state (`running` / `completed` / `failed` / `interrupted`); the default still lists all runs.
+- `conduct run resume <id>`: resume a `failed` or `interrupted` run from where it stopped — already-succeeded steps are skipped and the run continues in place (same run id), picking up everything the earlier steps produced. `-d` / `--detach` resumes in the background like `workflow run -d`.
+- A fourth AI coding engine, **codex** (`codex exec`), invoked headlessly like the others, with a `reasoningEffort` tunable.
+- Each step now records its engine session id (`sessionId`) in the run's trace, so a single step can be replayed with the engine's own tooling.
+- `conduct workflow copy <src> <dst>`: copy an existing workflow into a new named variant (the copy starts fresh, with its own timestamps).
+- Per-node, field-level workflow editing: `conduct workflow node show` / `set` / `set-prompt` — export a single node, edit a node's or its evaluator's structured fields and attach / detach the two loop kinds, or set a node's prompt from raw text — so a single node can be tweaked without rewriting the whole definition.
+- The `conduct ui` workflow list can now copy a workflow (mirrors `workflow copy`; the UI still has no exclusive capability over the CLI).
+
+### Changed
+
+- `conduct workflow list` (and the UI workflow list) now orders workflows by most-recently-updated first, instead of alphabetically by name.
+- Run progress (`k/N`) and the run summary's step table now count each step once, so resuming a run can no longer push progress past the total (e.g. `11/10`). The full per-record trace is still available via `run show --trace`.
+
+### Removed
+
+- `run.json` no longer includes the `failedStep` field; the failed step is now derived from the trace's last `success:false` record and shown identically in `run show` / the summary / the UI.
 
 ### Fixed
 
 - `install.sh` now resolves the latest release tag via the `releases/latest` redirect instead of the GitHub API, avoiding unauthenticated rate-limit (403) failures during `curl | sh`.
 - `conduct run show` / `run stop` now exit `2` (usage error) for a malformed run id (empty / path separators), consistent with `run wait` / `run rm` and the exit-code convention; previously they exited `1`.
+- The UI run-detail API (`GET /api/runs/{id}?trace=1`) now always returns a `trace` array — empty (`[]`) when the run has no trace entries — instead of omitting the field for empty traces.
 
 ## [0.0.1] - 2026-07-06
 
@@ -37,5 +55,6 @@ Initial public release.
 - One-line install script: `curl -sSL https://raw.githubusercontent.com/qoggy/conduct/main/install.sh | sh`, which detects the OS and architecture and installs the latest version.
 - Released under the MIT license.
 
-[unreleased]: https://github.com/qoggy/conduct/compare/v0.0.1...HEAD
+[unreleased]: https://github.com/qoggy/conduct/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/qoggy/conduct/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/qoggy/conduct/releases/tag/v0.0.1

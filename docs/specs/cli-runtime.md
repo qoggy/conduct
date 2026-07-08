@@ -37,7 +37,7 @@ conduct 有两个模型，像数据库的两张表；本文详述 **run** 表，
 | `conduct run list [--status <state>]` | 列出历史运行记录（可按状态过滤） | 查询（运行） |
 | `conduct run show <id>` | 查看某次运行的状态与详情 | 查询（运行） |
 | `conduct run stop <id>` | 终止一次进行中的运行 | 终止（运行） |
-| `conduct run wait <id>` | 阻塞等待一次运行到终态，退出码即成败 | 编排（运行） |
+| `conduct run wait <id>` | 阻塞等待一次运行到终态，退出码只表示是否等到终态（run 成败看 `status`） | 编排（运行） |
 | `conduct run resume <id> [-d]` | 从中断处恢复一次未完成的运行（`failed` / `interrupted`，跳过已成功步续跑；`-d` 后台起） | 恢复（运行） |
 | `conduct run rm <id>` | 删除一条运行记录 | 清理（运行） |
 

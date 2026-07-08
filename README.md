@@ -1,6 +1,6 @@
 # conduct
 
-A command-line tool that interprets workflow definitions (JSON) into deterministic steps and drives multiple AI coding engines (claude-code / antigravity / qoder) through them, step by step.
+A command-line tool that interprets workflow definitions (JSON) into deterministic steps and drives multiple AI coding engines (claude-code / antigravity / qoder / codex) through them, step by step.
 
 ## Install
 
