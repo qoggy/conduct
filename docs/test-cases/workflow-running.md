@@ -264,7 +264,7 @@ JSON
   - 步骤 3 打印 `failed | claude 退出码 1: claude: 引擎不可用（模拟故障） | 0 False`（`status:"failed"`、`error` 以引擎二进制名 `claude` 打头，含退出码 / stderr 摘要；失败步由 trace 的 `stepIndex=0 success=false` 记录体现）。
   - 步骤 4 打印 `False | claude 退出码 1: claude: 引擎不可用（模拟故障）`（trace 首步 `success:false` 且带同一 error）。
   - 步骤 5 退出码 `0`；`run show` 呈现状态 `failed`、失败步 `step 0`、错误摘要。
-  - **现状注（已知瑕疵）**：conduct 转译引擎失败时**只读子进程 stderr**（`internal/engine/exec.go` 的 `commandError`）。本用例的假引擎把错误写在 stderr，故被完整记录；若引擎把诊断写在 **stdout**（真 `claude` 的 `is_error` JSON 即在 stdout），非零退出时那段诊断会被吞掉、`error` 里只剩退出码。此为当前实现的取舍，非本用例断言失败。
+  - **现状注**：本用例的假引擎把错误写在 stderr，故走 `commandError`（`internal/engine/exec.go`）的退出码+stderr 摘要路径。若引擎（仅 claude-code）把诊断写在 **stdout**（真 `claude` 的 `is_error` JSON 即在 stdout）、stderr 为空，`internal/engine/claudecode.go` 会先尝试从 stdout JSON 的 `result` 取报错原因（`claudeStdoutFailureMessage`），能取到就返回 `claude 报错: <result>`，不会落到退出码摘要；单测 `TestClaudeCodeRunNonZeroExitStdoutResult` / `TestClaudeCodeRunNonZeroExitStdoutNotJSON`（`internal/engine/exec_test.go`）覆盖了这两条分支。
 - **清理**：`export PATH="$OLD_PATH"; export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
 ### TC-011 run show 不存在的 id 报错（零成本）

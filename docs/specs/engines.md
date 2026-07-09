@@ -71,7 +71,7 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 - **提示词**：走 stdin；工作目录用 `cmd.Dir`。
 - **默认参数**：`-p --output-format json --permission-mode bypassPermissions`。
 - **可变参数**：`Model` 非空 → `--model <m>`；`Effort` 非空**且非 `"auto"`** → `--effort <v>`（`"auto"` / 空让 CLI 自决，不传）。
-- **输出解析**：`claude -p --output-format json` 的 stdout 是单个 JSON 对象，取 `result`（→ `Text`）、`is_error`、`usage.input_tokens` + `usage.output_tokens`（→ `Tokens`）。`is_error` 为真 → 返回错误（附 `result` 文本）。
+- **输出解析**：`claude -p --output-format json` 的 stdout 是单个 JSON 对象，取 `result`（→ `Text`）、`is_error`、`usage.input_tokens` + `usage.output_tokens`（→ `Tokens`）。`is_error` 为真（进程仍以退出码 0 收尾）→ 返回错误（附 `result` 文本）。**退出码非 0**（如 prompt 过长等应用层失败，此时 stderr 常为空）→ 先尝试把 stdout 解析成同一 JSON 结构，`result` 非空则优先用它报错（`claude 报错: <result>`）；stdout 非法 JSON 或 `result` 为空才回退到退出码 + stderr 摘要（见〈错误与退出行为〉、`claudeStdoutFailureMessage`）。
 - 实现见 `internal/engine/claudecode.go`；CLI 参考 `docs/references/claudecode.md`。
 
 ### antigravity（`agy`）
@@ -81,7 +81,7 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 - **安全提示**：prompt 经 argv 传递，在多用户机器上对 `ps` 可见——这是 agy 无 stdin 形态的固有限制。
 - **默认参数**：`-p <prompt> --output-format json --dangerously-skip-permissions`。
 - **可变参数**：`Model` 非空 → `--model <m>`；`Effort` **忽略**（见〈schema 字段映射〉）。
-- **输出解析**：stdout 单 JSON 对象，取 `response`（→ `Text`）、`status`、`usage.total_tokens`（→ `Tokens`）。`status != "SUCCESS"` → 返回错误（附 status 与 `response` 摘要）。
+- **输出解析**：stdout 单 JSON 对象，取 `response`（→ `Text`）、`status`、`error`、`usage.total_tokens`（→ `Tokens`）。`status != "SUCCESS"` → 返回错误：优先附 `error` 字段（引擎给出的简洁失败原因）；`error` 为空才回退到截断至 500 字的 `response` 摘要（避免把模型自己写的长篇叙述分析当报错信息）。
 - 实现见 `internal/engine/antigravity.go`；CLI 参考 `docs/references/agy-print.md`。
 
 ### qoder（`qodercli`）
@@ -89,7 +89,7 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 - **提示词**：走 stdin；工作目录用 `cmd.Dir`。与 claude-code 同族。
 - **默认参数**：`-p --output-format json --permission-mode bypass_permissions`（注意 qoder 是下划线 `bypass_permissions`，claude 是驼峰 `bypassPermissions`）。
 - **可变参数**：`Model` 非空 → `--model <m>`（模型名或档位名，如 `Auto` / `Performance`，见 `--list-models`）；`Effort` 非空 → `--reasoning-effort <v>`（与模型解耦的独立标志）。
-- **输出解析**：stdout 单 JSON 对象，取 `result`（→ `Text`）、`is_error`、`usage.input_tokens` + `usage.output_tokens`（→ `Tokens`）。`is_error` 为真 → 返回错误。
+- **输出解析**：stdout 单 JSON 对象，取 `result`（→ `Text`）、`is_error`、`errors`、`usage.input_tokens` + `usage.output_tokens`（→ `Tokens`）。`is_error` 为真 → 返回错误：优先用 `errors` 数组拼接的报错信息（`is_error` 为真时 `result` 可能整个不存在，反序列化为空串）；`errors` 为空才回退 `result`；两者皆空则给兜底提示「qodercli 未返回具体错误信息」。
 - 实现见 `internal/engine/qoder.go`；CLI 参考 `docs/references/qodercli-print.md`。
 
 ### codex（`codex exec`）
@@ -147,20 +147,20 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 
 ## 引擎能力表
 
-`engineConfig` 的合法字段是判别联合，由 `engine` 决定。校验内核（`internal/engine/capability.go` 的 `engineCapabilities`）为每个引擎登记一张能力表：是否接受 `model`、调优字段名（`EffortField`）及其枚举（`EffortValues`）。**已注册但未在能力表列出的引擎，一律不接受任何 `engineConfig` 字段。**
+`engineConfig` 的合法字段是判别联合，由 `engine` 决定。校验内核（`internal/engine/capability.go` 的 `engineCapabilities`）为每个引擎登记一张能力表：是否接受 `model`（`AllowsModel`）、调优字段名（`EffortField`）及其枚举（`EffortValues`），以及给 UI 展示的常见 model 建议值（`ModelValues`）。**已注册但未在能力表列出的引擎，一律不接受任何 `engineConfig` 字段。**
 
-| engine | `model` | 调优字段 | 调优字段枚举 |
-| --- | --- | --- | --- |
-| `claude-code` | 接受（Claude 系） | `effort` | `low` · `medium` · `high` · `xhigh` · `max` · `ultracode` · `auto`（实际可用档位随模型） |
-| `antigravity` | 接受（完整 model 标签） | 无 | ——（推理强度编码在 model 标签后缀） |
-| `qoder` | 接受（模型名或档位） | `reasoningEffort` | `disabled` · `off` · `none` · `low` · `medium` · `high` · `xhigh` · `max` |
-| `codex` | 接受（GPT 系） | `reasoningEffort` | `low` · `medium` · `high` · `xhigh` |
+| engine | `model` | model 建议值（`ModelValues`，非白名单） | 调优字段 | 调优字段枚举 |
+| --- | --- | --- | --- | --- |
+| `claude-code` | 接受（Claude 系） | `sonnet` · `opus` · `fable` | `effort` | `low` · `medium` · `high` · `xhigh` · `max` · `ultracode` · `auto`（实际可用档位随模型） |
+| `antigravity` | 接受（完整 model 标签） | 无 | 无 | ——（推理强度编码在 model 标签后缀） |
+| `qoder` | 接受（模型名或档位） | `Auto` · `Ultimate` · `Performance` · `Efficient` · `Lite` | `reasoningEffort` | `disabled` · `off` · `none` · `low` · `medium` · `high` · `xhigh` · `max` |
+| `codex` | 接受（GPT 系） | 无 | `reasoningEffort` | `low` · `medium` · `high` · `xhigh` |
 
 `engineConfig` 三个字段（`internal/workflow/definition.go` 的 `EngineConfig`）——`model` / `effort` / `reasoningEffort`——**均选填**，校验时逐字段核对：
 
 - `effort` 仅 `claude-code` 认；`reasoningEffort` 仅 `qoder` 与 `codex` 认；给错引擎即拒（如给 `antigravity` 设 `effort`）。
 - 调优字段的值须落在该字段枚举内，否则拒。
-- `model` 当前**不做白名单**：接受任意非空串（待有权威模型表再收紧）；省略则用引擎默认模型。
+- `model` 当前**不做白名单**：接受任意非空串（待有权威模型表再收紧）；省略则用引擎默认模型。`ModelValues` 只是 UI 下拉建议项，不参与 `workflow.Validate` 强校验；为空只表示该引擎未登记建议值，不表示不接受 `model`。
 - node 与其 `evaluator` 各自独立按上表校验（`evaluator` 用同一套 `engine` + `engineConfig` 结构）。
 
 具体校验流程与错误格式（如 `nodes[0].engineConfig.effort: engine="antigravity" 不认 effort`）见 [cli-authoring.md](./cli-authoring.md)〈落盘校验规则〉。
@@ -171,10 +171,13 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 
 引擎层的错误一律**显式上抛、绝不静默**（承项目「错误不吞」）。子进程失败经 `commandError`（`internal/engine/exec.go`）转译为带引擎名的可读错误。下列 `<engine>` 占位是错误前缀里的引擎名，取**CLI 二进制名**（`claude` / `agy` / `qodercli`），非注册名（`claude-code` / `qoder`）：
 
-- **非零退出码**：`<engine> 退出码 <code>: <stderr 摘要>`（stderr 截断至 500 字）。
+- **非零退出码**：`<engine> 退出码 <code>: <stderr 摘要>`（stderr 截断至 500 字）。**claude-code 例外**：非零退出时先尝试把 stdout 解析成 JSON 取 `result`，非空则优先返回 `claude 报错: <result>`；只有 stdout 非法 JSON 或 `result` 为空才落到这条退出码+stderr 摘要（见〈claude-code〉小节）。
 - **找不到可执行文件等**：`<engine> 调用失败: <原始错误>`。
 - **输出非预期 JSON**：`<engine> 输出非预期 JSON: <err>（stdout 前 200 字: …）`。
-- **引擎自报失败**：claude-code / qoder 的 `is_error` 为真、antigravity 的 `status != "SUCCESS"` → 附引擎回报的错误文本上抛。
+- **引擎自报失败**（进程退出码为 0、但引擎自身报告业务失败）：
+  - claude-code：`is_error` 为真 → 附 `result` 文本。
+  - qoder：`is_error` 为真 → 优先附 `errors` 数组拼接的报错信息（`result` 此时可能整个不存在）；`errors` 为空才回退 `result`；两者皆空给兜底提示。
+  - antigravity：`status != "SUCCESS"` → 优先附 `error` 字段；为空才回退截断至 500 字的 `response` 摘要。
 - **prompt 超限**（仅 antigravity）：超 256 KiB 时**在调用前**返回错误，提示改用 stdin 型引擎或精简上游产物。
 
 这些错误如何冒泡到 `workflow run` 的退出码见 [cli-runtime.md](./cli-runtime.md)。
@@ -189,7 +192,7 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 
 ## 待确认
 
-- **`model` 白名单**：当前不校验模型名（任意非空串放行）。是否随每引擎维护一张权威模型表并收紧为白名单，待定——收紧会更早暴露拼写错误，但增加维护面。
+- **`model` 白名单**：当前不校验模型名（任意非空串放行）。`ModelValues` 只是 UI 建议值，不是权威模型表。是否随每引擎维护一张权威模型表并收紧为白名单，待定——收紧会更早暴露拼写错误，但增加维护面。
 - **子进程超时**：conduct 当前不对引擎调用设超时（依赖 `ctx` 取消与引擎自身超时，如 agy 默认 `--print-timeout 5m`）。是否在引擎层统一加可配置超时，待定。
 - **codex `reasoningEffort` 枚举**：沿用 `{low, medium, high, xhigh}`。codex 另支持 `minimal` 档，是否纳入待定（纳入更全，但需确认当前 codex-cli 版本对所选模型确实接受该档）。
 - **codex token 口径**：`Tokens = input_tokens + output_tokens`，与 claude-code / qoder 一致；codex 另回报 `reasoning_output_tokens`（推理 token）与 `cached_input_tokens`，本方案不计入以免与其它引擎口径不一 / 重复计数。是否单列推理 token，待定。

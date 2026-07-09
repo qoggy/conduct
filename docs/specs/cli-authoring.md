@@ -625,7 +625,7 @@ review · 评审 · claude-code · claude-opus-4-8 · redoTarget→code 回跳
 
 - **结构与类型**：`nodes` 数组存在；每个 node 的 `id` / `displayName` / `engine` / `promptTemplate` 必填；`engineConfig` 结构合法；`loopCount` 为 `1`–`20` 的整数（仅当 node 带 `evaluator` / `redoTarget` 时校验）。
 - **元数据字段系统管理**：`name` 若在导入定义中出现，须等于目标名（`create` 的 `<name>` 参数 / `edit` 的目标），否则拒绝；`createdAt`（`create` / `copy` 时写、此后不可变）与 `updatedAt`（每次变更重戳）由系统写入，导入值一律忽略。故导入体（`create --definition` / `edit` 的 stdin）给 `nodes` 即可。改名是独立操作、走 `workflow rename`——不能靠导入体里的 `name` 与目标名不一致来触发（那一律按错误拒绝，绝不做静默改名）。
-- **engine + engineConfig 严格校验（判别联合）**：先按 `engine` 选定该引擎的**能力表**（该引擎接受的调优字段及其枚举，见 [engines.md](./engines.md)〈引擎能力表〉），再校验 `engineConfig`：`engine` 合法（已注册）、调优字段属于该 `engine`（`effort` ↔ claude-code；`reasoningEffort` ↔ qoder / codex；`antigravity` 无独立调优字段、仅认 `model`）、其值在该字段允许集内、无该引擎不认的多余字段；任一不符即拒绝（node 与其 `evaluator` 各自独立校验）。`model` 当前**不做白名单**（接受任意非空串，待有权威模型表再收紧）；能力表随引擎演进维护。
+- **engine + engineConfig 严格校验（判别联合）**：先按 `engine` 选定该引擎的**能力表**（该引擎接受的调优字段及其枚举，见 [engines.md](./engines.md)〈引擎能力表〉），再校验 `engineConfig`：`engine` 合法（已注册）、调优字段属于该 `engine`（`effort` ↔ claude-code；`reasoningEffort` ↔ qoder / codex；`antigravity` 无独立调优字段、仅认 `model`）、其值在该字段允许集内、无该引擎不认的多余字段；任一不符即拒绝（node 与其 `evaluator` 各自独立校验）。`model` 当前**不做白名单**（接受任意非空串，待有权威模型表再收紧）；能力表里的 `ModelValues` 仅供 UI 下拉建议，不参与落盘校验。能力表随引擎演进维护。
 - **`evaluator` 与 `redoTarget` 互斥**：同一 node 二者不可并存。
 - **node `id` 合法且唯一**：`id` 须匹配 `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`——首字符为字母或下划线，其余限字母 / 数字 / 连字符 / 下划线，总长 1–64；且同一份定义内不得重复。`redoTarget` 作为对 node 的引用同样须是合法 id。（注意：这套 id 规则与工作流名 `<name>` 的 `[A-Za-z0-9._-]+` 不同——后者是 store 文件名，可含点、可数字开头。）
 - **`redoTarget` 合法回跳**：必须指向一个**存在且位于本 node 之前**的节点；指向不存在的、自身、或后续节点即拒绝。

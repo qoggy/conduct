@@ -22,6 +22,7 @@ const agyPromptLimitBytes = 256 * 1024
 type antigravityResult struct {
 	Status         string `json:"status"`
 	Response       string `json:"response"`
+	Error          string `json:"error"`
 	ConversationID string `json:"conversation_id"`
 	Usage          struct {
 		TotalTokens int `json:"total_tokens"`
@@ -50,7 +51,11 @@ func (antigravityEngine) Run(ctx context.Context, request RunRequest) (RunResult
 		return RunResult{}, fmt.Errorf("agy 输出非预期 JSON: %w（stdout 前 200 字: %s）", err, truncate(out.stdout, 200))
 	}
 	if parsed.Status != "SUCCESS" {
-		return RunResult{}, fmt.Errorf("agy 状态 %s: %s", parsed.Status, truncate(parsed.Response, 500))
+		reason := parsed.Error
+		if reason == "" {
+			reason = truncate(parsed.Response, 500)
+		}
+		return RunResult{}, fmt.Errorf("agy 状态 %s: %s", parsed.Status, reason)
 	}
 	return RunResult{
 		Text:                 parsed.Response,

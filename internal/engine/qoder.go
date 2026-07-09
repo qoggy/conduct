@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // qoderEngine 通过 Qoder 无头 CLI（qodercli -p）执行。qodercli 与 claude 同族：prompt 走 stdin、
@@ -14,14 +15,33 @@ type qoderEngine struct{}
 func (qoderEngine) Name() string { return "qoder" }
 
 // qoderResult 是 `qodercli -p --output-format json` 的 stdout 单对象（只取用到的字段）。
+// is_error=true 时 result 可能整个不存在（反序列化为空串），真正的失败原因在 errors 数组里。
 type qoderResult struct {
-	Result    string `json:"result"`
-	IsError   bool   `json:"is_error"`
-	SessionID string `json:"session_id"`
+	Result    string   `json:"result"`
+	IsError   bool     `json:"is_error"`
+	Errors    []string `json:"errors"`
+	SessionID string   `json:"session_id"`
 	Usage     struct {
 		InputTokens  int `json:"input_tokens"`
 		OutputTokens int `json:"output_tokens"`
 	} `json:"usage"`
+}
+
+// qoderFailureMessage 从失败态取可读报错：is_error=true 时优先用 errors 数组（真正的失败原因，
+// result 这时甚至整个不存在）；errors 为空退而求其 result；都为空才用兜底提示，绝不让报错信息
+// 是空字符串。
+func qoderFailureMessage(parsed qoderResult) string {
+	if len(parsed.Errors) > 0 {
+		trimmed := make([]string, len(parsed.Errors))
+		for i, e := range parsed.Errors {
+			trimmed[i] = strings.TrimSpace(e)
+		}
+		return strings.Join(trimmed, "; ")
+	}
+	if result := strings.TrimSpace(parsed.Result); result != "" {
+		return result
+	}
+	return "qodercli 未返回具体错误信息"
 }
 
 func (qoderEngine) Run(ctx context.Context, request RunRequest) (RunResult, error) {
@@ -43,7 +63,7 @@ func (qoderEngine) Run(ctx context.Context, request RunRequest) (RunResult, erro
 		return RunResult{}, fmt.Errorf("qodercli 输出非预期 JSON: %w（stdout 前 200 字: %s）", err, truncate(out.stdout, 200))
 	}
 	if parsed.IsError {
-		return RunResult{}, fmt.Errorf("qodercli 报错: %s", parsed.Result)
+		return RunResult{DurationMilliseconds: out.durationMs}, fmt.Errorf("qodercli 报错: %s", qoderFailureMessage(parsed))
 	}
 	return RunResult{
 		Text:                 parsed.Result,

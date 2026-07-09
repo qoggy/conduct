@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // claudeCodeEngine 通过 Anthropic Claude Code 无头 CLI（claude -p）执行。
@@ -35,6 +36,11 @@ func (claudeCodeEngine) Run(ctx context.Context, request RunRequest) (RunResult,
 
 	out, err := runCommand(ctx, commandSpec{binary: "claude", args: args, stdin: request.Prompt, dir: request.WorkingDirectory})
 	if err != nil {
+		// claude -p 应用层失败（如 prompt 过长）时退出码非 0 但 stderr 为空，真正原因在
+		// stdout 的 JSON 里；能解析出具体原因就优先用它，否则回退退出码+stderr 摘要。
+		if msg, ok := claudeStdoutFailureMessage(out.stdout); ok {
+			return RunResult{}, fmt.Errorf("claude 报错: %s", msg)
+		}
 		return RunResult{}, commandError("claude", out, err)
 	}
 	var parsed claudeResult
@@ -50,6 +56,24 @@ func (claudeCodeEngine) Run(ctx context.Context, request RunRequest) (RunResult,
 		Tokens:               parsed.Usage.InputTokens + parsed.Usage.OutputTokens,
 		SessionID:            parsed.SessionID,
 	}, nil
+}
+
+// claudeStdoutFailureMessage 尝试从非零退出的 claude -p 的 stdout 里取出应用层失败原因：
+// claude 在 prompt 过长等场景下退出码非 0 但 stderr 为空，具体原因只在 stdout 的 JSON
+// result 字段里。stdout 为空、非合法 JSON、或 result 为空时返回 false，交由调用方回退到
+// 退出码+stderr 摘要，绝不用空字符串冒充有效错误信息。
+func claudeStdoutFailureMessage(stdout string) (string, bool) {
+	if strings.TrimSpace(stdout) == "" {
+		return "", false
+	}
+	var parsed claudeResult
+	if err := json.Unmarshal([]byte(stdout), &parsed); err != nil {
+		return "", false
+	}
+	if result := strings.TrimSpace(parsed.Result); result != "" {
+		return result, true
+	}
+	return "", false
 }
 
 func init() { Register(claudeCodeEngine{}) }

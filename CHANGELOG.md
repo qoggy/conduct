@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-07-09
+
+### Added
+
+- The UI workflow editor now offers model suggestions for claude-code (`sonnet` / `opus` / `fable`) and qoder (`Auto` / `Ultimate` / `Performance` / `Efficient` / `Lite`) in the inspector's model field. The field remains free text, so full model names and custom backend model names still work; `GET /api/engines` exposes the suggestions as `modelValues`.
+
+### Changed
+
+- The UI workflow editor inspector now uses one custom dropdown interaction for engine, effort, and model suggestions, with a consistent fixed-downward menu and outside-click closing instead of browser-native select / datalist popups.
+
+### Fixed
+
+- qoder failures with `is_error:true` now report messages from the `errors` array when present instead of returning an empty or misleading `result`, and failed calls now keep their real `durationMs`.
+- claude-code non-zero exits now try to read a JSON error message from stdout before falling back to the old exit-code / stderr summary, so application-level failures with empty stderr still show the concrete reason.
+- antigravity failures now prefer the dedicated `error` field and only fall back to the truncated `response` text when no error field is available.
+
 ## [0.0.2] - 2026-07-08
 
 ### Added
@@ -55,6 +71,7 @@ Initial public release.
 - One-line install script: `curl -sSL https://raw.githubusercontent.com/qoggy/conduct/main/install.sh | sh`, which detects the OS and architecture and installs the latest version.
 - Released under the MIT license.
 
-[unreleased]: https://github.com/qoggy/conduct/compare/v0.0.2...HEAD
+[unreleased]: https://github.com/qoggy/conduct/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/qoggy/conduct/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/qoggy/conduct/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/qoggy/conduct/releases/tag/v0.0.1

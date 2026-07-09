@@ -11,6 +11,11 @@ type EngineCapability struct {
 	EffortField string
 	// EffortValues 是 EffortField 的合法取值集；EffortField 为空时为 nil。
 	EffortValues []string
+	// ModelValues 是 model 字段的常见别名建议值，仅供 UI 下拉展示便利——不是白名单，
+	// model 本身是开放集合（各引擎接受别名之外的完整模型名，甚至自定义 API 后端的任意模型名），
+	// 故不接入 workflow.Validate 做强校验，任意非空串仍放行。为空表示该引擎未登记建议值
+	// （不代表不接受 model，见 AllowsModel）。
+	ModelValues []string
 }
 
 // engineCapabilities 是各引擎的 engineConfig 能力表。已登记引擎（见各 *.go 的 init 注册）中
@@ -20,6 +25,8 @@ var engineCapabilities = map[string]EngineCapability{
 		AllowsModel:  true,
 		EffortField:  "effort",
 		EffortValues: []string{"low", "medium", "high", "xhigh", "max", "ultracode", "auto"},
+		// 别名，见 `claude --help`：--model 除别名外也接受完整模型名（如 "claude-fable-5"）。
+		ModelValues: []string{"sonnet", "opus", "fable"},
 	},
 	"antigravity": {
 		// antigravity（agy）没有独立 effort 字段：推理强度编码在 model 标签后缀里
@@ -35,6 +42,8 @@ var engineCapabilities = map[string]EngineCapability{
 		AllowsModel:  true,
 		EffortField:  "reasoningEffort",
 		EffortValues: []string{"disabled", "off", "none", "low", "medium", "high", "xhigh", "max"},
+		// 档位名，见 `qodercli --list-models`。
+		ModelValues: []string{"Auto", "Ultimate", "Performance", "Efficient", "Lite"},
 	},
 	"codex": {
 		// OpenAI Codex CLI（codex exec）：--model 接受 GPT 系模型名；调优字段 reasoningEffort 经

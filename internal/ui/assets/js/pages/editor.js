@@ -10,7 +10,7 @@ import { fmtTime } from "../format.js";
 import { loadEngines, engineNames, capabilityOf, engineIconEl } from "../engines.js";
 import { createPromptEditor } from "../prompt-editor.js";
 import { createCodeEditor } from "../code-editor.js";
-import { engineSelect } from "../engine-select.js";
+import { engineSelect, listSelect, closeOnOutsideClick } from "../custom-select.js";
 import { openModal } from "../modal.js";
 import { openLaunchDialog, openRenameDialog } from "../dialogs.js";
 import { loadingView, errorView } from "./common.js";
@@ -586,7 +586,7 @@ class Editor {
       this.renderInspector();
     });
     const fields = [h("div", { class: "fgroup", dataset: { field: "evaluator.engine" } }, h("label", { class: "flabel" }, i18n.fEngine), engSel)];
-    if (!cap || cap.allowsModel) fields.push(this.modelField(ev, "evaluator."));
+    if (!cap || cap.allowsModel) fields.push(this.modelField(cap, ev, "evaluator."));
     if (cap && cap.effortField) fields.push(this.effortField(cap, ev, "evaluator."));
     const evEditor = createPromptEditor({
       value: ev.promptTemplate || "",
@@ -710,7 +710,7 @@ class Editor {
     const fields = [];
     // model：能力表允许（或能力表未登记时保守给出）时渲染，一律自由文本。
     if (!cap || cap.allowsModel) {
-      fields.push(this.modelField(holder));
+      fields.push(this.modelField(cap, holder));
     }
     // effort / reasoningEffort：仅当能力表声明了 effortField 才渲染下拉。
     if (cap && cap.effortField) {
@@ -720,33 +720,86 @@ class Editor {
   }
 
   // scope 为字段路径前缀（节点配置 ""、评测官配置 "evaluator."），供保存错误红框定位到对应字段。
-  modelField(holder, scope = "") {
+  // cap.modelValues 非空时挂一个自定义建议下拉（与 engine 选择器同一套 .engsel 视觉），
+  // 但控件本身仍是真实 <input>——保留自由打字/光标/输入法，建议值只是点击可填的便利提示
+  // （不是白名单，model 本身是开放集合）。为空（如 antigravity/codex）时退化为普通输入框。
+  modelField(cap, holder, scope = "") {
     const cfg = () => holder.engineConfig || (holder.engineConfig = {});
     const input = h("input", { class: "inp inp-mono", placeholder: i18n.modelPlaceholder });
     input.value = (holder.engineConfig && holder.engineConfig.model) || "";
+    let renderMenu = null;
     input.addEventListener("input", () => {
       cfg().model = input.value;
       this.markDirty();
+      if (renderMenu) renderMenu();
     });
-    return h("div", { class: "fgroup", dataset: { field: scope + "engineConfig.model" } }, h("label", { class: "flabel" }, i18n.fModel), input);
+
+    const modelValues = (cap && cap.modelValues) || [];
+    let control = input;
+    if (modelValues.length) {
+      const menu = h("div", { class: "engsel-menu" });
+      const wrap = h("div", { class: "engsel" }, input, menu);
+      let stopOutsideClick = null;
+      const close = () => {
+        wrap.classList.remove("open");
+        if (stopOutsideClick) {
+          stopOutsideClick();
+          stopOutsideClick = null;
+        }
+      };
+      const open = () => {
+        wrap.classList.add("open");
+        stopOutsideClick = closeOnOutsideClick(wrap, close);
+      };
+      const pick = (value) => {
+        input.value = value;
+        cfg().model = value;
+        this.markDirty();
+        close();
+      };
+      renderMenu = () => {
+        mount(
+          menu,
+          ...modelValues.map((v) =>
+            h(
+              "div",
+              {
+                class: "engsel-item" + (v === input.value ? " engsel-item--on" : ""),
+                onClick: (e) => {
+                  e.stopPropagation();
+                  pick(v);
+                },
+              },
+              h("span", {}, v),
+            ),
+          ),
+        );
+      };
+      input.addEventListener("focus", () => {
+        renderMenu();
+        open();
+      });
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") close();
+      });
+      renderMenu();
+      control = wrap;
+    }
+
+    return h("div", { class: "fgroup", dataset: { field: scope + "engineConfig.model" } }, h("label", { class: "flabel" }, i18n.fModel), control);
   }
 
+  // 自定义下拉（listSelect），与 engine 选择器同一套视觉/交互——原生 <select> 在 macOS 上会用
+  // 系统级弹出样式（以当前选中项为中心展开），观感与 engine 选择器不统一。
   effortField(cap, holder, scope = "") {
     const field = cap.effortField;
     const cfg = () => holder.engineConfig || (holder.engineConfig = {});
     const current = (holder.engineConfig && holder.engineConfig[field]) || "";
-    const select = h(
-      "select",
-      {
-        class: "inp",
-        onChange: (e) => {
-          cfg()[field] = e.target.value;
-          this.markDirty();
-        },
-      },
-      h("option", { value: "", selected: current === "" }, i18n.fEffortNotSet),
-      ...(cap.effortValues || []).map((v) => h("option", { value: v, selected: v === current }, v)),
-    );
+    const items = [{ value: "", label: i18n.fEffortNotSet }, ...(cap.effortValues || []).map((v) => ({ value: v, label: v }))];
+    const select = listSelect(current, items, (value) => {
+      cfg()[field] = value;
+      this.markDirty();
+    });
     return h("div", { class: "fgroup", dataset: { field: scope + "engineConfig." + field } }, h("label", { class: "flabel" }, field), select);
   }
 

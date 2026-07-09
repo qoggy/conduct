@@ -74,6 +74,8 @@ type engineCapability struct {
 	AllowsModel  bool     `json:"allowsModel"`
 	EffortField  string   `json:"effortField"`
 	EffortValues []string `json:"effortValues"`
+	// ModelValues 是 model 字段的建议值（非白名单，纯 UI 下拉便利），为空表示该引擎未登记建议值。
+	ModelValues []string `json:"modelValues"`
 }
 
 func engineInfoOf(name string) engineInfo {
@@ -87,6 +89,7 @@ func engineInfoOf(name string) engineInfo {
 			AllowsModel:  capability.AllowsModel,
 			EffortField:  capability.EffortField,
 			EffortValues: capability.EffortValues,
+			ModelValues:  capability.ModelValues,
 		},
 	}
 }

@@ -39,7 +39,7 @@ export function chipStyle(index) {
 }
 
 // ---- 引擎能力表缓存 ----
-// engines: [{name, capability: {allowsModel, effortField, effortValues} | null}]
+// engines: [{name, capability: {allowsModel, effortField, effortValues, modelValues} | null}]
 
 let cache = null;
 

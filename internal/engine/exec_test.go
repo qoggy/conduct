@@ -77,6 +77,29 @@ exit 1`)
 	}
 }
 
+func TestClaudeCodeRunNonZeroExitStdoutResult(t *testing.T) {
+	// 复现 claude -p 应用层失败（如 prompt 过长）：exit 非 0，stderr 为空，真正原因在 stdout 的 JSON 里。
+	fakeBinary(t, "claude", `echo '{"type":"result","subtype":"success","is_error":true,"result":"Prompt is too long","session_id":"s1"}'
+exit 1`)
+	_, err := claudeCodeEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
+	if err == nil || !strings.Contains(err.Error(), "claude 报错: Prompt is too long") {
+		t.Errorf("应从 stdout JSON 取出 result 作为错误信息，得到 %v", err)
+	}
+	if strings.Contains(err.Error(), "退出码") {
+		t.Errorf("stdout 有有效 result 时不应回退到退出码摘要路径，得到 %v", err)
+	}
+}
+
+func TestClaudeCodeRunNonZeroExitStdoutNotJSON(t *testing.T) {
+	fakeBinary(t, "claude", `echo "不是JSON的杂散输出"
+echo "边界爆炸" >&2
+exit 1`)
+	_, err := claudeCodeEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
+	if err == nil || !strings.Contains(err.Error(), "claude 退出码 1") || !strings.Contains(err.Error(), "边界爆炸") {
+		t.Errorf("stdout 非合法 JSON 时应回退到退出码+stderr 报错路径，得到 %v", err)
+	}
+}
+
 func TestClaudeCodeRunIsError(t *testing.T) {
 	fakeBinary(t, "claude", `echo '{"result":"model said no","is_error":true}'`)
 	_, err := claudeCodeEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
@@ -115,6 +138,19 @@ func TestAntigravityRunNonSuccessStatus(t *testing.T) {
 	}
 }
 
+// TestAntigravityRunErrorFieldPreferredOverResponse 用真实复现的 agy 失败态 JSON（顶层 error 装简洁原因，
+// response 是模型自己写的长篇叙述分析）验证失败分支报错信息取自 error 字段，而非把 response 长文当作报错原因。
+func TestAntigravityRunErrorFieldPreferredOverResponse(t *testing.T) {
+	fakeBinary(t, "agy", `printf '%s\n' '{"conversation_id":"2b8c49f2-0d3c-4082-b795-417fc5cadb7d","status":"ERROR","response":"# Analysis: 系统集成测试与环境检查\n\n## Summary\n本分析报告针对当前测试指令进行响应……（此处省略，是模型写的几千字长文分析）","error":"Cannot list directory file:///this/path/definitely/does/not/exist/xyz999 which does not exist.","duration_seconds":19.606553,"num_turns":1,"usage":{"input_tokens":67111,"output_tokens":5960,"thinking_tokens":4964,"total_tokens":73071}}'`)
+	_, err := antigravityEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
+	if err == nil || !strings.Contains(err.Error(), "Cannot list directory file:///this/path/definitely/does/not/exist/xyz999 which does not exist.") {
+		t.Errorf("失败分支应优先采用 error 字段，得到 %v", err)
+	}
+	if strings.Contains(err.Error(), "Analysis") || strings.Contains(err.Error(), "Summary") {
+		t.Errorf("失败分支不应把 response 里的长文分析当作报错信息，得到 %v", err)
+	}
+}
+
 func TestQoderRunParsesAndPlumbs(t *testing.T) {
 	dir := fakeBinary(t, "qodercli", `cat > "$FAKE_OUT/stdin"
 echo "$@" > "$FAKE_OUT/args"
@@ -133,5 +169,33 @@ echo '{"result":"OK","is_error":false,"usage":{"input_tokens":5,"output_tokens":
 	}
 	if !strings.Contains(read(t, filepath.Join(dir, "args")), "--reasoning-effort high") {
 		t.Error("qoder 应用 --reasoning-effort 下传 effort")
+	}
+}
+
+// TestQoderRunIsErrorEmptyResultUsesErrorsArray 用真实复现的 qodercli 失败态 JSON（payload 超限：
+// is_error=true，result 字段整个不存在故反序列化为空串，真正原因在 errors 数组里）验证报错信息
+// 取自 errors，而不是把空 result 拼成一句没有内容的 "qodercli 报错: "。
+func TestQoderRunIsErrorEmptyResultUsesErrorsArray(t *testing.T) {
+	fakeBinary(t, "qodercli", `echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Qoder API error: PAYLOAD_TOO_LARGE - provider_error: prompt is too long: 1396788 tokens > 1000000 maximum"],"error_code":80411,"session_id":"s1"}'`)
+	_, err := qoderEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
+	if err == nil || !strings.Contains(err.Error(), "PAYLOAD_TOO_LARGE") {
+		t.Errorf("result 为空时应从 errors 数组取报错信息，得到 %v", err)
+	}
+	if err != nil && strings.TrimSpace(err.Error()) == "qodercli 报错:" {
+		t.Errorf("报错信息不应为空，得到 %v", err)
+	}
+}
+
+// TestQoderRunIsErrorPreservesDuration 验证失败路径不再用 RunResult{} 空字面量丢弃已算好的
+// out.durationMs：故意用 sleep 制造可观测的非零耗时，确认失败态返回的 RunResult 仍带上它。
+func TestQoderRunIsErrorPreservesDuration(t *testing.T) {
+	fakeBinary(t, "qodercli", `sleep 0.05
+echo '{"is_error":true,"errors":["boom"]}'`)
+	res, err := qoderEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
+	if err == nil {
+		t.Fatal("应报错")
+	}
+	if res.DurationMilliseconds <= 0 {
+		t.Errorf("失败路径应保留真实耗时，得到 DurationMilliseconds=%d", res.DurationMilliseconds)
 	}
 }
