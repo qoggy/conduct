@@ -19,7 +19,7 @@ export function h(tag, props, ...children) {
         el.addEventListener(key.slice(2).toLowerCase(), value);
       } else if (key === "html") {
         // 唯一 innerHTML 注入点：调用方须自证 value 已消毒/转义——Prism 输出自带转义；
-        // marked 输出须先过 DOMPurify（见 run-detail 运行总结渲染），不得直接注入原始 HTML。
+        // marked 输出须先过 DOMPurify（见 run-detail 的总结与节点输入/输出渲染），不得直接注入原始 HTML。
         el.innerHTML = value;
       } else {
         el.setAttribute(key, value === true ? "" : String(value));

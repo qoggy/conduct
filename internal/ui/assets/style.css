@@ -659,7 +659,7 @@ img.eicon { object-fit: cover; } /* 官方 favicon 填满圆角小块 */
 .cp { margin-left: 7px; color: var(--faint); cursor: pointer; display: inline-flex; align-items: center; vertical-align: -1px; background: none; border: none; padding: 0; }
 .cp:hover { color: var(--ink); }
 
-/* 节点详情栏（运行详情页右栏；点画布节点展开，复用只读代码块样式） */
+/* 节点详情栏（运行详情页右栏；点画布节点展开，输入 / 输出渲染为只读 Markdown 富文本） */
 .dkv { display: flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-bottom: 12px; }
 .dkv .session { min-width: 0; word-break: break-all; }
 /* 输入 / 输出代码块之间留出呼吸间距——否则输出标题栏直接贴住输入块。 */
@@ -667,11 +667,13 @@ img.eicon { object-fit: cover; } /* 官方 favicon 填满圆角小块 */
 .insp-run .dkv + .edbar { margin-top: 0; } /* 紧跟引擎行的第一个 bar 不叠加（dkv 已有下距） */
 .cpd { color: var(--border-hover); cursor: pointer; display: inline-flex; align-items: center; background: none; border: none; padding: 0; }
 .cpd:hover { color: #fff; }
-/* 只读代码块（trace 输入/产物） */
+/* 只读源码块 */
 .ed { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 10px 12px; font-family: var(--font-mono); font-size: 12px; line-height: 1.75; white-space: pre-wrap; word-break: break-word; }
+/* 只读 Markdown 富文本（需求、trace 输入/产物）：外框沿用源码块视觉，但正文不强制等宽/保留空白。 */
+.md-read { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 10px 12px; word-break: break-word; }
 /* 顶部「需求」块：独立成块展示（可能是大 PRD），限高滚动，避免一屏被需求占满、看不到下面的步骤。 */
 .promptblk { margin-bottom: 14px; }
-.promptblk .ed { max-height: 340px; overflow-y: auto; }
+.promptblk .ed, .promptblk .md-read { max-height: 340px; overflow-y: auto; }
 .ed-att { border-radius: 0 0 var(--radius) var(--radius); border-top: none; }
 .ed-err { color: var(--danger-deep); }
 

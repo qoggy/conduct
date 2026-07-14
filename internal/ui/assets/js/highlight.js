@@ -34,6 +34,15 @@ export function highlightHTML(src, lang) {
   return escapeHTML(text);
 }
 
+// highlightCodeHTML 给 marked 的 fenced code renderer 使用：按代码块声明语言交给 Prism；语言未打包或
+// Prism 不可用时只做 HTML 转义，保证完整内容仍安全可见。
+export function highlightCodeHTML(src, lang) {
+  const text = src || "";
+  const language = (lang || "").toLowerCase();
+  if (!P || !P.highlight || !language || !P.languages[language]) return escapeHTML(text);
+  return P.highlight(text, P.languages[language], language);
+}
+
 export function escapeHTML(s) {
   return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
 }

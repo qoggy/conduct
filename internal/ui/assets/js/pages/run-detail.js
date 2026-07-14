@@ -9,7 +9,7 @@ import { navigate } from "../router.js";
 import { i18n } from "../i18n.js";
 import { fmtTimeSec, fmtDurationMs, durationBetween, elapsedSince, fmtTokens } from "../format.js";
 import { engineIconEl } from "../engines.js";
-import { highlightHTML } from "../highlight.js";
+import { highlightHTML, highlightCodeHTML } from "../highlight.js";
 import { confirmModal } from "../modal.js";
 import { loadInto } from "./common.js";
 import { isAgent, edgeKey, NODE_ID_START, NODE_ID_END } from "../graph.js";
@@ -80,7 +80,7 @@ function view(outlet, d) {
   );
   page.appendChild(card);
 
-  // 需求：可能是大 PRD，独立成块、Prism markdown 渲染（自带转义、无 XSS）、可复制、默认折叠。
+  // 需求：可能是大 PRD，独立成块、marked 富文本 + Prism 代码块 + DOMPurify、可复制、默认折叠。
   page.appendChild(h("div", { class: "promptblk" }, mdBlock(i18n.detailPrompt, d.userPrompt)));
 
   // ---- failed：error 全文置顶（失败节点取后端 record.failedNodeId＝首个失败节点/根因，与 error 文案一致） ----
@@ -231,13 +231,13 @@ function nodeDetail(node, entry) {
   const stats = h("div", { class: "dkv" }, engineIconEl(engine), h("span", {}, parts.join(" · ")));
 
   if (!entry) {
-    // 尚无执行记录（待运行 / 运行中）：只展示配置，如实标注。
+    // 尚无执行记录：只展示配置，如实标注。
     return h("div", {}, head, stats, h("div", { class: "fnote" }, i18n.nodeNoTrace));
   }
 
   const outLabel = entry.success ? i18n.detailOutput : i18n.detailError;
   const outText = entry.success ? entry.output : entry.error || "";
-  const outCls = entry.success ? "ed ed-att" : "ed ed-att ed-err";
+  const outCls = entry.success ? "md-body md-read ed-att" : "md-body md-read ed-att ed-err";
   return h(
     "div",
     {},
@@ -315,11 +315,11 @@ function sessionRow(entry) {
   return [idLine, replayLine];
 }
 
-// mdBlock 是「深色头条（折叠开关）+ markdown 体」的可折叠只读块：点头条展开 / 收起，caret 指示态。
+// mdBlock 是「深色头条（折叠开关）+ Markdown 富文本体」的可折叠只读块：点头条展开 / 收起，caret 指示态。
 // 默认折叠（collapsed=true）；展开才把全文渲染进 DOM——trace 单行可达 MB 级，延迟到展开是性能手段。
 // 头条含 字段名 + md 标签 + 复制（复制自吞点击、不触发折叠）。返回 [头条, 体容器] 数组，由 h / mount
 // 扁平化插入，省一层包裹 div，保持 .dkv + .edbar 等相邻间距规则不变。
-function mdBlock(label, text, { bodyCls = "ed ed-att", collapsed = true } = {}) {
+function mdBlock(label, text, { bodyCls = "md-body md-read ed-att", collapsed = true } = {}) {
   const bodyHolder = h("div");
   let open = !collapsed;
   const caret = h("span", { class: "edcaret" }, open ? "▾" : "▸");
@@ -336,7 +336,7 @@ function mdBlock(label, text, { bodyCls = "ed ed-att", collapsed = true } = {}) 
     }, "cpd"),
   );
   const render = () => {
-    if (open) mount(bodyHolder, h("div", { class: bodyCls, html: highlightHTML(text, "markdown") }));
+    if (open) mount(bodyHolder, h("div", { class: bodyCls, html: renderMarkdown(text) }));
     else mount(bodyHolder);
   };
   bar.addEventListener("click", () => {
@@ -347,6 +347,32 @@ function mdBlock(label, text, { bodyCls = "ed ed-att", collapsed = true } = {}) 
   });
   render();
   return [bar, bodyHolder];
+}
+
+// renderMarkdown 是节点输入/输出与用户需求共用的安全富文本管线：marked 负责 Markdown，fenced code
+// 由 Prism 按语言高亮，最终一律经 DOMPurify 消毒。任一库缺失或解析异常时退回转义纯文本，不丢全文。
+let cachedMarkdownRenderer = null;
+function renderMarkdown(text) {
+  const source = text || "";
+  if (!globalThis.marked || !globalThis.DOMPurify) return `<pre><code>${escapeHTML(source)}</code></pre>`;
+  try {
+    if (!cachedMarkdownRenderer) {
+      cachedMarkdownRenderer = new globalThis.marked.Renderer();
+      cachedMarkdownRenderer.code = (arg, infoString) => {
+        const code = typeof arg === "string" ? arg : (arg && (arg.text ?? arg.raw)) || "";
+        const info = typeof infoString === "string" ? infoString : (arg && (arg.lang ?? arg.language)) || "";
+        const language = (info.trim().split(/\s+/, 1)[0] || "").toLowerCase();
+        const safeLanguage = /^[a-z0-9_-]+$/.test(language) ? language : "";
+        const className = safeLanguage ? ` class="language-${safeLanguage}"` : "";
+        return `<pre><code${className}>${highlightCodeHTML(code, safeLanguage)}</code></pre>\n`;
+      };
+    }
+    const rendered = globalThis.marked.parse(source, { renderer: cachedMarkdownRenderer, breaks: true });
+    return globalThis.DOMPurify.sanitize(rendered);
+  } catch (err) {
+    console.error("conduct ui: Markdown 渲染失败，已回退纯文本", err);
+    return `<pre><code>${escapeHTML(source)}</code></pre>`;
+  }
 }
 
 // ---- 运行总结面板（marked 渲染） ----
