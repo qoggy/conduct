@@ -49,19 +49,19 @@ cleanup_fake() {
 }
 ```
 
-各用例复用的最小单节点工作流助手：
+各用例复用的最小单 agent 节点工作流助手（均含保留标记节点 START/END——`create --definition` 的导入体须自带二者）：
 
 ```bash
 make_qoder_flow() {   # 用法：make_qoder_flow <name>
-  printf '{"nodes":[{"id":"say","displayName":"打招呼","engine":"qoder","promptTemplate":"{{sys.userPrompt}}"}]}' \
+  printf '{"nodes":[{"id":"START"},{"id":"say","displayName":"打招呼","engine":"qoder","promptTemplate":"{{sys.userPrompt}}"},{"id":"END"}],"edges":[{"from":"START","to":"say"},{"from":"say","to":"END"}]}' \
     | "$CONDUCT" workflow create "$1" --definition >/dev/null
 }
 make_claude_flow() {  # 用法：make_claude_flow <name>
-  printf '{"nodes":[{"id":"say","displayName":"打招呼","engine":"claude-code","promptTemplate":"{{sys.userPrompt}}"}]}' \
+  printf '{"nodes":[{"id":"START"},{"id":"say","displayName":"打招呼","engine":"claude-code","promptTemplate":"{{sys.userPrompt}}"},{"id":"END"}],"edges":[{"from":"START","to":"say"},{"from":"say","to":"END"}]}' \
     | "$CONDUCT" workflow create "$1" --definition >/dev/null
 }
 make_agy_flow() {     # 用法：make_agy_flow <name>
-  printf '{"nodes":[{"id":"say","displayName":"打招呼","engine":"antigravity","promptTemplate":"test"}]}' \
+  printf '{"nodes":[{"id":"START"},{"id":"say","displayName":"打招呼","engine":"antigravity","promptTemplate":"test"},{"id":"END"}],"edges":[{"from":"START","to":"say"},{"from":"say","to":"END"}]}' \
     | "$CONDUCT" workflow create "$1" --definition >/dev/null
 }
 ```

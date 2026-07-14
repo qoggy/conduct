@@ -228,19 +228,19 @@ stop_ui() { kill "$UIPID" 2>/dev/null; wait "$UIPID" 2>/dev/null; }
 
 ### TC-012 GET /api/workflows 空 store；POST 创建骨架 → 201
 
-- **目的**：验证列表端点在空 store 返回空数组；`POST /api/workflows`（body `{name}`）以最小骨架创建并返回 201 + 规范化定义（等价 `workflow create <name>`）。
+- **目的**：验证列表端点在空 store 返回空数组；`POST /api/workflows`（body `{name}`）以最小骨架创建并返回 201 + 规范化**完整记录**（`{name, createdAt, updatedAt, definition:{nodes, edges}}`，含保留标记节点 START/END，等价 `workflow create <name>`）。
 - **前置**：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`；粘贴 `start_ui`；`start_ui`。
 - **步骤**：
   1. `curl -s "$B/api/workflows" | python3 -c 'import sys,json; print("workflows=", json.load(sys.stdin)["workflows"])'`
   2. ```bash
      curl -s -w "\n%{http_code}\n" -X POST "$B/api/workflows" \
        -H 'Content-Type: application/json' -d '{"name":"demo"}' \
-       | python3 -c 'import sys; lines=sys.stdin.read().splitlines(); import json; d=json.loads(lines[0]); print("name=", d["name"], "nodes=", [n["id"] for n in d["nodes"]]); print("http=", lines[-1])'
+       | python3 -c 'import sys; lines=sys.stdin.read().splitlines(); import json; d=json.loads(lines[0]); print("name=", d["name"], "ids=", [n["id"] for n in d["definition"]["nodes"]]); print("http=", lines[-1])'
      ```
   3. `curl -s "$B/api/workflows" | python3 -c 'import sys,json; print("names=", [w["name"] for w in json.load(sys.stdin)["workflows"]])'`
 - **预期**：
   - 步骤 1 打印 `workflows= []`（空 store）。
-  - 步骤 2 打印 `name= demo nodes= ['node-1']`（骨架含一个默认节点）与 `http= 201`。
+  - 步骤 2 打印 `name= demo ids= ['START', 'node-1', 'END']`（骨架含 START/END 与一个默认 agent 节点）与 `http= 201`。
   - 步骤 3 打印 `names= ['demo']`（列表现出新建工作流）。
 - **清理**：`stop_ui; export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
@@ -258,38 +258,38 @@ stop_ui() { kill "$UIPID" 2>/dev/null; wait "$UIPID" 2>/dev/null; }
 
 ### TC-014 PUT 整体替换（合法定义）→ 200
 
-- **目的**：验证 `PUT /api/workflows/{name}` 用完整新定义整体替换、校验通过后落盘（等价 `cat def.json | workflow edit <name>`）。
+- **目的**：验证 `PUT /api/workflows/{name}` 用完整新**定义主体**（`{nodes, edges}`，须自带 START/END）整体替换、校验通过后落盘（等价 `cat def.json | workflow edit <name>`）。
 - **前置**：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`；粘贴 `start_ui`；`start_ui`；先建 `demo`：`curl -s -o /dev/null -X POST "$B/api/workflows" -H 'Content-Type: application/json' -d '{"name":"demo"}'`。
 - **步骤**：
-  1. 用一份两节点合法定义整体替换：
+  1. 用一份两 agent 节点（含 START/END）的合法定义整体替换：
      ```bash
      curl -s -w "\n%{http_code}\n" -X PUT "$B/api/workflows/demo" \
        -H 'Content-Type: application/json' \
-       -d '{"nodes":[{"id":"gen","displayName":"产出","engine":"claude-code","promptTemplate":"需求：{{sys.userPrompt}}"},{"id":"use","displayName":"引用","engine":"claude-code","promptTemplate":"上一步：{{gen}}"}]}' \
-       | python3 -c 'import sys,json; lines=sys.stdin.read().splitlines(); d=json.loads(lines[0]); print("nodes=", [n["id"] for n in d["nodes"]]); print("http=", lines[-1])'
+       -d '{"nodes":[{"id":"START"},{"id":"gen","displayName":"产出","engine":"claude-code","promptTemplate":"需求：{{sys.userPrompt}}"},{"id":"use","displayName":"引用","engine":"claude-code","promptTemplate":"上一步：{{gen}}"},{"id":"END"}],"edges":[{"from":"START","to":"gen"},{"from":"gen","to":"use"},{"from":"use","to":"END"}]}' \
+       | python3 -c 'import sys,json; lines=sys.stdin.read().splitlines(); d=json.loads(lines[0]); print("ids=", [n["id"] for n in d["definition"]["nodes"]]); print("http=", lines[-1])'
      ```
-  2. 复查落盘生效：`curl -s "$B/api/workflows/demo" | python3 -c 'import sys,json; print("reloaded=", [n["id"] for n in json.load(sys.stdin)["nodes"]])'`
+  2. 复查落盘生效：`curl -s "$B/api/workflows/demo" | python3 -c 'import sys,json; print("reloaded=", [n["id"] for n in json.load(sys.stdin)["definition"]["nodes"]])'`
 - **预期**：
-  - 步骤 1 打印 `nodes= ['gen', 'use']` 与 `http= 200`。
-  - 步骤 2 打印 `reloaded= ['gen', 'use']`（替换已落盘）。
+  - 步骤 1 打印 `ids= ['START', 'gen', 'use', 'END']` 与 `http= 200`。
+  - 步骤 2 打印 `reloaded= ['START', 'gen', 'use', 'END']`（替换已落盘）。
 - **清理**：`stop_ui; export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
 ### TC-015 PUT 校验不过 → 422 + 字段级 problems（不落盘）
 
 - **目的**：验证保存时复用内核校验，不过则 422 返回逐条字段级错误（供编辑器点击定位），且**原定义不变**。
-- **前置**：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`；粘贴 `start_ui`；`start_ui`；先建 `demo` 并 PUT 成合法两节点（同 TC-014 步骤 1，使原定义为 `gen›use`）。
+- **前置**：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`；粘贴 `start_ui`；`start_ui`；先建 `demo` 并 PUT 成合法两节点（同 TC-014 步骤 1，使原定义为 `START→gen→use→END`）。
 - **步骤**：
-  1. 提交一份引用不存在节点的非法定义：
+  1. 提交一份引用不存在节点的非法定义（仍自带 START/END，只有模板引用非法）：
      ```bash
      curl -s -w "\n%{http_code}\n" -X PUT "$B/api/workflows/demo" \
        -H 'Content-Type: application/json' \
-       -d '{"nodes":[{"id":"a","displayName":"A","engine":"claude-code","promptTemplate":"引用 {{ghost}}"}]}' \
+       -d '{"nodes":[{"id":"START"},{"id":"a","displayName":"A","engine":"claude-code","promptTemplate":"引用 {{ghost}}"},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' \
        | python3 -c 'import sys,json; lines=sys.stdin.read().splitlines(); d=json.loads(lines[0]); print("http=", lines[-1]); print("paths=", [p["path"] for p in d.get("problems",[])])'
      ```
-  2. 复查原定义未被非法内容覆盖：`curl -s "$B/api/workflows/demo" | python3 -c 'import sys,json; print("still=", [n["id"] for n in json.load(sys.stdin)["nodes"]])'`
+  2. 复查原定义未被非法内容覆盖：`curl -s "$B/api/workflows/demo" | python3 -c 'import sys,json; print("still=", [n["id"] for n in json.load(sys.stdin)["definition"]["nodes"]])'`
 - **预期**：
-  - 步骤 1 打印 `http= 422` 与 `paths= ['nodes[0].promptTemplate']`（引用不存在的节点 `{{ghost}}`）。
-  - 步骤 2 打印 `still= ['gen', 'use']`——校验不过**不落盘**，原定义原样保留。
+  - 步骤 1 打印 `http= 422` 与 `paths= ['nodes[1].promptTemplate']`（引用不存在的节点 `{{ghost}}`）。
+  - 步骤 2 打印 `still= ['START', 'gen', 'use', 'END']`——校验不过**不落盘**，原定义原样保留。
 - **清理**：`stop_ui; export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
 ### TC-016 POST rename 改名 → 200；DELETE 删除 → 204

@@ -12,7 +12,7 @@
 
 - **不属于任何资源族**：`workflow` / `run` 是资源名词，其下挂动词（`workflow edit` / `run list`）；而 `version` / `ui` / `update` / `help` 谈的是**工具本身**（版本号、GUI 外壳、二进制自更新、跨命令文档），不针对单一 workflow / run 对象，故做成顶层命令而非某名词的动词，对标 `go version` / `go help` / `gh` 的顶层辅助命令。
 - **`ui` 是横切的人类外壳，无独占能力（北极星不变量）**：`ui` 覆盖 store 内全部工作流与运行，是 CLI 动词层的人类对等物——它做的每件事都有对应 CLI 命令（编辑 ↔ [cli-authoring.md](./cli-authoring.md)〈workflow edit〉/〈workflow node set〉、看状态 ↔ [cli-runtime.md](./cli-runtime.md)〈run list〉/〈run show〉、启动 ↔ [cli-runtime.md](./cli-runtime.md)〈workflow run〉、终止 ↔〈run stop〉），绝不新增「只有界面能做」的功能。
-- **`update` 镜像分发机制**：conduct 以预编译 Release 分发（见 `AGENTS.md`〈发布〉的 GoReleaser 流水线），故自更新是「下二进制、验签、原地替换」，**不重新编译、不需要本机装 Go**。
+- **`update` 镜像分发机制**：conduct 以预编译 Release 分发（见 `AGENTS.md`〈发布〉的 GoReleaser 流水线），故自更新是「下二进制、按 `checksums.txt` 校验 checksum、原地替换」，**不做数字签名验证、不重新编译、不需要本机装 Go**。
 - **文档分层**：各命令的 `--help` 只做精简速查；教程 / 概念 / 最佳实践这类**跨命令的长文档**不塞进 `--help`，改由 `conduct help <主题>` 输出（对标 `go help <topic>`）。
 
 ## 命令总览
@@ -53,13 +53,13 @@ conduct version
 
 **输出**：
 
-- stdout 打印版本号；退出 `0`。
+- stdout 打印 `conduct <版本号>`；退出 `0`。
 - 等价形式：根命令 `conduct --version`（子命令不挂 `--version`，见〈全局约定〉）。
 
 **示例**：
 
 ```bash
-conduct version      # → 0.0.1
+conduct version      # → conduct 0.0.1
 conduct --version    # 等价
 ```
 
@@ -81,7 +81,7 @@ conduct ui [--port <n>] [--open]
 
 | 选项 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `--port <n>` | 整数 | `7420` | 监听端口；被占则 stderr 报错退出 `1`（不自动递增——可预测、书签友好） |
+| `--port <n>` | 整数 | `7420` | 监听端口；固定非零端口被占则 stderr 报错退出 `1`（不自动递增）；传 `0` 时由操作系统分配空闲端口，stdout 与安全白名单均使用实际端口，适合隔离测试 |
 | `--open` | 布尔 | `false` | 启动后自动打开浏览器；默认不开（照顾 SSH / 无头环境），仅打印地址 |
 
 **输出**：
@@ -106,7 +106,7 @@ conduct ui — 可视化界面已启动
 - **v1 不做账号鉴权**，但所有 `/api/*` 校验 `Host` / `Origin` 白名单（仅 `127.0.0.1:<port>` / `localhost:<port>`）、变更类端点仅接受 `application/json`。诚实边界：这防的是**浏览器跨站**（恶意网页 fetch 本地端口）与 DNS rebinding，**不防本机进程**——单用户本机工具下可接受。
 - **启动运行走 self-exec 子进程**：UI 服务端以 `os.Executable()` 自呼 `conduct workflow run <name> --cwd <dir>`（`Setsid` 独立成组、stdin 喂需求、stdout→`/dev/null`），使 pid 判活 / `interrupted` 语义与终端启动逐字节一致，且关掉 UI 不连累在跑的 run。这是「UI 无独占能力」不变量的最强证明——启动 ≡ 执行一条 CLI 命令。
 
-工作流的可视化编辑统一由本命令承担，非交互的 CLI 编辑走 [cli-authoring.md](./cli-authoring.md) 的 `workflow edit`（全量）/ `workflow node …`（局部）。前端（内嵌 SPA）见 `docs/specs/ui.md`〈前端技术栈〉，代码已落地、待浏览器走查验收。
+工作流的可视化编辑统一由本命令承担，非交互的 CLI 编辑走 [cli-authoring.md](./cli-authoring.md) 的 `workflow edit`（全量）/ `workflow node …`（局部）。前端（内嵌 SPA）见 [ui.md](./ui.md)〈前端技术栈〉，浏览器验收用例见 [ui-frontend.md](../test-cases/ui-frontend.md)。
 
 ---
 
@@ -162,32 +162,34 @@ conduct update --pre           # 更新到最新版本，纳入 beta
 **用法**：
 
 ```
-conduct help [主题]
+conduct help [命令路径 | 主题]
 ```
 
 **参数**：
 
 | 参数 | 必填 | 说明 |
 | --- | --- | --- |
-| `<主题>` | 否 | 主题名（如 `prompts`）。省略时列出全部可用主题 |
+| `<命令路径 | 主题>` | 否 | 主题名（如 `prompts`），或一到多级命令路径（如 `workflow node set`）。省略时打印完整根帮助（含命令列表与帮助主题） |
 
 **输出**：
 
 - 给定已知主题：stdout 打印该主题的内嵌长文档；退出 `0`。
-- 省略主题：stdout 列出全部可用主题及一句话简介；退出 `0`。
-- 未知主题：stderr 报「未知主题 <x>」并列出可用主题；退出 `2`（用法错误）。
+- 给定命令路径：stdout 打印该命令的用法与选项；支持多级路径；退出 `0`。
+- 不给参数：stdout 打印完整根帮助，内容含顶层命令列表与全部帮助主题；退出 `0`。
+- 未知主题或命令路径：stderr 报「未知帮助主题 <x>」并列出可用主题、提示从根帮助查命令；退出 `2`（用法错误）。
 
 **已内置主题**：
 
 | 主题 | 内容 |
 | --- | --- |
-| `prompts` | 如何写好节点 `promptTemplate`（模板变量、上游产物串联、评测官提示词） |
+| `prompts` | 如何写好节点 `promptTemplate`（模板变量、祖先产物串联、并行分支写盘冲突） |
 
 **示例**：
 
 ```bash
-conduct help            # 列出全部主题
+conduct help            # 打印完整根帮助（含命令与主题）
 conduct help prompts    # 读「怎么写好提示词」
+conduct help workflow node set  # 查看多级命令用法
 ```
 
 ---
@@ -209,8 +211,8 @@ conduct help prompts    # 读「怎么写好提示词」
 | 命令 | 状态 |
 | --- | --- |
 | `version` | **已实现**（构建期 `ldflags` 注入版本；根命令 `--version` 等价） |
-| `ui` | **部分实现**（服务端 + `/api/*` 全端点 + self-exec 发射器就位：`internal/ui` 只绑 127.0.0.1、启动探测 store、Host/Origin 白名单、变更类强制 JSON；`conduct ui --port/--open` 已注册。handler / 预检 / run id 匹配 / 发射全链路经单测 + curl e2e。**内嵌前端 SPA 代码已落地、待浏览器走查验收**——`/` 服务 SPA 外壳（`index.html` + `js/` + `style.css`，随 go:embed 打进二进制）。self-exec 成组连带引擎子进程的组信号待真起引擎手工验） |
+| `ui` | **已实现**（`conduct ui --port/--open`、服务端已注册 API、self-exec 发射器与内嵌 SPA 均已落地；只绑 127.0.0.1、启动探测 store、Host/Origin 白名单、变更类强制 JSON。`ui.md` 明确延后的 node / edge 粒度端点不在当前已实现面，编辑器通过整体 `PUT` 保存；浏览器交互按 `docs/test-cases/ui-frontend.md` 验收） |
 | `update` | **已实现**（`internal/cli/update.go`：经 `creativeprojects/go-selfupdate` 从 GitHub Releases 下载匹配架构资产、`checksums.txt` 校验、原地替换；`--check` / `--pre` / 显式版本；Homebrew 前缀拒绝自替换；非规范当前版本跳过比较。资产命名与 `.goreleaser.yaml` 对齐，改一处须同步另一处） |
 | `help` | **部分实现**（命令 + `internal/help` 内嵌 `go:embed` 落地；当前仅 `prompts` 一个主题，按概念继续扩充） |
 
-`ui` 内嵌前端的浏览器走查验收（服务端 + API + SPA 代码均已就位）尚未完成，是本工具层唯一的待验收项。
+`ui` 的实现边界与延后端点以 [ui.md](./ui.md)〈配套实现状态〉为准；浏览器验收步骤维护在 [ui-frontend.md](../test-cases/ui-frontend.md)，不在规格中记录某次测试执行状态。

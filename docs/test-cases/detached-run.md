@@ -60,9 +60,10 @@ SH
   chmod +x "$WORK/fakebin/claude"
 }
 
-make_wf() {                          # 用法：make_wf <名> —— 造并入库一个单节点最小工作流（只回一个词）
+make_wf() {                          # 用法：make_wf <名> —— 造并入库一个单 agent 节点最小工作流（只回一个词，含保留标记节点 START/END）
   cat > "$WORK/$1.json" <<JSON
-{"nodes":[{"id":"say","displayName":"打招呼","engine":"claude-code","promptTemplate":"回复：hi。需求：{{sys.userPrompt}}"}]}
+{"nodes":[{"id":"START"},{"id":"say","displayName":"打招呼","engine":"claude-code","promptTemplate":"回复：hi。需求：{{sys.userPrompt}}"},{"id":"END"}],
+ "edges":[{"from":"START","to":"say"},{"from":"say","to":"END"}]}
 JSON
   cat "$WORK/$1.json" | "$CONDUCT" workflow create "$1" --definition >/dev/null
 }

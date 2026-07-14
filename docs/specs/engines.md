@@ -2,7 +2,7 @@
 
 conduct 把 workflow 定义里的 `engine` / `engineConfig` 落到具体 AI 编程 CLI 的一次无头（headless）子进程调用。本篇是引擎层的单一权威来源：**支持哪些引擎**、workflow **schema 字段分别映射到引擎 CLI 的哪些参数**、各字段的**枚举**、以及 conduct **默认写死了哪些 CLI 参数**。面向要新增 / 维护引擎、或要读懂 `engineConfig` 到底控制什么的实现者与评审者。
 
-workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-authoring.md](./cli-authoring.md)；本篇只覆盖「定义 → CLI 参数」这一层。运行时如何逐步驱动引擎、如何记录每步的 `engine` / `engineConfig` / `tokens` 见 [cli-runtime.md](./cli-runtime.md)。
+workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-authoring.md](./cli-authoring.md)；本篇只覆盖「定义 → CLI 参数」这一层。运行时如何逐节点驱动引擎、如何记录每节点的 `engine` / `engineConfig` / `tokens` 见 [cli-runtime.md](./cli-runtime.md)。
 
 ## 设计前提
 
@@ -39,10 +39,10 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 
 | 字段 | 类型 | 含义 | 引擎不提供时 |
 | --- | --- | --- | --- |
-| `Text` | string | 本次运行的产物文本，作为该 workflow 节点的输出 | 必有 |
+| `Text` | string | 本次运行的产物文本，作为该 workflow 节点的输出；字段始终返回，成功但没有文本产物时允许为空字符串 | `""` |
 | `DurationMilliseconds` | int64 | 本次子进程调用耗时（conduct 侧计时，非引擎回报） | 必有 |
 | `Tokens` | int | 本次消耗的 token 数 | `0` |
-| `SessionID` | string | 本次运行的引擎会话/线程 id（各引擎从自身 JSON 输出取：claude-code / qoder 的 `session_id`、antigravity 的 `conversation_id`、codex 的 `thread_id`）。conduct 记入该步 trace，供凭引擎自带工具回放本步（见 [cli-runtime.md](./cli-runtime.md)〈runs/ 落盘结构〉） | 空串 |
+| `SessionID` | string | 本次运行的引擎会话/线程 id（各引擎从自身 JSON 输出取：claude-code / qoder 的 `session_id`、antigravity 的 `conversation_id`、codex 的 `thread_id`）。conduct 记入该节点 trace，供凭引擎自带工具回放该节点（见 [cli-runtime.md](./cli-runtime.md)〈runs/ 落盘结构〉） | 空串 |
 
 `RunRequest` 没有的旋钮（如系统提示词、工具白名单、上下文窗口），conduct **不下传**——一律走引擎自身默认。
 
@@ -161,7 +161,7 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 - `effort` 仅 `claude-code` 认；`reasoningEffort` 仅 `qoder` 与 `codex` 认；给错引擎即拒（如给 `antigravity` 设 `effort`）。
 - 调优字段的值须落在该字段枚举内，否则拒。
 - `model` 当前**不做白名单**：接受任意非空串（待有权威模型表再收紧）；省略则用引擎默认模型。`ModelValues` 只是 UI 下拉建议项，不参与 `workflow.Validate` 强校验；为空只表示该引擎未登记建议值，不表示不接受 `model`。
-- node 与其 `evaluator` 各自独立按上表校验（`evaluator` 用同一套 `engine` + `engineConfig` 结构）。
+- 每个 agent 节点独立按上表校验其 `engine` + `engineConfig`；`START` / `END` 两个保留标记节点不承载 `engine`/`engineConfig`，不参与此表（见 [cli-authoring.md](./cli-authoring.md)〈落盘校验规则〉）。
 
 具体校验流程与错误格式（如 `nodes[0].engineConfig.effort: engine="antigravity" 不认 effort`）见 [cli-authoring.md](./cli-authoring.md)〈落盘校验规则〉。
 
@@ -178,6 +178,7 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
   - claude-code：`is_error` 为真 → 附 `result` 文本。
   - qoder：`is_error` 为真 → 优先附 `errors` 数组拼接的报错信息（`result` 此时可能整个不存在）；`errors` 为空才回退 `result`；两者皆空给兜底提示。
   - antigravity：`status != "SUCCESS"` → 优先附 `error` 字段；为空才回退截断至 500 字的 `response` 摘要。
+  - codex：JSONL 中出现 `turn.failed` 或 `error` 事件 → 返回该事件携带的错误信息；若事件没有可用消息则返回明确的 codex 失败兜底文案。
 - **prompt 超限**（仅 antigravity）：超 256 KiB 时**在调用前**返回错误，提示改用 stdin 型引擎或精简上游产物。
 
 这些错误如何冒泡到 `workflow run` 的退出码见 [cli-runtime.md](./cli-runtime.md)。
@@ -186,7 +187,7 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 
 - **引擎 `claude-code` / `antigravity` / `qoder`**：**已实装**（无头 CLI `claude -p` / `agy -p` / `qodercli -p`，均经真实调用冒烟通过；单测 `internal/engine/exec_test.go` 用假二进制覆盖参数 / stdin / cwd 接线与 JSON 解析）。三者的 `RunResult.SessionID` 解析（从 `session_id` / `conversation_id` 取）**已实装**——在各自结果结构体补取已有字段，无新增 CLI 参数（单测 `internal/engine/session_test.go`）。
 - **引擎 `codex`**：**已实装**。`internal/engine/codex.go` 注册 codex 引擎；能力表（`capability.go`）含 `codex` 行（`model?` + `reasoningEffort ∈ {low, medium, high, xhigh}`）。契约见本篇〈codex〉小节、〈schema 字段映射〉、〈conduct 默认写死的参数〉、〈引擎能力表〉——codex 输出为 JSONL 事件流，逐行扫描按 type 归一化（单测 `internal/engine/codex_test.go` 覆盖 thread.started / agent_message / turn.completed / turn.failed / 无法解析行 / 无 agent_message 各路径）。
-- **`RunResult.SessionID`**：**已实装**。四引擎从各自 JSON 输出的会话 id 字段（claude-code / qoder 的 `session_id`、antigravity 的 `conversation_id`、codex 的 `thread_id`）填充；conduct 记入该步 trace 的 `sessionId`（见 [cli-runtime.md](./cli-runtime.md)〈runs/ 落盘结构〉）。四引擎默认均持久化会话 transcript，故 id 指向可回放的真实会话；conduct 不额外拷贝 transcript。
+- **`RunResult.SessionID`**：**已实装**。四引擎从各自 JSON 输出的会话 id 字段（claude-code / qoder 的 `session_id`、antigravity 的 `conversation_id`、codex 的 `thread_id`）填充；conduct 记入该节点 trace 的 `sessionId`（见 [cli-runtime.md](./cli-runtime.md)〈runs/ 落盘结构〉）。四引擎默认均持久化会话 transcript，故 id 指向可回放的真实会话；conduct 不额外拷贝 transcript。
 - **`RunResult.DurationMilliseconds`**：由 conduct 侧计时（`internal/engine/exec.go` 的 `runCommand`），非引擎回报。
 - **`RunResult.Tokens`**：各引擎均从自身 `usage` 字段取（codex 取 `input_tokens` + `output_tokens`，口径同其它引擎的 input+output）；引擎不回报时为 `0`。
 
