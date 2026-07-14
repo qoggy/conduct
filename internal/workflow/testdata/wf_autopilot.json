@@ -1,45 +1,38 @@
 {
   "nodes": [
+    { "id": "START" },
     {
-      "id": "node-1",
-      "displayName": "plan",
+      "id": "plan",
+      "displayName": "规划",
       "engine": "claude-code",
-      "promptTemplate": "{{sys.userPrompt}}",
-      "evaluator": {
-        "engine": "claude-code",
-        "promptTemplate": "judge {{node-1}}"
-      },
-      "loopCount": 1
+      "promptTemplate": "{{sys.userPrompt}}"
     },
     {
-      "id": "node-2",
-      "displayName": "TC",
+      "id": "code",
+      "displayName": "编码",
       "engine": "claude-code",
-      "promptTemplate": "{{node-1}}",
-      "evaluator": {
-        "engine": "claude-code",
-        "promptTemplate": "judge {{node-2}}"
-      },
-      "loopCount": 1
+      "promptTemplate": "基于规划实现：\n{{plan}}"
     },
     {
-      "id": "node-3",
-      "displayName": "code",
-      "engine": "claude-code",
-      "promptTemplate": "{{node-2}}",
-      "evaluator": {
-        "engine": "claude-code",
-        "promptTemplate": "judge {{node-3}}"
-      },
-      "loopCount": 1
-    },
-    {
-      "id": "node-4",
-      "displayName": "test-run",
+      "id": "test",
+      "displayName": "测试",
       "engine": "antigravity",
-      "promptTemplate": "run {{node-3}}",
-      "redoTarget": "node-3",
-      "loopCount": 1
-    }
+      "promptTemplate": "为下面的规划编写测试：\n{{plan}}"
+    },
+    {
+      "id": "review",
+      "displayName": "评审",
+      "engine": "claude-code",
+      "promptTemplate": "评审实现与测试：\n{{code}}\n{{test}}"
+    },
+    { "id": "END" }
+  ],
+  "edges": [
+    { "from": "START", "to": "plan" },
+    { "from": "plan", "to": "code" },
+    { "from": "plan", "to": "test" },
+    { "from": "code", "to": "review" },
+    { "from": "test", "to": "review" },
+    { "from": "review", "to": "END" }
   ]
 }

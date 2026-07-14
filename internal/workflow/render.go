@@ -9,7 +9,7 @@ import "strings"
 //   - {{nodeId}}  → artifacts[nodeId]；合法节点但未跑 → 空串
 //   - 其余         → 保留字面量（非法引用不静默吞）
 //
-// sysVars 以裸名为键（"userPrompt" / "cwd"，不含 "sys." 前缀）。validNodeID 判定某 id
+// sysVars 以裸名为键（"userPrompt" / "cwd" / "runId"，不含 "sys." 前缀）。validNodeID 判定某 id
 // 是否为定义内的合法节点（与 Validate 用同一判定，避免把非法引用当节点渲染成空串）。
 func Render(template string, sysVars, artifacts map[string]string, validNodeID func(string) bool) string {
 	return templateVariablePattern.ReplaceAllStringFunc(template, func(matched string) string {

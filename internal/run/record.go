@@ -1,4 +1,4 @@
-// Package run 定义运行记录实体：一次 workflow 执行的不可变历史。
+// Package run 定义运行记录实体：run id 与冻结 workflow 快照不变，状态、产物和 trace 随执行推进更新。
 //
 // 落盘为三份文件（见 spec〈落盘存储结构〉）：run.json（Record）、trace.jsonl（每行一条
 // TraceEntry）、run-summary.md（RenderSummary 渲染）。持久化由 internal/store 负责，本包只管类型
@@ -37,29 +37,29 @@ const (
 
 // Record 是 run.json 的结构——运行概要 + 开始那一刻冻结的 workflow 快照，使这次运行永远可复现。
 // endedAt / error 用指针，未终结时显式序列化为 null（对齐 spec 示例）。
+// 无 Steps 字段：进度分母 N = agent 节点数，读时由 WorkflowSnapshot 算（len(definition.nodes)-2）。
 type Record struct {
-	ID               string               `json:"id"`
-	Workflow         string               `json:"workflow"`
-	WorkflowSnapshot *workflow.Definition `json:"workflowSnapshot"`
-	UserPrompt       string               `json:"userPrompt"`
-	Cwd              string               `json:"cwd"`
-	Status           Status               `json:"status"`
-	Pid              int                  `json:"pid"`
-	PidStartTime     string               `json:"pidStartTime,omitempty"` // 进程启动时刻标识，防 pid 复用误判/误杀；旧记录/不支持平台为空
-	Steps            int                  `json:"steps"`
-	StartedAt        string               `json:"startedAt"`
-	EndedAt          *string              `json:"endedAt"`
-	Artifacts        map[string]string    `json:"artifacts"`
-	Error            *string              `json:"error"`
+	ID               string             `json:"id"`
+	Workflow         string             `json:"workflow"`
+	WorkflowSnapshot *workflow.Workflow `json:"workflowSnapshot"`
+	UserPrompt       string             `json:"userPrompt"`
+	Cwd              string             `json:"cwd"`
+	Status           Status             `json:"status"`
+	Pid              int                `json:"pid"`
+	PidStartTime     string             `json:"pidStartTime,omitempty"` // 进程启动时刻标识，防 pid 复用误判/误杀；旧记录/不支持平台为空
+	StartedAt        string             `json:"startedAt"`
+	EndedAt          *string            `json:"endedAt"`
+	Artifacts        map[string]string  `json:"artifacts"`
+	Error            *string            `json:"error"`
+	FailedNodeID     *string            `json:"failedNodeId,omitempty"` // 失败时首个失败节点（根因）的 id；schedule 落定，summary / UI 直接读，不再从 trace 猜
 }
 
-// TraceEntry 是 trace.jsonl 的一行——单个执行步骤的完整记录（自解释，不依赖当时的定义）。
+// TraceEntry 是 trace.jsonl 的一行——单次 agent 节点执行尝试的完整记录（自解释，不依赖当时的定义）。
+// NodeID 标识所属节点（START / END 不产条目）；resume 后同一 NodeID 可有多条。并行下追加序 = 完成序，
+// 审计按 StartedAt 还原时间线。
 type TraceEntry struct {
-	StepIndex    int                    `json:"stepIndex"`
-	Type         string                 `json:"type"` // agent | evaluator
 	NodeID       string                 `json:"nodeId"`
 	DisplayName  string                 `json:"displayName"`
-	Iteration    int                    `json:"iteration"`
 	Engine       string                 `json:"engine"`
 	EngineConfig *workflow.EngineConfig `json:"engineConfig,omitempty"`
 	Input        string                 `json:"input"`
@@ -67,7 +67,9 @@ type TraceEntry struct {
 	Error        *string                `json:"error"`
 	Output       string                 `json:"output"`
 	Tokens       int                    `json:"tokens,omitempty"`
-	SessionID    string                 `json:"sessionId,omitempty"` // 选填：该步引擎的会话/线程 id（引擎回报则记），凭它回放本步
+	SessionID    string                 `json:"sessionId,omitempty"` // 选填：该节点引擎的会话/线程 id（引擎回报则记），凭它回放本节点
+	StartedAt    string                 `json:"startedAt"`           // 节点开跑时刻（RFC3339）——并行下据此还原时间线
+	EndedAt      string                 `json:"endedAt"`             // 节点落定时刻（RFC3339）
 	DurationMs   int64                  `json:"durationMs"`
 }
 
@@ -116,14 +118,14 @@ func deriveStatus(status Status, alive bool) Status {
 	return status
 }
 
-// ProgressCount 返回进度分子 k = trace 中「唯一 stepIndex 且（最后一次记录）success」的步数。
-// 与「数物理行」不同：resume 会保留失败行 + 续写补跑行，同一 stepIndex 有多条，数行数会让 k 越过
-// 分母 N（如 11/10）。按 stepIndex 去重、以每步最后一次记录（＝执行序最新）为准，保证 k ≤ N 恒成立。
+// ProgressCount 返回进度分子 k = trace 中「唯一 NodeID 且（最后一次记录）success」的节点数。
+// 与「数物理行」不同：resume 会保留失败行 + 续写补跑行，同一 NodeID 有多条，数行数会让 k 越过
+// 分母 N。按 NodeID 去重、以每节点最后一次记录（＝执行序最新）为准，保证 k ≤ N 恒成立。
 // 审计视角要看全部历史记录仍走 run show --trace（不去重）。
 func ProgressCount(trace []TraceEntry) int {
-	lastSuccess := make(map[int]bool, len(trace))
+	lastSuccess := make(map[string]bool, len(trace))
 	for _, entry := range trace {
-		lastSuccess[entry.StepIndex] = entry.Success // 同一 stepIndex 后写覆盖前写，末条为准
+		lastSuccess[entry.NodeID] = entry.Success // 同一 NodeID 后写覆盖前写，末条为准
 	}
 	count := 0
 	for _, ok := range lastSuccess {
@@ -132,25 +134,4 @@ func ProgressCount(trace []TraceEntry) int {
 		}
 	}
 	return count
-}
-
-// LastUnsuccessfulStepIndex 返回 trace 中最后一条失败记录的 stepIndex。run.json 不保存失败步；需要展示失败位置时
-// 从 trace 推断。没有失败记录时返回 nil。
-func LastUnsuccessfulStepIndex(trace []TraceEntry) *int {
-	for i := len(trace) - 1; i >= 0; i-- {
-		if !trace[i].Success {
-			stepIndex := trace[i].StepIndex
-			return &stepIndex
-		}
-	}
-	return nil
-}
-
-// StepLabel 返回一步在报告/列表里的展示名：evaluator 步加「· 评测」后缀，与 agent 步区分
-// （否则带 evaluator 的节点会产出多行同名步骤，分不清写与评）。
-func (e TraceEntry) StepLabel() string {
-	if e.Type == workflow.StepTypeEvaluator {
-		return e.DisplayName + " · 评测"
-	}
-	return e.DisplayName
 }

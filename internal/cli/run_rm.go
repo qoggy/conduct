@@ -16,7 +16,7 @@ func newRunRmCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rm <id>",
 		Short: "删除一条运行记录",
-		Long: "删除一条历史运行记录（清掉 runs/<id>/ 整个目录）。只接受单个 id、不批量、无 -f 强删。\n" +
+		Long: "删除一条历史运行记录。\n" +
 			"仅终态（completed / failed / interrupted）可删；仍在跑（running 且 pid 存活）拒绝删除，先 conduct run stop <id>。\n" +
 			"默认在交互终端下二次确认；非交互环境必须显式 --yes，避免脚本误删。",
 		Args: requireArgs(cobra.ExactArgs(1)),

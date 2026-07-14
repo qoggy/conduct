@@ -11,8 +11,8 @@ func newWorkflowRenameCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rename <old> <new>",
 		Short: "给既有工作流改名（改标识，不动定义）",
-		Long: "给既有工作流改名。改的是标识（主键），不动定义（nodes）——与 edit 正交。\n" +
-			"已有运行记录不随之改名（快照语义下的诚实历史）。",
+		Long: "给既有工作流改名。改的是标识。\n" +
+			"已有运行记录不随之改名。",
 		Args: requireArgs(cobra.ExactArgs(2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			oldName, newName := args[0], args[1]

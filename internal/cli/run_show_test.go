@@ -31,11 +31,11 @@ func TestSessionReplayLine(t *testing.T) {
 // TestShowRunTraceSessionLine 验证 --trace 视图：记有 sessionId 的步在 input 前附会话/回放行；无则不附。
 func TestShowRunTraceSessionLine(t *testing.T) {
 	record := &run.Record{ID: "flow-20260703-150000", Workflow: "flow", UserPrompt: "需求",
-		Status: run.StatusCompleted, Steps: 2, StartedAt: "2026-07-03T15:00:00+08:00"}
+		Status: run.StatusCompleted, StartedAt: "2026-07-03T15:00:00+08:00"}
 	trace := []run.TraceEntry{
-		{StepIndex: 0, Type: "agent", DisplayName: "编码", Engine: "codex",
+		{NodeID: "code", DisplayName: "编码", Engine: "codex", StartedAt: "2026-07-03T15:00:01+08:00",
 			Input: "IN0", Success: true, Output: "OUT0", SessionID: "th-9"},
-		{StepIndex: 1, Type: "agent", DisplayName: "评审", Engine: "claude-code",
+		{NodeID: "review", DisplayName: "评审", Engine: "claude-code", StartedAt: "2026-07-03T15:00:02+08:00",
 			Input: "IN1", Success: true, Output: "OUT1"}, // 无 sessionId
 	}
 	var buf bytes.Buffer

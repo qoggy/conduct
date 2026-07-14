@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,7 +19,7 @@ func newRunShowCommand() *cobra.Command {
 		Use:   "show <id>",
 		Short: "查看某次运行的状态与详情",
 		Long: "查看某次运行的详情。<id> 取自 conduct run list（形如 <workflow>-<YYYYMMDD-HHMMSS>）；不存在则报错退 1。\n" +
-			"默认打印 run-summary.md（运行总结）；未收尾（running / interrupted）时尚无总结，改打印状态与进度。--trace 展开每步完整 input/output。",
+			"默认打印 run-summary.md（运行总结）；未收尾（running / interrupted）时尚无总结，改打印状态与进度。--trace 展开每节点完整 input/output。",
 		Args: requireArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
@@ -35,7 +36,7 @@ func newRunShowCommand() *cobra.Command {
 			}
 			if asJSON {
 				var trace []run.TraceEntry
-				if withTrace { // --json 仅 --trace 时嵌入逐步数据
+				if withTrace { // --json 仅 --trace 时嵌入逐节点数据
 					if trace, err = st.LoadTrace(id); err != nil {
 						return err
 					}
@@ -53,7 +54,7 @@ func newRunShowCommand() *cobra.Command {
 			return showRunSummary(cmd.OutOrStdout(), st, id, record)
 		},
 	}
-	cmd.Flags().BoolVar(&withTrace, "trace", false, "展开每步完整 input/output（--json 时嵌入 trace 数组）")
+	cmd.Flags().BoolVar(&withTrace, "trace", false, "展开每节点完整 input/output（--json 时嵌入 trace 数组）")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "输出 run.json 的规范化内容")
 	return cmd
 }
@@ -72,7 +73,7 @@ func showRunJSON(cmd *cobra.Command, record *run.Record, trace []run.TraceEntry,
 }
 
 // showRunSummary 打印 run-summary.md 全文（默认视图）；未收尾（running / interrupted）时总结尚未生成，
-// 退回状态 + 进度视图并指路 --trace 查看已执行步骤。
+// 退回状态 + 进度视图并指路 --trace 查看已有节点记录。
 func showRunSummary(out io.Writer, st *store.Store, id string, record *run.Record) error {
 	status := record.EffectiveStatus()
 	if status == run.StatusRunning || status == run.StatusInterrupted {
@@ -93,20 +94,24 @@ func showRunSummary(out io.Writer, st *store.Store, id string, record *run.Recor
 }
 
 func showRunSummaryFallback(out io.Writer, st *store.Store, id string, record *run.Record) error {
-	// 收尾节点还没写 summary：打印状态与进度，需逐步数据算进度。
+	// 收尾节点还没写 summary：打印状态与进度，需逐节点数据算进度。
 	trace, terr := st.LoadTrace(id)
 	if terr != nil {
 		return terr
 	}
 	showRunStatus(out, record, trace)
-	fmt.Fprintf(out, "运行总结尚未生成（运行未收尾）；用 conduct run show %s --trace 查看已执行步骤。\n", id)
+	fmt.Fprintf(out, "运行总结尚未生成（运行未收尾）；用 conduct run show %s --trace 查看已有节点记录。\n", id)
 	return nil
 }
 
-// showRunTrace 打印状态摘要 + 逐步完整 input/output（--trace）。
+// showRunTrace 打印状态摘要 + 逐节点完整 input/output（--trace）。节点按 startedAt 排序还原时间线
+// （并行下 trace 追加序＝完成序、不定）；审计视角不去重，全部历史记录都打印。
 func showRunTrace(out io.Writer, record *run.Record, trace []run.TraceEntry) {
 	showRunStatus(out, record, trace)
-	for _, entry := range trace {
+	sorted := make([]run.TraceEntry, len(trace))
+	copy(sorted, trace)
+	sort.SliceStable(sorted, func(i, j int) bool { return run.TraceOrderLess(sorted[i], sorted[j]) })
+	for _, entry := range sorted {
 		result := "成功"
 		if !entry.Success {
 			result = "失败"
@@ -115,29 +120,38 @@ func showRunTrace(out io.Writer, record *run.Record, trace []run.TraceEntry) {
 	}
 }
 
-// showRunStatus 打印一次运行的状态摘要（运行行 / 需求 / 步数进度或耗时 / 失败错误），不含逐步明细。
+// showRunStatus 打印一次运行的状态摘要（运行行 / 需求 / 节点进度或耗时 / 失败错误），不含逐节点明细。
 func showRunStatus(out io.Writer, record *run.Record, trace []run.TraceEntry) {
 	status := record.EffectiveStatus()
+	nodeCount := recordNodeCount(record)
 	fmt.Fprintf(out, "运行 %s · %s\n", record.ID, status)
 	fmt.Fprintf(out, "需求：%s\n", record.UserPrompt)
-	// running 与 interrupted 都未正常收尾（无 endedAt），显示进度 step k/N 比「耗时 ?」更有意义。
+	// running 与 interrupted 都未正常收尾（无 endedAt），显示进度 节点 k/N 比「耗时 ?」更有意义。
 	if status == run.StatusRunning || status == run.StatusInterrupted {
-		// 进度分子按唯一 stepIndex 且 success 去重（防 resume 后 k>N），审计全量走 --trace。
-		fmt.Fprintf(out, "步数 %d · 进度 step %d/%d · %s 起\n",
-			record.Steps, run.ProgressCount(trace), record.Steps, formatTimestamp(record.StartedAt))
+		// 进度分子按唯一 nodeId 且 success 去重（防 resume 后 k>N），审计全量走 --trace。
+		fmt.Fprintf(out, "节点 %d · 进度 节点 %d/%d · %s 起\n",
+			nodeCount, run.ProgressCount(trace), nodeCount, formatTimestamp(record.StartedAt))
 	} else {
-		fmt.Fprintf(out, "步数 %d · 耗时 %s · %s → %s\n",
-			record.Steps, elapsed(record), formatTimestamp(record.StartedAt), endedDisplay(record))
+		fmt.Fprintf(out, "节点 %d · 耗时 %s · %s → %s\n",
+			nodeCount, elapsed(record), formatTimestamp(record.StartedAt), endedDisplay(record))
 	}
 	if status == run.StatusFailed && record.Error != nil {
 		fmt.Fprintf(out, "错误：%s\n", *record.Error)
 	}
 }
 
-// printTraceEntryFull 打印单步的完整 input/output（--trace）。
+// recordNodeCount 返回进度分母 N = 快照里的 agent 节点数（排除 START / END）；缺快照返回 0。
+func recordNodeCount(record *run.Record) int {
+	if record.WorkflowSnapshot == nil {
+		return 0
+	}
+	return record.WorkflowSnapshot.Definition.AgentNodeCount()
+}
+
+// printTraceEntryFull 打印单个节点的完整 input/output（--trace）。
 func printTraceEntryFull(out io.Writer, entry run.TraceEntry, result string) {
-	fmt.Fprintf(out, "● step %d [%s] %s %s  %s\n", entry.StepIndex, entry.DisplayName, entry.Type, entry.Engine, result)
-	// 某步若记有引擎会话/线程 id，先附一行会话信息 + 该引擎的回放命令，便于凭引擎自带工具回放本步。
+	fmt.Fprintf(out, "● %s [%s] %s  %s\n", entry.NodeID, entry.DisplayName, entry.Engine, result)
+	// 某节点若记有引擎会话/线程 id，先附一行会话信息 + 该引擎的回放命令，便于凭引擎自带工具回放本节点。
 	if entry.SessionID != "" {
 		fmt.Fprintf(out, "  ── 会话 ──\n%s\n", sessionReplayLine(entry.Engine, entry.SessionID))
 	}
@@ -149,7 +163,7 @@ func printTraceEntryFull(out io.Writer, entry run.TraceEntry, result string) {
 	}
 }
 
-// sessionReplayLine 返回某步的会话信息行：会话 id + 该引擎凭其自带工具回放本步的命令。
+// sessionReplayLine 返回某节点的会话信息行：会话 id + 该引擎凭其自带工具回放该节点的命令。
 // 未知引擎（无对应回放命令）只显示 id，不臆造命令。
 func sessionReplayLine(engineName, sessionID string) string {
 	var replay string

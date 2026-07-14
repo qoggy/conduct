@@ -85,6 +85,7 @@ export const api = {
     request("POST", `/api/workflows/${encodeURIComponent(name)}/runs`, { body: { userPrompt, cwd } }),
   stopRun: (id) => request("POST", `/api/runs/${encodeURIComponent(id)}/stop`, { body: {} }),
   resumeRun: (id) => request("POST", `/api/runs/${encodeURIComponent(id)}/resume`, { body: {} }),
+  deleteRun: (id) => request("DELETE", `/api/runs/${encodeURIComponent(id)}`),
 };
 
 function queryString(query) {

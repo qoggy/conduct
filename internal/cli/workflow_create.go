@@ -12,7 +12,7 @@ func newWorkflowCreateCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "新建工作流（默认最小骨架，或 --definition 从 stdin 导入）",
-		Long: "新建一份名为 <name> 的工作流（<name> 已存在则报错）。默认脚手架出最小骨架（单节点、claude-code、透传用户需求）；\n" +
+		Long: "新建一份名为 <name> 的工作流（<name> 已存在则报错）。默认脚手架出最小骨架（单节点、透传用户需求）；\n" +
 			"带 --definition 时改为从 stdin 读入一份完整定义导入。\n\n" +
 			workflowDefinitionHelp(),
 		Args: requireArgs(cobra.ExactArgs(1)),
@@ -29,27 +29,25 @@ func newWorkflowCreateCommand() *cobra.Command {
 				return fmt.Errorf("工作流 %s 已存在（先 delete 或换名）", name)
 			}
 
-			var def *workflow.Definition
+			var definition workflow.Definition
 			if fromDefinition {
 				data, readErr := readStdinDefinition()
 				if readErr != nil {
 					return readErr
 				}
-				def, err = workflow.ParseDefinition(data)
-				if err != nil {
-					return err
+				body, parseErr := workflow.ParseDefinition(data) // 导入体：主体或整条记录皆容忍（解包 definition、忽略元数据）
+				if parseErr != nil {
+					return parseErr
 				}
-				if err = reconcileImportName(def, name); err != nil {
-					return err
-				}
-				if err = workflow.Validate(def); err != nil {
+				definition = *body
+				if err = workflow.Validate(&definition); err != nil {
 					return err
 				}
 			} else {
-				def = workflow.Scaffold()
+				definition = workflow.Scaffold()
 			}
-			def.Name = name
-			if err = st.Create(def); err != nil {
+			wf := &workflow.Workflow{Name: name, Definition: definition}
+			if err = st.Create(wf); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ 已创建 %s\n", name)

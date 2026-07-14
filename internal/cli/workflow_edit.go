@@ -11,7 +11,7 @@ func newWorkflowEditCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "edit <name>",
 		Short: "从 stdin 读 JSON 整体替换既有工作流",
-		Long: "从 stdin 读入一份完整定义，原子替换名为 <name> 的既有工作流（<name> 不存在则报错；替换失败保留原定义）。\n\n" +
+		Long: "从 stdin 读入一份完整定义，原子替换名为 <name> 的既有工作流。\n\n" +
 			workflowDefinitionHelp(),
 		Args: requireArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -30,18 +30,15 @@ func newWorkflowEditCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			def, err := workflow.ParseDefinition(data)
+			body, err := workflow.ParseDefinition(data) // 导入体：主体或整条记录皆容忍（解包 definition、忽略元数据）
 			if err != nil {
 				return err
 			}
-			if err = reconcileImportName(def, name); err != nil {
+			if err = workflow.Validate(body); err != nil {
 				return err
 			}
-			def.Name = name
-			if err = workflow.Validate(def); err != nil {
-				return err
-			}
-			if err = st.Save(def); err != nil {
+			wf := &workflow.Workflow{Name: name, Definition: *body}
+			if err = st.ReplaceDefinition(wf); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ 已更新 %s\n", name)

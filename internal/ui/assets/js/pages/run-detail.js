@@ -1,21 +1,25 @@
 // 运行详情页（#/runs/:id）：run show / run show --trace 的镜像。三态 running / completed / failed
-// （+ interrupted 派生），逐步可展开全文、运行总结 marked 渲染、冻结定义、running 可终止。
+// （+ interrupted 派生）。左栏 DAG 进度画布（节点颜色即状态），右栏节点详情（点开延迟渲染全文）；
+// 下方运行总结 marked 渲染、冻结定义折叠、running 可终止 / failed·interrupted 可恢复。
 // 全页不显示、不提及任何内部文件路径（cwd 是用户自己传的运行参数，照常展示）。
 
 import { h, mount, copyText, copyIcon } from "../dom.js";
 import { api } from "../api.js";
 import { navigate } from "../router.js";
 import { i18n } from "../i18n.js";
-import { fmtTime, fmtTimeSec, fmtDurationMs, durationBetween, elapsedSince, fmtTokens } from "../format.js";
-import { engineIconEl, chipStyle } from "../engines.js";
+import { fmtTimeSec, fmtDurationMs, durationBetween, elapsedSince, fmtTokens } from "../format.js";
+import { engineIconEl } from "../engines.js";
 import { highlightHTML } from "../highlight.js";
 import { confirmModal } from "../modal.js";
 import { loadInto } from "./common.js";
+import { isAgent, edgeKey, NODE_ID_START, NODE_ID_END } from "../graph.js";
+import { svg } from "../svg.js";
+import { layoutPositions, edgePathThrough, arrowMarkers, anchorEl, nodeEl, ARROW_ID } from "../dag-layout.js";
 
 export function renderRunDetailPage(outlet, id) {
   return loadInto(
     outlet,
-    () => api.getRun(id, true), // trace=1：逐步全文
+    () => api.getRun(id, true), // trace=1：节点 input/output 全文
     (detail) => view(outlet, detail),
   );
 }
@@ -31,14 +35,19 @@ function view(outlet, d) {
   const completed = status === "completed";
   const interrupted = status === "interrupted";
 
-  // 节点 id → 色板序号（按快照 nodes 顺序，与列表/编辑器同一套配色）。
-  const colorIndex = {};
-  const snapshot = d.workflowSnapshot;
-  if (snapshot && snapshot.nodes) {
-    snapshot.nodes.forEach((n, i) => {
-      colorIndex[n.id] = i;
-    });
-  }
+  // 冻结快照的定义主体（含 START/END）；进度分母 N = agent 节点数（读时由快照算，对齐后端 recordNodeCount）。
+  const snapDef = (d.workflowSnapshot && d.workflowSnapshot.definition) || { nodes: [], edges: [] };
+  const nodeCount = (snapDef.nodes || []).filter((n) => isAgent(n.id)).length;
+  const progress = d.progress || 0;
+
+  // trace 按 nodeId 归并：同一 nodeId 可有多条（resume 保留失败行 + 补跑行），以最后一条为准。
+  const trace = d.trace || [];
+  const lastByNode = new Map();
+  trace.forEach((e) => lastByNode.set(e.nodeId, e));
+  const done = new Set();
+  lastByNode.forEach((e, id) => {
+    if (e.success) done.add(id);
+  });
 
   const page = h("div", { class: "page" });
 
@@ -64,39 +73,56 @@ function view(outlet, d) {
     row1,
     h("div", { class: "kv" }, h("span", { class: "kv-k" }, i18n.detailWorkflow), wfName),
     h("div", { class: "kv" }, h("span", { class: "kv-k" }, i18n.detailCwd), h("span", { class: "mono", style: { fontSize: "12px" } }, d.cwd)),
+    h("div", { class: "kv" }, h("span", { class: "kv-k" }, i18n.detailProgress), h("span", { class: "mono", style: { fontSize: "12.5px" } }, i18n.progressNodesTpl(progress, nodeCount))),
     h("div", { class: "kv" }, h("span", { class: "kv-k" }, i18n.detailTime), h("span", { class: "muted" }, timeLine(d))),
-    running ? runningProgress(d) : null,
+    running ? runningProgress(progress, nodeCount) : null,
     interrupted ? h("div", { class: "fnote" }, i18n.interruptedNote) : null,
   );
   page.appendChild(card);
 
-  // 需求：与 trace 输入同等地位——可能是大 PRD，独立成块、Prism markdown 渲染（自带转义、无 XSS）、可复制，
-  // 而非挤在 kv 小行里当纯文本。
-  page.appendChild(
-    h(
-      "div",
-      { class: "promptblk" },
-      codeBar(i18n.detailPrompt, d.userPrompt),
-      h("div", { class: "ed ed-att", html: highlightHTML(d.userPrompt, "markdown") }),
-    ),
-  );
+  // 需求：可能是大 PRD，独立成块、Prism markdown 渲染（自带转义、无 XSS）、可复制、默认折叠。
+  page.appendChild(h("div", { class: "promptblk" }, mdBlock(i18n.detailPrompt, d.userPrompt)));
 
-  // ---- failed：error 全文置顶 ----
+  // ---- failed：error 全文置顶（失败节点取后端 record.failedNodeId＝首个失败节点/根因，与 error 文案一致） ----
   if (failed && d.error) {
-    const traceStepIndex = lastUnsuccessfulStepIndex(d.trace || []);
-    const failureTitle = traceStepIndex !== null ? i18n.failedAtStepTpl(traceStepIndex) : i18n.failedPrefix;
-    page.appendChild(
-      h("div", { class: "errpanel" }, h("h5", {}, failureTitle), h("p", {}, d.error)),
-    );
+    const failureTitle = d.failedNodeId ? i18n.failedAtNodeTpl(d.failedNodeId) : i18n.failedPrefix;
+    page.appendChild(h("div", { class: "errpanel" }, h("h5", {}, failureTitle), h("p", {}, d.error)));
   }
 
-  // ---- 逐步列表 ----
-  page.appendChild(stepsView(d.trace || [], colorIndex));
+  // ---- DAG 进度画布 + 右栏节点详情（未选中节点时详情列隐藏、画布在整行内居中） ----
+  const canvasCol = h("div", { class: "canvascol" });
+  const detailCol = h("div", { class: "insp insp-run" });
+  const body = h("div", { class: "body2" }, canvasCol, detailCol);
+  const state = { selId: null };
+  const syncLayout = () => {
+    const has = !!state.selId;
+    detailCol.style.display = has ? "" : "none";
+    body.classList.toggle("body2-solo", !has); // 无选中：隐藏详情、画布居中
+  };
+  const renderCanvas = () => {
+    // 选中回调：点节点选中它；再次点同一节点、或点画布空白（id=null）→ 取消选中，回到居中无面板态。
+    mount(canvasCol, buildRunCanvas(snapDef, lastByNode, done, running, completed, state.selId, (id) => {
+      state.selId = state.selId === id ? null : id;
+      renderCanvas();
+      renderDetail();
+    }));
+  };
+  const renderDetail = () => {
+    syncLayout();
+    if (!state.selId) return; // 未选中：详情列已隐藏，不渲染占位
+    const node = (snapDef.nodes || []).find((n) => n.id === state.selId) || { id: state.selId };
+    // 选中才构建节点详情 DOM；其中输入 / 输出体进一步延迟到展开对应折叠块才渲染（trace 单行可达 MB 级，
+    // 延迟渲染是唯一允许的性能手段，展开时渲染完整全文、绝不截断）。
+    mount(detailCol, nodeDetail(node, lastByNode.get(state.selId) || null));
+  };
+  renderCanvas();
+  renderDetail();
+  page.appendChild(body);
 
   // ---- 运行总结（终态渲染，running 提示待生成） ----
   if (running) {
     page.appendChild(h("div", { class: "fnote" }, i18n.summaryPending));
-  } else if (completed || interrupted) {
+  } else if (completed || interrupted || failed) {
     const panel = summaryPanel();
     page.appendChild(panel.element);
     // 异步拉总结 markdown 并 marked 渲染；仅 404（未生成）时移除面板，其余错误就地显示、不静默。
@@ -109,10 +135,118 @@ function view(outlet, d) {
       });
   }
 
-  // ---- 冻结定义折叠区 ----
-  page.appendChild(frozenDefView(snapshot));
+  // ---- 冻结定义折叠区（完整记录 JSON） ----
+  page.appendChild(frozenDefView(d.workflowSnapshot));
 
   return page;
+}
+
+// ---- DAG 进度画布 ----
+function buildRunCanvas(snapDef, lastByNode, done, running, completed, selId, onSelect) {
+  const layout = layoutPositions(snapDef);
+  const positions = layout.positions;
+
+  const routeOf = layout.routeOf;
+  const edgeEls = [];
+  for (const edge of snapDef.edges || []) {
+    const pts = routeOf.get(edgeKey(edge));
+    if (!pts) continue;
+    edgeEls.push(svg("path", { class: "edge", d: edgePathThrough(pts), "marker-end": `url(#${ARROW_ID})` }));
+  }
+
+  const markerEls = [];
+  // START 越过即转绿（t0 完成）；END 仅整体完成时转绿。
+  if (positions.has(NODE_ID_START)) markerEls.push(anchorEl(NODE_ID_START, positions.get(NODE_ID_START), { ok: true }));
+  if (positions.has(NODE_ID_END)) markerEls.push(anchorEl(NODE_ID_END, positions.get(NODE_ID_END), { ok: completed }));
+
+  const nodeEls = [];
+  for (const node of snapDef.nodes || []) {
+    if (!isAgent(node.id)) continue;
+    const pos = positions.get(node.id);
+    if (!pos) continue;
+    const st = nodeStateOf(node.id, lastByNode, done, snapDef, running);
+    const g = nodeEl(node, pos, {
+      selected: node.id === selId,
+      stateClass: st.cls,
+      statusClass: st.statusClass,
+      statusLabel: st.label,
+      faint: st.faint,
+    });
+    // 节点点击自吞（stopPropagation），不冒泡到 svg 背景，否则会被背景的"取消选中"抵消。
+    g.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onSelect(node.id);
+    });
+    nodeEls.push(g);
+  }
+
+  // 自然像素尺寸 + CSS max-width:100%/height:auto：真实尺寸呈现、超宽才等比缩小（与编辑页画布一致）。
+  const canvas = svg(
+    "svg",
+    { class: "dagcanvas runcanvas", width: layout.width, height: layout.height, viewBox: `0 0 ${layout.width} ${layout.height}`, preserveAspectRatio: "xMidYMid meet" },
+    arrowMarkers(),
+    ...edgeEls,
+    ...markerEls,
+    ...nodeEls,
+  );
+  // 点画布空白（含 START/END 锚点、边——它们不吞事件）→ 取消选中。
+  canvas.addEventListener("click", () => onSelect(null));
+  return canvas;
+}
+
+// nodeStateOf 推断某 agent 节点的展示态：成功=绿、失败=红、运行中=蓝、待运行=灰（颜色即状态）。
+// 无 trace 记录时：run 存活且全部前驱已完成（前沿）→ 运行中；否则 → 待运行。耗时只在成功/失败标注。
+function nodeStateOf(id, lastByNode, done, snapDef, running) {
+  const last = lastByNode.get(id);
+  if (last) {
+    if (last.success) return { cls: "nb-ok", statusClass: "nst-ok", label: fmtDurationMs(last.durationMs) };
+    return { cls: "nb-fail", statusClass: "nst-fail", label: fmtDurationMs(last.durationMs) };
+  }
+  if (running && predsSatisfied(id, snapDef, done)) return { cls: "nb-run", statusClass: "nst-run", label: "" };
+  return { cls: "nb-wait", statusClass: "", label: "", faint: true };
+}
+
+// predsSatisfied：某节点的全部前驱是否都已就绪（START 恒就绪；agent 前驱须已成功）。
+function predsSatisfied(id, snapDef, done) {
+  const preds = (snapDef.edges || []).filter((e) => e.to === id).map((e) => e.from);
+  return preds.every((p) => p === NODE_ID_START || done.has(p));
+}
+
+// ---- 右栏节点详情（点画布节点才展开，延迟渲染全文） ----
+function nodeDetail(node, entry) {
+  const displayName = entry ? entry.displayName : node.displayName || node.id;
+  const engine = entry ? entry.engine : node.engine;
+  const cfg = entry ? entry.engineConfig : node.engineConfig;
+
+  const head = h("div", { class: "insphead" }, h("span", { class: "idchip" }, node.id), h("span", { class: "itt" }, displayName));
+
+  // engine · model · [effort] · [tokens] · [耗时]
+  const parts = [engine, cfg && cfg.model ? cfg.model : i18n.engineDefaultModel];
+  if (cfg && cfg.effort) parts.push("effort " + cfg.effort);
+  if (cfg && cfg.reasoningEffort) parts.push("reasoningEffort " + cfg.reasoningEffort);
+  if (entry) {
+    if (entry.tokens) parts.push(fmtTokens(entry.tokens) + " tok");
+    parts.push(fmtDurationMs(entry.durationMs));
+  }
+  const stats = h("div", { class: "dkv" }, engineIconEl(engine), h("span", {}, parts.join(" · ")));
+
+  if (!entry) {
+    // 尚无执行记录（待运行 / 运行中）：只展示配置，如实标注。
+    return h("div", {}, head, stats, h("div", { class: "fnote" }, i18n.nodeNoTrace));
+  }
+
+  const outLabel = entry.success ? i18n.detailOutput : i18n.detailError;
+  const outText = entry.success ? entry.output : entry.error || "";
+  const outCls = entry.success ? "ed ed-att" : "ed ed-att ed-err";
+  return h(
+    "div",
+    {},
+    head,
+    stats,
+    sessionRow(entry),
+    mdBlock(i18n.detailInput, entry.input),
+    mdBlock(outLabel, outText, { bodyCls: outCls }),
+  );
 }
 
 function statusBadgeLarge(status, running) {
@@ -124,132 +258,20 @@ function timeLine(d) {
   const start = fmtTimeSec(d.startedAt);
   if (d.endedAt) {
     const dur = durationBetween(d.startedAt, d.endedAt);
-    const durText = dur !== null ? ` · ${i18n.durationLabel} ` + fmtDurationMs(dur) : "";
-    return `${i18n.stepsCountTpl(d.steps)}${durText} · ${start} → ${fmtTimeSec(d.endedAt)}`;
+    const durText = dur !== null ? `${i18n.durationLabel} ${fmtDurationMs(dur)} · ` : "";
+    return `${durText}${start} → ${fmtTimeSec(d.endedAt)}`;
   }
   const el = elapsedSince(d.startedAt);
-  return `${start} ${i18n.sinceLabel}` + (el !== null ? ` · ${i18n.elapsedLabel} ` + fmtDurationMs(el) : "");
+  return `${start} ${i18n.sinceLabel}` + (el !== null ? ` · ${i18n.elapsedLabel} ${fmtDurationMs(el)}` : "");
 }
 
-function runningProgress(d) {
-  const pct = d.steps > 0 ? Math.min(100, (d.progress / d.steps) * 100) : 0;
-  return h(
-    "div",
-    {},
-    h("div", { class: "prog" }, h("span", { class: "prog-i", style: { width: pct.toFixed(1) + "%" } })),
-    h("div", { class: "muted", style: { fontSize: "12px" } }, `已完成 ${d.progress}/${d.steps} 步`),
-  );
-}
-
-// ---- 逐步列表 + 展开详情 ----
-function stepsView(trace, colorIndex) {
-  const container = h("div", { class: "steps" });
-  // 仅含循环（评测内循环 / 回跳，任一步 iteration>1）的运行才按轮次分组；线性运行全是第 1 轮，
-  // 插「第 1 轮」头纯属噪音，不插。
-  const grouped = trace.some((e) => e.iteration > 1);
-  // 被 resume 取代的失败行：某失败步之后又出现同一 stepIndex 的记录（补跑那次），旧失败行标注
-  //「已重跑取代」——保留旧记录是有意的审计轨迹（与 run show --trace 一致）。
-  const superseded = supersededIndices(trace);
-  let lastIteration = null;
-  trace.forEach((entry, i) => {
-    if (grouped && entry.iteration !== lastIteration) {
-      lastIteration = entry.iteration;
-      container.appendChild(
-        h(
-          "div",
-          { class: "grouphead" },
-          i18n.iterationTpl(entry.iteration),
-          h("span", { class: "ghint" }, `iter=${entry.iteration}`),
-        ),
-      );
-    }
-    container.appendChild(stepRow(entry, i, colorIndex, i === trace.length - 1, superseded.has(i)));
-  });
-  return container;
-}
-
-// supersededIndices 找出被后续同 stepIndex 记录取代的失败行的物理下标集合（resume 保留的旧失败行）。
-function supersededIndices(trace) {
-  const laterOf = new Set();
-  const seenAfter = {}; // stepIndex → 该步最后一次出现的物理下标
-  trace.forEach((e, i) => {
-    seenAfter[e.stepIndex] = i;
-  });
-  trace.forEach((e, i) => {
-    if (!e.success && seenAfter[e.stepIndex] > i) laterOf.add(i); // 失败行且其后还有同步记录 → 被取代
-  });
-  return laterOf;
-}
-
-function lastUnsuccessfulStepIndex(trace) {
-  for (let i = trace.length - 1; i >= 0; i--) {
-    if (!trace[i].success) return trace[i].stepIndex;
-  }
-  return null;
-}
-
-function stepRow(entry, index, colorIndex, isLast, superseded) {
-  const ci = colorIndex[entry.nodeId] ?? 0;
-  const label = entry.type === "evaluator" ? entry.displayName + " " + i18n.evalSuffix : entry.displayName;
-  const meta = entry.success
-    ? fmtDurationMs(entry.durationMs) + (entry.tokens ? " · " + fmtTokens(entry.tokens) + " tok" : "")
-    : fmtDurationMs(entry.durationMs);
-  const preview = entry.success ? entry.output : entry.error || "";
-
-  const detailHolder = h("div");
-  let open = false;
-
-  const row = h(
-    "div",
-    { class: "step clickable" + (entry.success ? "" : " failrow") + (isLast ? " steplast" : "") + (superseded ? " superseded" : "") },
-    h("span", { class: "no" }, "step " + entry.stepIndex),
-    h("span", { class: "idchip", style: chipStyle(ci) }, entry.nodeId),
-    h("span", { class: "lbl" }, label),
-    h("span", { class: "engc" }, engineIconEl(entry.engine), entry.engine),
-    entry.success ? h("span", { class: "ok" }, "✓") : h("span", { class: "bad" }, "✗"),
-    superseded ? h("span", { class: "superseded-tag" }, i18n.supersededNote) : null,
-    h("span", { class: "meta" }, meta),
-    h("span", { class: "pv" }, previewLine(preview)),
-  );
-  row.addEventListener("click", () => {
-    open = !open;
-    if (open) {
-      row.classList.remove("steplast");
-      mount(detailHolder, stepDetail(entry, ci));
-    } else {
-      mount(detailHolder);
-      if (isLast) row.classList.add("steplast");
-    }
-  });
-
-  return h("div", {}, row, detailHolder);
-}
-
-function previewLine(text) {
-  const firstLine = (text || "").split("\n").find((l) => l.trim() !== "") || "";
-  return firstLine;
-}
-
-// stepDetail 展开时才构建 DOM（trace 单行可达 MB 级，延迟渲染是唯一允许的性能手段，点开必须完整全文）。
-function stepDetail(entry, ci) {
-  const cfg = engineConfigLine(entry.engine, entry.engineConfig);
-  const outLabel = entry.success ? i18n.detailOutput : i18n.detailError;
-  const outText = entry.success ? entry.output : entry.error || "";
-  const outCls = entry.success ? "ed ed-att" : "ed ed-att ed-err";
-  return h(
-    "div",
-    { class: "sdetail" },
-    h("div", { class: "dkv" }, engineIconEl(entry.engine), h("span", {}, cfg)),
-    sessionRow(entry),
-    codeBar(i18n.detailInput, entry.input),
-    h("div", { class: "ed ed-att", html: highlightHTML(entry.input, "markdown") }),
-    codeBar(outLabel, outText),
-    h("div", { class: outCls, html: highlightHTML(outText, "markdown") }),
-  );
+function runningProgress(k, n) {
+  const pct = n > 0 ? Math.min(100, (k / n) * 100) : 0;
+  return h("div", { style: { marginTop: "10px" } }, h("div", { class: "prog" }, h("span", { class: "prog-i", style: { width: pct.toFixed(1) + "%" } })));
 }
 
 // sessionReplayCmd 镜像 CLI 的 sessionReplayLine（internal/cli/run_show.go）：按引擎给出「凭会话 id
-// 回放本步」的命令；未知引擎无对应命令，返回空串（调用方退化为只显 id）。
+// 回放本节点」的命令；未知引擎无对应命令，返回空串（调用方退化为只显 id）。
 function sessionReplayCmd(engine, sessionId) {
   switch (engine) {
     case "claude-code":
@@ -265,30 +287,46 @@ function sessionReplayCmd(engine, sessionId) {
   }
 }
 
-// sessionRow 是步详情里的会话行：会话 id（+ 该引擎回放命令），凭它用引擎自带工具回放本步；复制按钮
-// 复制回放命令（无对应命令则复制 id）。引擎未回报会话 id 时整行不渲染（返回 null，appendChildren 跳过）。
+// sessionRow 是节点详情里的会话信息：会话 id 一行、该引擎回放命令另起一行（各自可复制）。
+// 引擎未回报会话 id 时整块不渲染；未知引擎无回放命令时只出会话 id 一行。
+// 返回两行的数组（h/mount 会扁平化数组子节点）——末行仍是 .dkv，紧邻其后的输入 .edbar 照旧紧贴。
 function sessionRow(entry) {
   if (!entry.sessionId) return null;
-  const cmd = sessionReplayCmd(entry.engine, entry.sessionId);
-  const text = cmd
-    ? `${i18n.detailSession} ${entry.sessionId} · ${i18n.detailReplay}：${cmd}`
-    : `${i18n.detailSession} ${entry.sessionId}`;
-  return h(
+  const idLine = h(
     "div",
     { class: "dkv" },
-    h("span", { class: "session" }, text),
+    h("span", { class: "session" }, `${i18n.detailSession} ${entry.sessionId}`),
     copyBtn((e) => {
       e.stopPropagation();
-      copyText(cmd || entry.sessionId);
+      copyText(entry.sessionId);
     }, "cpd"),
   );
+  const cmd = sessionReplayCmd(entry.engine, entry.sessionId);
+  if (!cmd) return [idLine];
+  const replayLine = h(
+    "div",
+    { class: "dkv" },
+    h("span", { class: "session" }, `${i18n.detailReplay}：${cmd}`),
+    copyBtn((e) => {
+      e.stopPropagation();
+      copyText(cmd);
+    }, "cpd"),
+  );
+  return [idLine, replayLine];
 }
 
-// codeBar 是只读代码块的深色头条（字段名 + md + 复制）。
-function codeBar(label, text) {
-  return h(
+// mdBlock 是「深色头条（折叠开关）+ markdown 体」的可折叠只读块：点头条展开 / 收起，caret 指示态。
+// 默认折叠（collapsed=true）；展开才把全文渲染进 DOM——trace 单行可达 MB 级，延迟到展开是性能手段。
+// 头条含 字段名 + md 标签 + 复制（复制自吞点击、不触发折叠）。返回 [头条, 体容器] 数组，由 h / mount
+// 扁平化插入，省一层包裹 div，保持 .dkv + .edbar 等相邻间距规则不变。
+function mdBlock(label, text, { bodyCls = "ed ed-att", collapsed = true } = {}) {
+  const bodyHolder = h("div");
+  let open = !collapsed;
+  const caret = h("span", { class: "edcaret" }, open ? "▾" : "▸");
+  const bar = h(
     "div",
-    { class: "edbar" },
+    { class: "edbar edbar-fold" + (open ? " is-open" : "") },
+    caret,
     h("span", { class: "edname" }, label),
     h("span", { class: "edtag" }, "md"),
     h("span", { class: "grow" }),
@@ -297,18 +335,18 @@ function codeBar(label, text) {
       copyText(text);
     }, "cpd"),
   );
-}
-
-// engineConfigLine 渲染「引擎 · 模型 · effort」；模型缺省显式标注「（引擎默认模型）」。
-function engineConfigLine(engine, cfg) {
-  const parts = [engine];
-  const model = cfg && cfg.model ? cfg.model : i18n.engineDefaultModel;
-  parts.push(model);
-  if (cfg) {
-    if (cfg.effort) parts.push("effort " + cfg.effort);
-    if (cfg.reasoningEffort) parts.push("reasoningEffort " + cfg.reasoningEffort);
-  }
-  return parts.join(" · ");
+  const render = () => {
+    if (open) mount(bodyHolder, h("div", { class: bodyCls, html: highlightHTML(text, "markdown") }));
+    else mount(bodyHolder);
+  };
+  bar.addEventListener("click", () => {
+    open = !open;
+    caret.textContent = open ? "▾" : "▸";
+    bar.classList.toggle("is-open", open);
+    render();
+  });
+  render();
+  return [bar, bodyHolder];
 }
 
 // ---- 运行总结面板（marked 渲染） ----
@@ -316,20 +354,31 @@ function summaryPanel() {
   const bodyHolder = h("div");
   const copyBtnEl = h("button", { class: "ghost" }, copyIcon(), " " + i18n.copyAll);
   let rawMarkdown = "";
-  copyBtnEl.addEventListener("click", () => copyText(rawMarkdown));
-  const element = h(
-    "div",
-    { class: "panel" },
-    h("div", { class: "panelhead" }, h("h5", {}, i18n.summaryTitle), h("span", { class: "grow" }), copyBtnEl),
-    bodyHolder,
-  );
+  // 复制自吞点击，避免冒泡触发头条折叠。
+  copyBtnEl.addEventListener("click", (e) => {
+    e.stopPropagation();
+    copyText(rawMarkdown);
+  });
+  // 总结默认展开（结论落地即读）；头条可点折叠，与需求 / 输入 / 输出的折叠交互一致。
+  let open = true;
+  const caret = h("span", { class: "foldcaret" }, "▾");
+  const headEl = h("div", { class: "panelhead panelhead-fold" }, caret, h("h5", {}, i18n.summaryTitle), h("span", { class: "grow" }), copyBtnEl);
+  headEl.addEventListener("click", () => {
+    open = !open;
+    caret.textContent = open ? "▾" : "▸";
+    bodyHolder.style.display = open ? "" : "none";
+  });
+  const element = h("div", { class: "panel" }, headEl, bodyHolder);
   return {
     element,
     fill(md) {
-      rawMarkdown = md;
+      rawMarkdown = md; // 复制全文取原始总结（含 <output> 分隔标签），非展示用的预处理版
       // marked 输出未消毒，总结含半可信引擎产物 → 注入 DOM 前必过 DOMPurify（strip script/on*/javascript:）。
       // 兜底 fail-safe：任一库缺失时退回纯文本转义，而非直接注入原始 HTML。
-      const rendered = globalThis.marked ? globalThis.marked.parse(md) : null;
+      // 展示前两步收拾总结里的 XML：preprocessSummary 把 conduct 自己的 <output> 分隔标签换成小标题、内层产物
+      // 按 markdown 渲染；summaryRenderer 再把产物内部残留的裸标签（引擎输出里的 <user_prompt> 等）转义成字面
+      // 文本并保留换行。breaks:true 让总结里的单换行（头部 **字段** 行、标签块内）呈现为换行而非塌成空格。
+      const rendered = globalThis.marked ? globalThis.marked.parse(preprocessSummary(md), { renderer: summaryRenderer(), breaks: true }) : null;
       const html = rendered !== null && globalThis.DOMPurify ? globalThis.DOMPurify.sanitize(rendered) : escapeHTML(md);
       mount(bodyHolder, h("div", { class: "md-body", html }));
     },
@@ -342,7 +391,7 @@ function summaryPanel() {
   };
 }
 
-// ---- 冻结定义折叠区 ----
+// ---- 冻结定义折叠区（完整记录：name / 时间戳 + definition{nodes,edges}） ----
 function frozenDefView(snapshot) {
   const json = snapshot ? JSON.stringify(snapshot, null, 2) : "";
   const bodyHolder = h("div");
@@ -366,7 +415,6 @@ function frozenDefView(snapshot) {
     caret.textContent = (open ? "▾ " : "▸ ") + i18n.frozenDef;
     copyBtnEl.style.display = open ? "inline-flex" : "none";
     if (open) {
-      // 与编辑器 JSON 视图一致：pre 外包 .jsonbody 补内间距（否则文字左边顶住边框）。
       mount(
         bodyHolder,
         h(
@@ -399,7 +447,7 @@ function openStop(outlet, d) {
   });
 }
 
-// ---- 重跑（从中断处恢复） ----
+// ---- 恢复（从中断处续跑） ----
 function openResume(outlet, d) {
   confirmModal({
     title: i18n.dlgResumeTitleTpl(d.id),
@@ -424,4 +472,31 @@ function copyBtn(handler, cls) {
 
 function escapeHTML(s) {
   return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+}
+
+// preprocessSummary 把总结里 conduct 自己的 `<output node="X" name="Y">` … `</output>` 分隔标签
+// （见 internal/run/summary.go：产物区每个 agent 节点产物的稳健分隔符）换成 markdown 小标题，内层产物即按
+// 正常 markdown 渲染；闭合标签删除。产物内部残留的别的裸标签（引擎输出里的 <user_prompt> 等）不在此处理，
+// 交给 summaryRenderer 转义。node id 受 ^[A-Za-z_][A-Za-z0-9_-]* 约束、name 为 Go %q 引号串，常规无内嵌
+// 引号，故整行精确匹配即可；name 含引号等罕见情形匹配不上、原样落到 summaryRenderer 按字面显示（优雅降级）。
+function preprocessSummary(md) {
+  return md
+    .replace(/^<output node="([^"]*)" name="([^"]*)">[ \t]*$/gm, (_, id, name) => `### ${name} · \`${id}\``)
+    .replace(/^<\/output>[ \t]*$/gm, "");
+}
+
+// summaryRenderer 惰性构建并缓存 marked 渲染器（模块加载时 marked 未必就绪，故不在模块顶层建）：覆盖 html
+// 方法把裸 HTML/XML 标签转义为字面文本（marked v12 以字符串传入；兼容 token 对象签名以防升级），并把标签块内
+// 的换行转成 <br>——marked 会把 `<tag>` 起头的多行内容整体捕成一个 html token，其换行在 HTML 里本会塌成空格，
+// 转 <br> 方能保留原有行结构（配合 breaks:true 一并解决段落内软换行与标签块内换行两种粘连）。
+let cachedSummaryRenderer = null;
+function summaryRenderer() {
+  if (!cachedSummaryRenderer) {
+    cachedSummaryRenderer = new globalThis.marked.Renderer();
+    cachedSummaryRenderer.html = (arg) => {
+      const s = typeof arg === "string" ? arg : (arg && (arg.text ?? arg.raw)) || "";
+      return escapeHTML(s).replace(/\n/g, "<br>\n");
+    };
+  }
+  return cachedSummaryRenderer;
 }

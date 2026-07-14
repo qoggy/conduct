@@ -24,8 +24,8 @@ func newWorkflowRunCommand() *cobra.Command {
 		Short: "解释运行一份工作流",
 		Long: "解释运行名为 <name> 的工作流：按定义逐节点驱动 AI 引擎执行，前台同步阻塞并打印进度，结束后用 conduct run show <id> 看记录。\n" +
 			"用户需求经第二个位置参数或 stdin 传入（二者其一必填；均缺且 stdin 是终端则报错退 2，不挂起）。\n" +
-			"给引擎看图片：把图片的本地绝对路径直接写进需求文本即可（如「参考 /Users/me/shot.png 的布局」），各引擎自带的文件工具会自行读取该图；conduct 不提供图片旗标、也不做 URL 下载（细节见 docs/specs/engines.md〈图片输入〉）。\n" +
-			"-d / --detach 后台起跑：预检通过后以独立会话 spawn 子进程，打印 run id 立刻退 0，用 run show / run wait / run stop 查等停。\n\n" +
+			"给引擎看图片：把图片的本地绝对路径直接写进需求文本即可（如「参考 /Users/me/shot.png 的布局」），各引擎自带的文件工具会自行读取该图。\n" +
+			"-d / --detach 改为后台起跑，用 run show / run wait / run stop 查看、等待、停止。\n\n" +
 			"示例：\n" +
 			"  conduct workflow run myflow \"把 README 翻译成英文\"\n" +
 			"  echo \"把 README 翻译成英文\" | conduct workflow run myflow\n" +
@@ -50,11 +50,11 @@ func newWorkflowRunCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			def, err := st.Load(name)
+			wf, err := st.Load(name)
 			if err != nil {
 				return err
 			}
-			if err := workflow.Validate(def); err != nil {
+			if err := workflow.Validate(&wf.Definition); err != nil {
 				return err // 载入即校验，防手改损坏
 			}
 
@@ -65,22 +65,22 @@ func newWorkflowRunCommand() *cobra.Command {
 
 			orch := orchestrator.New(st)
 			if asJSON {
-				return runWithJSON(cmd, orch, def, userPrompt, workingDir)
+				return runWithJSON(cmd, orch, wf, userPrompt, workingDir)
 			}
-			return runWithHuman(cmd, orch, def, userPrompt, workingDir, st)
+			return runWithHuman(cmd, orch, wf, userPrompt, workingDir, st)
 		},
 	}
 	cmd.Flags().StringVar(&cwd, "cwd", "", "AI 引擎读写文件的工作目录（默认当前目录），即 {{sys.cwd}}")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "逐步输出机器可读事件 JSON（每步一行），无进度装饰")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "逐节点输出机器可读事件 JSON（每节点一行），无进度装饰")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "后台起跑：打印 run id 后立刻退 0，不阻塞到运行结束")
 	return cmd
 }
 
 // runWithHuman 以人类可读进度运行，收尾指向 run-summary.md。
-func runWithHuman(cmd *cobra.Command, orch *orchestrator.Orchestrator, def *workflow.Definition,
+func runWithHuman(cmd *cobra.Command, orch *orchestrator.Orchestrator, wf *workflow.Workflow,
 	userPrompt, workingDir string, st *store.Store) error {
 	obs := humanObserver{out: cmd.OutOrStdout()}
-	runID, err := orch.Run(cmd.Context(), def, userPrompt, workingDir, obs)
+	runID, err := orch.Run(cmd.Context(), wf, userPrompt, workingDir, obs)
 	if err != nil {
 		return err // 编排已落盘 failed trace/summary；此处上抛 → Execute 退 1
 	}
@@ -92,11 +92,11 @@ func runWithHuman(cmd *cobra.Command, orch *orchestrator.Orchestrator, def *work
 	return nil
 }
 
-// runWithJSON 以逐步事件 JSON 运行（无汇总事件，整体概要见 run.json）。
-func runWithJSON(cmd *cobra.Command, orch *orchestrator.Orchestrator, def *workflow.Definition,
+// runWithJSON 以逐节点事件 JSON 运行（无汇总事件，整体概要见 run.json）。
+func runWithJSON(cmd *cobra.Command, orch *orchestrator.Orchestrator, wf *workflow.Workflow,
 	userPrompt, workingDir string) error {
 	obs := &jsonObserver{out: cmd.OutOrStdout()}
-	_, err := orch.Run(cmd.Context(), def, userPrompt, workingDir, obs)
+	_, err := orch.Run(cmd.Context(), wf, userPrompt, workingDir, obs)
 	if err != nil {
 		return err
 	}

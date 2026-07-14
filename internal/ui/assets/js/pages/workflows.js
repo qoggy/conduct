@@ -108,11 +108,11 @@ export function nodeChips(ids) {
   const shown = ids.length > MAX_CHIPS ? ids.slice(0, MAX_CHIPS) : ids;
   const out = [];
   shown.forEach((id, i) => {
-    if (i > 0) out.push(h("span", { class: "narr" }, "›"));
+    if (i > 0) out.push(h("span", { class: "narr" }, ","));
     out.push(h("span", { class: "idchip" }, id));
   });
   if (ids.length > MAX_CHIPS) {
-    out.push(h("span", { class: "narr" }, "›"));
+    out.push(h("span", { class: "narr" }, ","));
     out.push(h("span", { class: "idchip" }, "+" + (ids.length - MAX_CHIPS)));
   }
   return out;

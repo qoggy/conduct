@@ -162,36 +162,49 @@ func TestPutInvalidDefinitionReturnsStructuredProblems(t *testing.T) {
 	}
 }
 
+// validDAG 是一份最小合法 DAG 主体：START → n1(claude-code) → END，供 PUT 类测试复用。
+const validDAG = `{"nodes":[{"id":"START"},{"id":"n1","displayName":"步骤","engine":"claude-code","promptTemplate":"{{sys.userPrompt}}"},{"id":"END"}],` +
+	`"edges":[{"from":"START","to":"n1"},{"from":"n1","to":"END"}]}`
+
 func TestPutValidDefinition(t *testing.T) {
 	s := newTestServer(t)
 	do(t, s, http.MethodPost, "/api/workflows", `{"name":"demo"}`, nil)
-	goodDef := `{"nodes":[{"id":"n1","displayName":"步骤","engine":"claude-code","promptTemplate":"{{sys.userPrompt}}"}]}`
-	rec := do(t, s, http.MethodPut, "/api/workflows/demo", goodDef, nil)
+	rec := do(t, s, http.MethodPut, "/api/workflows/demo", validDAG, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("合法 PUT 应 200，得到 %d（%s）", rec.Code, rec.Body.String())
 	}
-	var def workflow.Definition
-	decodeBody(t, rec, &def)
-	if len(def.Nodes) != 1 || def.Nodes[0].ID != "n1" {
-		t.Fatalf("返回定义不符: %+v", def)
+	// PUT 回响完整记录（{name, createdAt, updatedAt, definition}）。
+	var wf workflow.Workflow
+	decodeBody(t, rec, &wf)
+	if wf.Name != "demo" {
+		t.Fatalf("返回记录名应为 demo，得到 %q", wf.Name)
+	}
+	if len(wf.Definition.Nodes) != 3 || wf.Definition.Nodes[1].ID != "n1" {
+		t.Fatalf("返回定义不符: %+v", wf.Definition)
 	}
 }
 
-func TestPutNameMismatchRejected(t *testing.T) {
+// TestPutFullRecordIgnoresMetadata 锁定 spec〈API 设计〉「PUT 接受整条记录时解包 definition、忽略元数据」：
+// 传入的 name 与 URL 不一致也不拒绝，落盘沿用 URL 名（元数据由系统管理，改名走 rename）。
+func TestPutFullRecordIgnoresMetadata(t *testing.T) {
 	s := newTestServer(t)
 	do(t, s, http.MethodPost, "/api/workflows", `{"name":"demo"}`, nil)
-	body := `{"name":"other","nodes":[{"id":"n1","displayName":"步骤","engine":"claude-code","promptTemplate":"x"}]}`
+	body := `{"name":"other","createdAt":"1999-01-01T00:00:00+08:00","updatedAt":"1999-01-01T00:00:00+08:00","definition":` + validDAG + `}`
 	rec := do(t, s, http.MethodPut, "/api/workflows/demo", body, nil)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("name 不一致应 409，得到 %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("整条记录 PUT 应 200（忽略元数据），得到 %d（%s）", rec.Code, rec.Body.String())
+	}
+	var wf workflow.Workflow
+	decodeBody(t, rec, &wf)
+	if wf.Name != "demo" {
+		t.Fatalf("落盘名应沿用 URL 名 demo（忽略 body 里的 other），得到 %q", wf.Name)
 	}
 }
 
 func TestOptimisticConcurrencyConflict(t *testing.T) {
 	s := newTestServer(t)
 	do(t, s, http.MethodPost, "/api/workflows", `{"name":"demo"}`, nil)
-	goodDef := `{"nodes":[{"id":"n1","displayName":"步骤","engine":"claude-code","promptTemplate":"x"}]}`
-	rec := do(t, s, http.MethodPut, "/api/workflows/demo", goodDef, map[string]string{
+	rec := do(t, s, http.MethodPut, "/api/workflows/demo", validDAG, map[string]string{
 		"X-Conduct-Base-UpdatedAt": "1999-01-01T00:00:00+08:00", // 过期基线
 	})
 	if rec.Code != http.StatusConflict {
@@ -237,7 +250,7 @@ func TestCopyWorkflow(t *testing.T) {
 		t.Fatalf("复制应 201，得到 %d（%s）", ok.Code, ok.Body.String())
 	}
 	// 副本时间戳由 store 重戳，非空（不继承源）
-	var copied workflow.Definition
+	var copied workflow.Workflow
 	decodeBody(t, ok, &copied)
 	if copied.Name != "demo-copy" || copied.CreatedAt == "" || copied.UpdatedAt == "" {
 		t.Fatalf("副本应重戳非空时间戳，得到 %+v", copied)
@@ -308,10 +321,33 @@ func TestResumeRunPrecheck(t *testing.T) {
 	}
 }
 
+// TestDeleteRun 覆盖 DELETE /api/runs/{id}：终态 → 204 且记录消失；running（进程存活）→ 409；不存在 → 404。
+func TestDeleteRun(t *testing.T) {
+	s := newTestServer(t)
+	// 终态可删 → 204。
+	seedRun(t, s, "demo-20260101-000000", "demo", run.StatusCompleted, 1)
+	if del := do(t, s, http.MethodDelete, "/api/runs/demo-20260101-000000", "", nil); del.Code != http.StatusNoContent {
+		t.Fatalf("删除终态运行应 204，得到 %d", del.Code)
+	}
+	// 删后再删同一 id → 404（记录已消失）。
+	if again := do(t, s, http.MethodDelete, "/api/runs/demo-20260101-000000", "", nil); again.Code != http.StatusNotFound {
+		t.Fatalf("删已删除的运行应 404，得到 %d", again.Code)
+	}
+	// running 且进程存活 → 拒删 409。
+	seedRun(t, s, "demo-20260101-000001", "demo", run.StatusRunning, os.Getpid())
+	if rec := do(t, s, http.MethodDelete, "/api/runs/demo-20260101-000001", "", nil); rec.Code != http.StatusConflict {
+		t.Fatalf("删 running 运行应 409，得到 %d", rec.Code)
+	}
+	// 不存在 → 404。
+	if rec := do(t, s, http.MethodDelete, "/api/runs/ghost-20260101-000000", "", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("删不存在的运行应 404，得到 %d", rec.Code)
+	}
+}
+
 func seedRun(t *testing.T, s *Server, id, workflowName string, status run.Status, pid int) {
 	t.Helper()
 	record := &run.Record{
-		ID: id, Workflow: workflowName, Status: status, Pid: pid, Steps: 3,
+		ID: id, Workflow: workflowName, Status: status, Pid: pid,
 		StartedAt: "2026-07-05T10:00:00+08:00", Artifacts: map[string]string{},
 	}
 	if err := s.store.CreateRun(record); err != nil {
@@ -323,9 +359,9 @@ func TestListRunsWithProgressAndFilter(t *testing.T) {
 	s := newTestServer(t)
 	seedRun(t, s, "demo-20260101-000000", "demo", run.StatusCompleted, 1)
 	seedRun(t, s, "other-20260101-000001", "other", run.StatusCompleted, 1)
-	// 给 demo 追两条成功 trace（进度按唯一 stepIndex 且 success 去重计），进度应为 2。
-	for i := 0; i < 2; i++ {
-		if err := s.store.AppendTrace("demo-20260101-000000", run.TraceEntry{StepIndex: i, Success: true}); err != nil {
+	// 给 demo 追两条不同节点的成功 trace（进度按唯一 nodeId 且 success 去重计），进度应为 2。
+	for _, nodeID := range []string{"a", "b"} {
+		if err := s.store.AppendTrace("demo-20260101-000000", run.TraceEntry{NodeID: nodeID, Success: true}); err != nil {
 			t.Fatalf("追加 trace 失败: %v", err)
 		}
 	}
@@ -347,7 +383,7 @@ func TestListRunsWithProgressAndFilter(t *testing.T) {
 func TestGetRunWithTrace(t *testing.T) {
 	s := newTestServer(t)
 	seedRun(t, s, "demo-20260101-000000", "demo", run.StatusCompleted, 1)
-	if err := s.store.AppendTrace("demo-20260101-000000", run.TraceEntry{StepIndex: 0, Output: "hi"}); err != nil {
+	if err := s.store.AppendTrace("demo-20260101-000000", run.TraceEntry{NodeID: "a", Output: "hi"}); err != nil {
 		t.Fatalf("追加 trace 失败: %v", err)
 	}
 	rec := do(t, s, http.MethodGet, "/api/runs/demo-20260101-000000?trace=1", "", nil)

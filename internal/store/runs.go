@@ -16,7 +16,7 @@ import (
 )
 
 // 运行记录持久化：与 workflows 同根（~/.conduct/runs/<id>/），一次运行一个目录，含
-// run.json（概要）、trace.jsonl（逐步）、run-summary.md（报告）。见 spec〈落盘存储结构〉。
+// run.json（概要）、trace.jsonl（逐节点尝试）、run-summary.md（报告）。见 spec〈落盘存储结构〉。
 
 var (
 	// ErrRunExists 表示目标 run id 已被占用（不覆盖历史）。
@@ -186,7 +186,7 @@ func (s *Store) LoadRun(id string) (*run.Record, error) {
 		return nil, fmt.Errorf("读取运行 %s 失败: %w", id, err)
 	}
 	var record run.Record
-	if err := json.Unmarshal(data, &record); err != nil {
+	if err := decodeStrictJSON(data, &record); err != nil {
 		return nil, fmt.Errorf("运行 %s 的 run.json 损坏: %w", id, err)
 	}
 	return &record, nil
@@ -232,10 +232,10 @@ func (s *Store) LoadTrace(id string) ([]run.TraceEntry, error) {
 	}
 }
 
-// CountTrace 统计某 run 的 trace 完整行数（= 落盘的物理记录条数，含 resume 后同一 stepIndex 的多条）。
+// CountTrace 统计某 run 的 trace 完整行数（= 落盘的物理记录条数，含 resume 后同一 nodeId 的多条）。
 // 只数 '\n' 字节、绝不解析 JSON——单行可达 MB 级，全量 LoadTrace 只为数行数会拖垮列表。
 // 文件缺失视为 0；末尾无换行的半行（正在写入）自然不计入。
-// 注意：进度分子 k 已改用按 stepIndex 去重的 CountProgress（防 resume 后 k>N，见其文档与 cli-runtime.md
+// 注意：进度分子 k 已改用按 nodeId 去重的 CountProgress（防 resume 后 k>N，见其文档与 cli-runtime.md
 // 〈run resume〉），本函数数的是全量物理行数，语义是「已落盘多少条 trace」，非「完成到第几步」。
 func (s *Store) CountTrace(id string) (int, error) {
 	dir, err := s.runDir(id)
@@ -268,14 +268,14 @@ func (s *Store) CountTrace(id string) (int, error) {
 
 // progressLine 只取算进度所需的两字段：逐行流式解析 trace.jsonl 时避免把 MB 级 input/output 也解出来。
 type progressLine struct {
-	StepIndex int  `json:"stepIndex"`
-	Success   bool `json:"success"`
+	NodeID  string `json:"nodeId"`
+	Success bool   `json:"success"`
 }
 
-// CountProgress 统计一次运行的进度分子 k = trace 中「唯一 stepIndex 且（最后一次记录）success」的步数
+// CountProgress 统计一次运行的进度分子 k = trace 中「唯一 nodeId 且（最后一次记录）success」的节点数
 // （去重逻辑同 run.ProgressCount）。列表页为每个 run 算进度时用它替代 CountTrace 的数行数——resume 保留
-// 失败行 + 续写补跑行会让同一 stepIndex 出现多条，数行数会使 k 越过分母 N；按 stepIndex 去重保 k ≤ N。
-// 逐行流式解析、只取 stepIndex/success 两字段（不 materialize MB 级 input/output）；行读取健壮性同
+// 失败行 + 续写补跑行会让同一 nodeId 出现多条，数行数会使 k 越过分母 N；按 nodeId 去重保 k ≤ N。
+// 逐行流式解析、只取 nodeId/success 两字段（不 materialize MB 级 input/output）；行读取健壮性同
 // LoadTrace（只认完整行、容忍 \r\n、末尾半行丢弃不报损坏）。文件缺失视为 0。
 func (s *Store) CountProgress(id string) (int, error) {
 	dir, err := s.runDir(id)
@@ -290,7 +290,7 @@ func (s *Store) CountProgress(id string) (int, error) {
 		return 0, fmt.Errorf("读取 trace %s 失败: %w", id, err)
 	}
 	defer file.Close()
-	lastSuccess := map[int]bool{}
+	lastSuccess := map[string]bool{}
 	reader := bufio.NewReader(file)
 	for lineNumber := 1; ; lineNumber++ {
 		chunk, readErr := reader.ReadBytes('\n')
@@ -301,7 +301,7 @@ func (s *Store) CountProgress(id string) (int, error) {
 				if err := json.Unmarshal(line, &pl); err != nil {
 					return 0, fmt.Errorf("trace %s 第 %d 行损坏: %w", id, lineNumber, err)
 				}
-				lastSuccess[pl.StepIndex] = pl.Success // 后写覆盖前写，末条为准
+				lastSuccess[pl.NodeID] = pl.Success // 后写覆盖前写，末条为准
 			}
 		}
 		if readErr != nil {

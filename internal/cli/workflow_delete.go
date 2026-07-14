@@ -14,8 +14,8 @@ func newWorkflowDeleteCommand() *cobra.Command {
 	var yes, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "delete <name>...",
-		Short: "从 store 删除一个 / 多个工作流",
-		Long: "从 store 删除一个或多个工作流。默认在交互终端下二次确认；\n" +
+		Short: "删除一个 / 多个工作流",
+		Long: "删除一个或多个工作流。默认在交互终端下二次确认；\n" +
 			"非交互环境必须显式 --yes，避免脚本误删。",
 		Args: requireArgs(cobra.MinimumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -37,7 +37,9 @@ func newWorkflowDeleteCommand() *cobra.Command {
 					return confirmErr
 				}
 				if !confirmed {
-					fmt.Fprintln(cmd.OutOrStdout(), "已取消")
+					// 取消是"未执行操作"的诊断，走 stderr——保 stdout 只承载数据
+					// （成功回执 / --json 的 {"deleted":…}），--json 下取消不再污染 JSON。
+					fmt.Fprintln(cmd.ErrOrStderr(), "已取消")
 					return nil
 				}
 			}

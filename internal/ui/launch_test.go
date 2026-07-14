@@ -8,20 +8,18 @@ import (
 	"github.com/qoggy/conduct/internal/workflow"
 )
 
-// seedWorkflow 直接把一份定义落进 store（store.Create 只校验名字、不做语义校验，
+// seedWorkflow 直接把一份工作流落进 store（store.Create 只校验名字、不做语义校验，
 // 故可落一份 nodes 为空的定义来驱动预检的 422 分支）。
-func seedWorkflow(t *testing.T, s *Server, def *workflow.Definition) {
+func seedWorkflow(t *testing.T, s *Server, wf *workflow.Workflow) {
 	t.Helper()
-	if err := s.store.Create(def); err != nil {
+	if err := s.store.Create(wf); err != nil {
 		t.Fatalf("落工作流失败: %v", err)
 	}
 }
 
-// scaffoldNamed 返回一份带名字的最小合法定义（单节点脚手架）。
-func scaffoldNamed(name string) *workflow.Definition {
-	def := workflow.Scaffold()
-	def.Name = name
-	return def
+// scaffoldNamed 返回一份带名字的最小合法工作流（单节点脚手架）。
+func scaffoldNamed(name string) *workflow.Workflow {
+	return &workflow.Workflow{Name: name, Definition: workflow.Scaffold()}
 }
 
 func asLaunchError(t *testing.T, err error) *launchError {
@@ -43,7 +41,7 @@ func TestPreflightWorkflowNotExist(t *testing.T) {
 
 func TestPreflightInvalidDefinition(t *testing.T) {
 	s := newTestServer(t)
-	seedWorkflow(t, s, &workflow.Definition{Name: "empty", Nodes: nil}) // 空 nodes → 语义非法
+	seedWorkflow(t, s, &workflow.Workflow{Name: "empty", Definition: workflow.Definition{Nodes: nil}}) // 空 nodes → 语义非法
 	_, err := s.preflight("empty", "需求", t.TempDir())
 	le := asLaunchError(t, err)
 	if le.status != http.StatusUnprocessableEntity {

@@ -14,7 +14,7 @@ func newVersionCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "打印 conduct 版本",
-		Args:  cobra.NoArgs,
+		Args:  requireArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), "conduct "+version)
 			return err

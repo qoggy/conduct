@@ -94,8 +94,8 @@ func engineInfoOf(name string) engineInfo {
 	}
 }
 
-// workflowSummary 是工作流列表的单项：节点 id 流（对齐 ui.md 的节点流列）+ 该工作流下 running 计数。
-// 一切字段都可由 CLI 等价能力得出（节点 id 见 show、running 计数 = run list 过滤聚合）。
+// workflowSummary 是工作流列表的单项：agent 节点 id 流（对齐 ui.md 的节点流列，排除 START / END）+ 该
+// 工作流下 running 计数。一切字段都可由 CLI 等价能力得出（节点 id 见 show、running 计数 = run list 过滤聚合）。
 type workflowSummary struct {
 	Name         string   `json:"name"`
 	NodeIDs      []string `json:"nodeIds"`
@@ -110,13 +110,13 @@ type workflowsResponse struct {
 }
 
 // runSummary 是运行列表的精简单项：裁掉 workflowSnapshot / artifacts 大字段（等价 run list）。
-// Status 是读时派生的 EffectiveStatus；Progress 是 k/N 的 k——按唯一 stepIndex 且 success 去重的
-// 进度分子（store.CountProgress，非物理行数，防 resume 后 k>N）。
+// Status 是读时派生的 EffectiveStatus；NodeCount 是进度分母 N（agent 节点数，读时由快照算）；
+// Progress 是 k/N 的 k——按唯一 nodeId 且 success 去重的进度分子（store.CountProgress，非物理行数，防 resume 后 k>N）。
 type runSummary struct {
 	ID         string     `json:"id"`
 	Workflow   string     `json:"workflow"`
 	Status     run.Status `json:"status"`
-	Steps      int        `json:"steps"`
+	NodeCount  int        `json:"nodeCount"`
 	Progress   int        `json:"progress"`
 	StartedAt  string     `json:"startedAt"`
 	EndedAt    *string    `json:"endedAt"`
@@ -145,10 +145,10 @@ type launchResponse struct {
 	Note string `json:"note,omitempty"`
 }
 
-// conflictResponse 是乐观并发 409 的响应：带回当前定义，供前端弹「覆盖 / 重载」。
+// conflictResponse 是乐观并发 409 的响应：带回当前完整记录，供前端弹「覆盖 / 重载」。
 type conflictResponse struct {
-	Error   string               `json:"error"`
-	Current *workflow.Definition `json:"current"`
+	Error   string             `json:"error"`
+	Current *workflow.Workflow `json:"current"`
 }
 
 // stopResponse 是 POST /api/runs/{id}/stop 的成功回执。

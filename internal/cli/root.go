@@ -16,8 +16,8 @@ func newRootCommand() (*cobra.Command, error) {
 		Short: "编排并运行多引擎 AI workflow",
 		Long: `conduct —— 一个把 workflow 定义（JSON）解释运行起来的 CLI。
 
-它把一份工作流拆解成确定性的执行步骤，逐步驱动 AI 编程引擎完成任务；
-支持 claude-code、antigravity、qoder 引擎，均以无头 CLI 方式调用。
+它按 DAG 依赖确定性调度节点，并驱动 AI 编程引擎完成任务；
+支持 claude-code、antigravity、qoder、codex 引擎，均以无头 CLI 方式调用。
 
 工作流的增删改查与解释运行已就位（conduct workflow ...）；运行记录查询见 conduct run ...。`,
 		// 子命令自行返回 error，由 Execute 统一打印，避免 Cobra 重复输出用法与错误。

@@ -17,8 +17,7 @@ func newRunResumeCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resume <id>",
 		Short: "从中断处恢复一次未完成的运行",
-		Long: "恢复一次 failed 或 interrupted 运行：跳过前面已成功的步骤，从中断处整步重跑、续到终态，续写同一 run（id 不变）。\n" +
-			"恢复源全部取自落盘——workflowSnapshot 还原步骤、trace 推断重入点并回放重建上游产物与评测反馈；不接受新需求，也不接受 --cwd（沿用原 run 的 userPrompt / cwd）。\n" +
+		Long: "恢复一次 failed 或 interrupted 运行：跳过已成功的节点，补跑未完成的前沿及其下游、续到终态，续写同一 run（id 不变）。\n" +
 			"failed / interrupted 可恢复；completed / running（进程存活）一律 fail-loud 退 1。\n" +
 			"-d / --detach 后台恢复：以独立会话 spawn 子进程续跑，打印 run id 立刻退 0，用 run show / run wait / run stop 查等停。\n\n" +
 			"示例：\n" +
@@ -71,7 +70,7 @@ func newRunResumeCommand() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "逐步输出机器可读事件 JSON（每步一行），无进度装饰")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "逐节点输出机器可读事件 JSON（每节点一行），无进度装饰")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "后台恢复：打印 run id 后立刻退 0，不阻塞到运行结束")
 	return cmd
 }

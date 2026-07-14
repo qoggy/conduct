@@ -5,6 +5,7 @@ import { api } from "../api.js";
 import { navigate } from "../router.js";
 import { i18n } from "../i18n.js";
 import { fmtTime } from "../format.js";
+import { confirmModal } from "../modal.js";
 import { loadInto } from "./common.js";
 
 const STATUSES = ["running", "completed", "failed", "interrupted"];
@@ -67,11 +68,11 @@ function view(outlet, data, filter) {
   const sections = [];
   if (runningRuns.length) {
     sections.push(h("div", { class: "gtitle" }, i18n.groupRunningTpl(runningRuns.length)));
-    sections.push(runTable(outlet, runningRuns));
+    sections.push(runTable(outlet, runningRuns, filter));
   }
   if (historyRuns.length) {
     sections.push(h("div", { class: "gtitle" }, i18n.groupHistoryTpl(historyRuns.length)));
-    sections.push(runTable(outlet, historyRuns));
+    sections.push(runTable(outlet, historyRuns, filter));
   }
 
   return h(
@@ -83,7 +84,7 @@ function view(outlet, data, filter) {
   );
 }
 
-function runTable(outlet, runs) {
+function runTable(outlet, runs, filter) {
   const header = h(
     "div",
     { class: "trow-run thead" },
@@ -93,12 +94,13 @@ function runTable(outlet, runs) {
     h("div", {}, i18n.colProgress),
     h("div", {}, i18n.colStartedAt),
     h("div", {}, i18n.colUserPrompt),
+    h("div", {}), // 操作列（删除按钮），表头留空
   );
-  const rows = runs.map((r, i) => runRow(r, i === runs.length - 1));
+  const rows = runs.map((r, i) => runRow(outlet, filter, r, i === runs.length - 1));
   return h("div", { class: "tbl" }, header, ...rows);
 }
 
-function runRow(r, isLast) {
+function runRow(outlet, filter, r, isLast) {
   const goto = () => navigate(`/runs/${encodeURIComponent(r.id)}`);
   return h(
     "div",
@@ -109,7 +111,40 @@ function runRow(r, isLast) {
     h("div", {}, progressCell(r)),
     h("div", { class: "muted" }, fmtTime(r.startedAt)),
     h("div", { class: "muted", style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, r.userPrompt),
+    h("div", { class: "actcell" }, runActions(outlet, filter, r)),
   );
+}
+
+// runActions：终态记录给一个删除按钮（running 不给——须先 stop，与 conduct run rm 语义一致）。
+// 按钮 stopPropagation，以免点删除触发整行的进入详情。
+function runActions(outlet, filter, r) {
+  if (r.status === "running") return h("span", {});
+  return h(
+    "button",
+    {
+      class: "ghost",
+      onClick: (e) => {
+        e.stopPropagation();
+        openRunDelete(outlet, filter, r.id);
+      },
+    },
+    i18n.delete,
+  );
+}
+
+// openRunDelete：删除运行记录的二次确认弹窗，充分参考工作流删除（openDelete）。确认后
+// DELETE /api/runs/{id} 再刷新当前视图；删 running 会被服务端 409 拦下并在弹窗内提示。
+function openRunDelete(outlet, filter, id) {
+  confirmModal({
+    title: i18n.dlgRunDeleteTitleTpl(id),
+    danger: true,
+    confirmLabel: i18n.delete,
+    body: [h("p", { style: { margin: "0" } }, i18n.runDeleteBodyTpl(id))],
+    onConfirm: async () => {
+      await api.deleteRun(id);
+      reload(outlet, filter);
+    },
+  });
 }
 
 export function statusBadge(status) {
@@ -119,20 +154,20 @@ export function statusBadge(status) {
   return h("span", { class: "badge b-" + status }, status);
 }
 
-// progressCell：running / interrupted 显示 k/N 进度条；终态显示总步数。
+// progressCell：running / interrupted 显示 k/N 进度条（分母 = agent 节点数）；终态显示节点数。
 function progressCell(r) {
   const isPartial = r.status === "running" || r.status === "interrupted";
-  if (isPartial && r.steps > 0) {
-    const pct = Math.min(100, (r.progress / r.steps) * 100);
+  if (isPartial && r.nodeCount > 0) {
+    const pct = Math.min(100, (r.progress / r.nodeCount) * 100);
     const color = r.status === "running" ? "#3E63DD" : "#C99A2E";
     return h(
       "span",
       { class: "pbar" },
       h("span", { class: "ptrack" }, h("span", { class: "pfill", style: { width: pct.toFixed(1) + "%", background: color } })),
-      h("span", { class: "mono", style: { fontSize: "12px" } }, `${r.progress}/${r.steps}`),
+      h("span", { class: "mono", style: { fontSize: "12px" } }, `${r.progress}/${r.nodeCount}`),
     );
   }
-  return h("span", { class: "mono", style: { fontSize: "12px" } }, i18n.stepsCountTpl(r.steps));
+  return h("span", { class: "mono", style: { fontSize: "12px" } }, i18n.nodesCountTpl(r.nodeCount));
 }
 
 // filterSelect 组一个原生 <select> 过滤器；值为空表示「全部」。

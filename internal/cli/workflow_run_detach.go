@@ -13,7 +13,7 @@ import (
 // detachHandle 是 -d --json 吐的单行句柄（机读 handle）——纯粹的「可寻址句柄」，只给 id + workflow，
 // 不带状态：句柄产出的那一刻 run 未必仍是 running（引擎可能已秒级失败 / 完成），塞一个恒为 running 的
 // 字段只会误导；run 的真实成败用 conduct run wait <id> / run show <id> 查。它也不是前台 --json 的
-// 逐步事件流；逐步事件在 trace.jsonl，用 conduct run show <id> --json --trace 取。
+// 逐节点事件流；节点事件在 trace.jsonl，用 conduct run show <id> --json --trace 取。
 type detachHandle struct {
 	ID       string `json:"id"`
 	Workflow string `json:"workflow"`
@@ -73,7 +73,7 @@ func emitDetach(cmd *cobra.Command, runID, note string, err error, workflowName 
 		return fmt.Errorf("%s", note)
 	}
 	if asJSON {
-		// 单行句柄（机读 handle），非前台 --json 的逐步事件流——故 compact 而非缩进。
+		// 单行句柄（机读 handle），非前台 --json 的逐节点事件流——故 compact 而非缩进。
 		line, err := json.Marshal(detachHandle{ID: runID, Workflow: workflowName})
 		if err != nil {
 			return fmt.Errorf("序列化句柄 JSON 失败: %w", err)

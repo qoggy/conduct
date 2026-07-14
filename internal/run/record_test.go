@@ -33,37 +33,26 @@ func TestProcessAlive(t *testing.T) {
 	}
 }
 
-func TestStepLabel(t *testing.T) {
-	agent := TraceEntry{Type: "agent", DisplayName: "编码"}
-	evaluator := TraceEntry{Type: "evaluator", DisplayName: "编码"}
-	if agent.StepLabel() != "编码" {
-		t.Errorf("agent 步应用原节点名，得到 %q", agent.StepLabel())
-	}
-	if evaluator.StepLabel() != "编码 · 评测" {
-		t.Errorf("evaluator 步应加「· 评测」后缀，得到 %q", evaluator.StepLabel())
-	}
-}
-
 func TestProgressCount(t *testing.T) {
 	// 空 trace → 0。
 	if k := ProgressCount(nil); k != 0 {
 		t.Errorf("空 trace 应为 0，得到 %d", k)
 	}
-	// resume 后的 trace：step2 先失败、后被补跑成功——同一 stepIndex 两条，末条 success 为准，只算 1 次。
+	// resume 后的 trace：节点 c 先失败、后被补跑成功——同一 NodeID 两条，末条 success 为准，只算 1 次。
 	trace := []TraceEntry{
-		{StepIndex: 0, Success: true},
-		{StepIndex: 1, Success: true},
-		{StepIndex: 2, Success: false}, // 首次失败（保留）
-		{StepIndex: 2, Success: true},  // 补跑成功
-		{StepIndex: 3, Success: true},
+		{NodeID: "a", Success: true},
+		{NodeID: "b", Success: true},
+		{NodeID: "c", Success: false}, // 首次失败（保留）
+		{NodeID: "c", Success: true},  // 补跑成功
+		{NodeID: "d", Success: true},
 	}
 	if k := ProgressCount(trace); k != 4 {
-		t.Errorf("唯一成功 stepIndex {0,1,2,3} 应为 4，得到 %d", k)
+		t.Errorf("唯一成功 NodeID {a,b,c,d} 应为 4，得到 %d", k)
 	}
-	// 末条为失败（尚未补跑成功）：该 stepIndex 不计。
-	failing := []TraceEntry{{StepIndex: 0, Success: true}, {StepIndex: 1, Success: false}}
+	// 末条为失败（尚未补跑成功）：该 NodeID 不计。
+	failing := []TraceEntry{{NodeID: "a", Success: true}, {NodeID: "b", Success: false}}
 	if k := ProgressCount(failing); k != 1 {
-		t.Errorf("末条失败的 step 不计，应为 1，得到 %d", k)
+		t.Errorf("末条失败的节点不计，应为 1，得到 %d", k)
 	}
 }
 

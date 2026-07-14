@@ -112,8 +112,10 @@ body {
 .ver { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
 
 /* ---- 页容器 ---- */
-.page { padding: 24px 28px 60px; max-width: 1160px; margin: 0 auto; }
-.page-wide { max-width: 1240px; }
+/* max-width 只在宽屏封顶：窄屏（笔电）仍按视口宽减去 padding 铺满，故调大只影响宽屏、不伤窄屏。
+   编辑器 / 运行详情是「画布 + 侧栏」双栏工作台，给足横向空间；列表页保持较窄，宽表更好扫读。 */
+.page { padding: 24px 28px 60px; max-width: 1200px; margin: 0 auto; }
+.page-wide { max-width: 1600px; }
 .pagehead { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .pagehead h1 { font-size: 16px; font-weight: 600; margin: 0; }
 .count { font-size: 12.5px; color: var(--muted); }
@@ -244,7 +246,8 @@ body {
 /* 工作流列表列布局 */
 .trow-wf { display: grid; grid-template-columns: 15% 41% 15% 10% 1fr; align-items: center; }
 /* 运行列表列布局 */
-.trow-run { display: grid; grid-template-columns: 26% 12% 13% 13% 14% 1fr; align-items: center; }
+.trow-run { display: grid; grid-template-columns: 26% 12% 13% 13% 14% 1fr auto; align-items: center; }
+.actcell { text-align: right; }
 
 .name-link {
   font-family: var(--font-mono);
@@ -415,6 +418,10 @@ select.inp { cursor: pointer; -webkit-appearance: none; appearance: none;
 .edmeta { font-family: var(--font-mono); font-size: 10px; color: #8a897f; }
 .edmax { font-size: 11px; color: var(--border-hover); cursor: pointer; user-select: none; }
 .edmax:hover { color: #fff; }
+/* 可折叠只读块：深色头条即折叠开关，caret 指示态；折叠态（无体贴附）头条四角全圆，展开态保留贴附下体的方下角。 */
+.edbar-fold { cursor: pointer; }
+.edbar-fold:not(.is-open) { border-radius: var(--radius); }
+.edcaret { font-size: 10px; color: var(--tip-fg); user-select: none; width: 9px; text-align: center; }
 
 /* 提示词编辑器：透明 textarea 叠在高亮层之上，字符度量一致 → 光标/选区对齐；同步滚动。
    ghost 预告块置于滚动区之下、作为编辑器尾部常驻页脚，不干扰叠层对齐。 */
@@ -464,7 +471,9 @@ select.inp { cursor: pointer; -webkit-appearance: none; appearance: none;
 .ghosttag { position: absolute; right: 0; top: 7px; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.5px; color: #8a897f; background: #f4f3f1; border-radius: 4px; padding: 1px 7px; font-weight: 600; }
 
 /* 占位符复制下拉 */
-.phwrap { position: relative; }
+/* inline-flex 居中：消掉 block div 按父字号(≈13px)撑出的行盒 strut，让内部 11px 的占位符标签与相邻的
+   「最大化」span(同为 .edmax，11px)在 edbar 里同线对齐；position:relative 供 .phmenu 绝对定位。 */
+.phwrap { position: relative; display: inline-flex; align-items: center; }
 .phmenu { display: none; position: absolute; right: 0; top: 100%; padding-top: 6px; z-index: 70; }
 .phwrap:hover .phmenu, .phwrap.open .phmenu { display: block; }
 .phbox { background: var(--surface); border: 1px solid var(--border-input); border-radius: var(--radius-md); padding: 5px; box-shadow: var(--shadow-pop); min-width: 176px; }
@@ -531,108 +540,69 @@ select.inp { cursor: pointer; -webkit-appearance: none; appearance: none;
 .errline:hover { color: var(--danger); }
 
 .body2 { display: flex; gap: 16px; align-items: flex-start; }
-.flowcol { width: 316px; flex: none; }
-.railwrap { position: relative; padding-left: 34px; }
-.anchor {
-  border: 1.5px dashed var(--border-input);
-  border-radius: 99px;
-  background: var(--surface);
-  color: var(--faint);
-  text-align: center;
-  font-size: 12px;
-  height: 30px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.conn { height: 22px; position: relative; }
-.conn::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 4px; width: 0; border-left: 1.5px solid #b8b7b1; }
-.conn::after { content: ""; position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid #b8b7b1; }
-.fnode {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  padding: 0 22px;
-  cursor: pointer;
-  position: relative;
-  height: 44px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  justify-content: center; /* 卡片文字居中 */
-  gap: 8px;
-}
-.fnode:hover { border-color: var(--border-hover); }
-.fnode-sel { border-color: var(--ink); }
-.fnode-sel:hover { border-color: var(--ink); }
-/* 拖拽中的卡片：跟随光标、抬起悬浮感、不拦事件（落点由快照中心算）。 */
-.fnode.dragging-live { opacity: 0.9; z-index: 20; box-shadow: 0 8px 24px rgba(28, 27, 24, 0.22); cursor: grabbing; pointer-events: none; }
-/* 拖拽插入指示线 */
-.drop-line { position: absolute; left: 34px; right: 0; height: 2px; background: var(--ink); border-radius: 2px; z-index: 15; pointer-events: none; }
-.drop-line::before { content: ""; position: absolute; left: -3px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
-.nm { font-weight: 600; font-size: 13px; }
-/* 拖拽抓手：hover 左侧冒出，cursor grab */
-.grip { position: absolute; left: 5px; top: 50%; transform: translateY(-50%); color: #c9c8c3; font-size: 12px; line-height: 1; cursor: grab; display: none; }
-.fnode:hover { cursor: grab; }
-.fnode:hover .grip { display: block; }
-/* 删除按钮：hover 时右上角红色 icon */
-.node-del {
-  position: absolute;
-  top: -8px;
-  right: -8px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 2px solid var(--page);
-  background: var(--danger);
-  color: #fff;
-  font-size: 9px;
-  line-height: 1;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  padding: 0;
-  z-index: 2;
-}
-.node-del:hover { background: var(--danger-hover); }
-.fnode:hover .node-del { display: flex; }
-.fnode:hover .errdot { display: none; } /* hover 时让位给删除按钮 */
+/* 运行详情页未选中节点：详情列隐藏，画布在整行内居中 */
+.body2-solo { justify-content: center; }
+
+/* ---- DAG 画布（编辑页 / 运行详情页共用；SVG 手绘节点 + 边 + 锚点） ---- */
+.canvascol { width: 480px; flex: none; align-self: stretch; }
+/* 画布工具条（增节点 / 整理连线）：紧贴画布上方、与画布同列 */
+.canvastools { display: flex; gap: 8px; margin-bottom: 12px; }
+/* 画布按 svg 的 width/height 属性（布局自然像素）呈现：max-width 100% 让超宽图等比缩小、height auto
+   保持比例，margin auto 让窄图在列中居中——不再用 width:100% 把少量节点拉伸放大。 */
+.dagcanvas { display: block; max-width: 100%; height: auto; margin: 0 auto; overflow: visible; user-select: none; touch-action: none; }
+/* 锚点 pill（START / END）：虚线中性框；越过 / 完成转绿底（运行详情页） */
+.an { fill: var(--surface); stroke: var(--border-input); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.an-ok { fill: var(--ok-bg); stroke: #b7d8c1; }
+.an-t { font-family: var(--font-mono); font-size: 11px; fill: var(--faint); font-weight: 600; letter-spacing: 0.04em; }
+.dsource { cursor: crosshair; } /* START 可拖出扇出边 */
+/* 节点卡片：编辑页无填充（仅描边）、运行详情页按状态填充 */
+.nb { fill: var(--surface); stroke: var(--border); stroke-width: 1.4; }
+.nb-ok { fill: var(--ok-bg); stroke: #b7d8c1; }
+.nb-run { fill: var(--run-bg); stroke: #bcccf4; }
+.nb-wait { fill: var(--surface); stroke: var(--border-input); stroke-dasharray: 4 3; }
+.nb-fail { fill: var(--danger-bg); stroke: var(--danger-border); }
+.nb-err { stroke: var(--danger); stroke-width: 1.6; } /* 编辑页：本地 / 服务端校验有误的节点 */
+/* 选中态：节点边缘黑描边（单层，排在状态色之后以胜出，不叠加、不外扩） */
+.nb-sel { stroke: var(--ink); stroke-width: 2; }
+.nm { font-size: 12.5px; font-weight: 600; fill: var(--ink); }
+.nm-faint { fill: var(--faint); }
+.nst { font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; }
+.nst-ok { fill: var(--ok-text); }
+.nst-run { fill: var(--run-text); }
+.nst-fail { fill: var(--danger-text); }
+.dnode { cursor: pointer; }
+/* 连边：贝塞尔连线 + 箭头 marker；透明加宽的 .edge-hit 便于点击删除 */
+.edge { fill: none; stroke: #b8b7b1; stroke-width: 1.5; }
+.edge-hit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; }
+.edgewrap:hover .edge { stroke: var(--danger); }
+.edge-bad { fill: none; stroke: var(--danger); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.edge-drag { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 4 3; pointer-events: none; }
+.dag-arrowhead { fill: #b8b7b1; }
+.dag-arrowhead-bad { fill: var(--danger); }
+/* 拖拽连边落点高亮（合法绿 / 非法红，压过状态与选中描边） */
+.connect-ok .nb, .connect-ok .an { stroke: var(--ok-text); stroke-width: 2; stroke-dasharray: none; }
+.connect-bad .nb, .connect-bad .an { stroke: var(--danger); stroke-width: 2; stroke-dasharray: none; }
+/* 节点删除按钮（SVG，hover 现出） */
+.ndel { display: none; cursor: pointer; }
+.dnode:hover .ndel { display: block; }
+.ndel-c { fill: var(--danger); stroke: var(--page); stroke-width: 2; }
+.ndel-c:hover { fill: var(--danger-hover); }
+.ndel-x { fill: #fff; font-size: 9px; font-family: var(--font-mono); pointer-events: none; }
+
 .eicon { width: 16px; height: 16px; border-radius: 4px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
 img.eicon { object-fit: cover; } /* 官方 favicon 填满圆角小块 */
 .eicon--fallback { background: var(--surface-chip); color: var(--muted); font-size: 10px; font-weight: 700; font-family: var(--font-mono); }
-/* 自循环徽标：节点右侧的深色 pill（名字仍居中，徽标绝对定位在右）。可点，聚焦评测循环面板。 */
-.loopb { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-family: var(--font-mono); font-size: 10.5px; background: var(--ink); color: #fff; border-radius: 99px; padding: 1px 9px; line-height: 1.6; white-space: nowrap; cursor: pointer; }
-.loopb-sel { box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--ink); }
-.errdot { position: absolute; right: -5px; top: -5px; width: 11px; height: 11px; border-radius: 50%; background: var(--danger); border: 2px solid var(--page); }
-.addnode { border: 1.5px dashed var(--border-input); border-radius: 9px; text-align: center; color: var(--muted); padding: 7px; font-size: 12.5px; background: var(--surface-subtle); cursor: pointer; }
-.addnode:hover { color: var(--ink); border-color: var(--border-hover); }
-/* 回跳弧：画布左侧紫色 [ 形弧线，顶端箭头指向回跳目标节点。整条可点，聚焦回跳线面板。 */
-.redoarc { position: absolute; left: 8px; width: 18px; border: 1.5px solid #a3459b; border-right: none; border-radius: 10px 0 0 10px; box-sizing: border-box; cursor: pointer; z-index: 12; }
-.redoarc-sel { border-width: 2.5px; }
-.redoarc-err { border-color: var(--danger); }
-.archead { position: absolute; right: -5px; top: -5px; width: 0; height: 0; border-left: 7px solid #a3459b; border-top: 4.5px solid transparent; border-bottom: 4.5px solid transparent; }
-.redoarc-err .archead { border-left-color: var(--danger); }
-.arclabel { position: absolute; left: -9px; top: 50%; transform: translateY(-50%); writing-mode: vertical-rl; font-size: 10.5px; color: #a3459b; background: var(--page); padding: 5px 0; font-weight: 600; letter-spacing: 1px; white-space: nowrap; cursor: pointer; }
-.redoarc-err .arclabel { color: var(--danger); }
-/* 弧端点拖拽手柄（透明抓取区，盖住弧两端）；拖动时落点节点高亮 */
-.archandle { position: absolute; left: -6px; width: 15px; height: 15px; border-radius: 50%; cursor: grab; z-index: 13; box-sizing: border-box; border: 2px solid transparent; }
-.archandle-top { top: -7px; }
-.archandle-bot { bottom: -7px; }
-/* hover 弧线 / 拖动中：端点现出紫色实心圆，提示可拖拽 */
-.redoarc:hover .archandle,
-.redoarc-dragging .archandle { background: #a3459b; border-color: var(--page); }
-.redoarc-dragging { z-index: 25; } /* 拖动时压过节点层，弧线跟手不被遮挡 */
-.archandle:active { cursor: grabbing; }
-.arc-drop { border-color: #a3459b; box-shadow: 0 0 0 2px rgba(163, 69, 155, 0.22); }
 
 .insp { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 18px 22px; min-width: 0; }
+.insp-run { align-self: stretch; }
+.insp-empty { padding: 6px 2px; font-size: 12.5px; }
 .insphead { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border-row); }
-/* 循环聚焦面板头部：返回链接 + 面板标题 tag + 副标 idchip */
-.focushead .backlink { font-size: 12px; color: var(--muted); cursor: pointer; }
-.focushead .backlink:hover { color: var(--ink); }
-.focustag { font-size: 13px; font-weight: 600; color: var(--ink); }
+/* 检查器头：只读 id chip + displayName 标题 */
+.insphead .itt { font-weight: 600; font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 顶栏可运行状态指示（本地镜像校验） */
+.runnable { font-size: 12px; font-weight: 600; }
+.runnable.ok { color: var(--ok-text); }
+.runnable.bad { color: var(--danger-text); }
 .selc {
   border: 1px solid var(--border-input);
   border-radius: var(--radius);
@@ -668,28 +638,6 @@ img.eicon { object-fit: cover; } /* 官方 favicon 填满圆角小块 */
 .engsel-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; font-size: 12.5px; }
 .engsel-item:hover { background: var(--surface-chip); }
 .engsel-item--on { font-weight: 600; }
-/* 节点面板底部「循环」入口区 */
-.loopbox { border-top: 1px solid var(--border-row); margin-top: 16px; padding-top: 13px; }
-.radios-t { display: block; font-size: 11.5px; color: var(--muted); font-weight: 600; margin-bottom: 9px; }
-/* once 态：两个 CTA（设为评测循环 / 设为回跳循环） */
-.loopcta { display: flex; gap: 8px; }
-.btn-loop { flex: 1; border: 1px dashed var(--border-input); border-radius: var(--radius); background: var(--surface-subtle); color: var(--muted); font-size: 12.5px; padding: 7px; cursor: pointer; }
-.btn-loop:hover { color: var(--ink); border-color: var(--border-hover); }
-.btn-loop-off { opacity: 0.4; cursor: not-allowed; }
-.btn-loop-off:hover { color: var(--muted); border-color: var(--border-input); }
-/* 已有循环：一行摘要，点进对应聚焦面板 */
-.loopsum { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--border-input); border-radius: var(--radius); background: var(--surface-subtle); padding: 8px 12px; font-size: 12.5px; cursor: pointer; }
-.loopsum:hover { border-color: var(--border-hover); }
-.loopsum-go { color: var(--faint); }
-/* 聚焦面板底部「清除」按钮 */
-.loopclear { margin-top: 14px; }
-.btn-danger-ghost { border: 1px solid var(--border-input); border-radius: var(--radius); background: var(--surface); color: var(--danger); font-size: 12px; padding: 5px 10px; cursor: pointer; }
-.btn-danger-ghost:hover { background: var(--danger-hover); }
-.lc { border: 1px solid var(--border-input); border-radius: var(--radius); background: var(--surface); padding: 5px 10px; font-size: 13px; width: 72px; text-align: center; font-family: inherit; box-sizing: border-box; }
-/* 禁用 CTA 的 hover 气泡（复用 .tip；宿主需相对定位） */
-.btnhint { position: relative; flex: 1; display: flex; }
-.btnhint .btn-loop { flex: 1; }
-.btnhint:hover .tip { display: block; }
 
 /* JSON 视图 */
 .jsonwrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
@@ -711,34 +659,12 @@ img.eicon { object-fit: cover; } /* 官方 favicon 填满圆角小块 */
 .cp { margin-left: 7px; color: var(--faint); cursor: pointer; display: inline-flex; align-items: center; vertical-align: -1px; background: none; border: none; padding: 0; }
 .cp:hover { color: var(--ink); }
 
-.steps { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
-.grouphead { display: flex; gap: 8px; align-items: baseline; padding: 6px 16px; background: #f4f3f1; border-bottom: 1px solid var(--border-row); font-size: 11px; color: var(--ink-soft); font-weight: 700; }
-.ghint { font-size: 10.5px; color: #8a897f; font-weight: 400; font-family: var(--font-mono); }
-.step { display: flex; gap: 12px; align-items: center; padding: 9px 16px; border-bottom: 1px solid var(--border-row); font-size: 12.5px; }
-.steplast { border-bottom: none; }
-.clickable { cursor: pointer; }
-.clickable:hover { background: var(--surface-subtle); }
-.cur { background: var(--run-bg); }
-.failrow { background: var(--danger-bg); }
-/* 被 resume 取代的旧失败行：淡化并加删除线徽标，示意「已重跑取代」，仍保留供审计。 */
-.superseded { opacity: 0.62; }
-.superseded .lbl { text-decoration: line-through; }
-.superseded-tag { flex: none; font-size: 10.5px; color: #8a897f; border: 1px solid var(--border-row); border-radius: 3px; padding: 0 5px; }
-.no { font-family: var(--font-mono); font-size: 11.5px; color: #8a897f; width: 52px; flex: none; }
-.step .idchip { font-size: 11px; padding: 1px 7px; flex: none; min-width: 2.8em; text-align: center; box-sizing: border-box; }
-.lbl { width: 7.5em; flex: none; font-weight: 500; }
-.engc { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; color: #8a897f; width: 9.5em; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ok { color: var(--ok-text); flex: none; font-size: 12px; }
-.bad { color: var(--danger-text); flex: none; font-size: 12px; }
-.curm { flex: none; }
-.step .meta { font-family: var(--font-mono); font-size: 11px; color: #8a897f; width: 11.5em; flex: none; text-align: right; }
-.pv { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
-.sdetail { background: var(--surface-subtle); border-bottom: 1px solid var(--border-row); padding: 12px 18px 16px; }
+/* 节点详情栏（运行详情页右栏；点画布节点展开，复用只读代码块样式） */
 .dkv { display: flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-bottom: 12px; }
 .dkv .session { min-width: 0; word-break: break-all; }
-/* trace 展开里各代码块（input / output）之间留出呼吸间距——否则输出标题栏直接贴住输入块。 */
-.sdetail .edbar { margin-top: 16px; }
-.sdetail .dkv + .edbar { margin-top: 0; } /* 紧跟引擎行的第一个 bar 不叠加（dkv 已有下距） */
+/* 输入 / 输出代码块之间留出呼吸间距——否则输出标题栏直接贴住输入块。 */
+.insp-run .edbar { margin-top: 16px; }
+.insp-run .dkv + .edbar { margin-top: 0; } /* 紧跟引擎行的第一个 bar 不叠加（dkv 已有下距） */
 .cpd { color: var(--border-hover); cursor: pointer; display: inline-flex; align-items: center; background: none; border: none; padding: 0; }
 .cpd:hover { color: #fff; }
 /* 只读代码块（trace 输入/产物） */
@@ -753,6 +679,8 @@ img.eicon { object-fit: cover; } /* 官方 favicon 填满圆角小块 */
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px 20px; margin-top: 16px; }
 .panelhead { display: flex; align-items: center; margin-bottom: 10px; }
 .panelhead h5 { font-size: 13.5px; margin: 0; font-weight: 600; }
+.panelhead-fold { cursor: pointer; }
+.foldcaret { font-size: 10px; color: var(--muted); user-select: none; margin-right: 2px; }
 .md-body { font-size: 13px; line-height: 1.7; }
 .md-body h1 { font-size: 16px; margin: 12px 0 8px; }
 .md-body h2 { font-size: 14.5px; margin: 14px 0 6px; }

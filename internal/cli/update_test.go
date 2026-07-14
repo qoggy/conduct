@@ -1,6 +1,43 @@
 package cli
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
+
+func TestToolingCommandsRejectExtraArgumentsAsUsageErrors(t *testing.T) {
+	commands := []struct {
+		name string
+		args []string
+		run  func([]string) error
+	}{
+		{
+			name: "version",
+			args: []string{"extra"},
+			run: func(args []string) error {
+				cmd := newVersionCommand()
+				return cmd.Args(cmd, args)
+			},
+		},
+		{
+			name: "update",
+			args: []string{"v0.1.0", "extra"},
+			run: func(args []string) error {
+				cmd := newUpdateCommand()
+				return cmd.Args(cmd, args)
+			},
+		},
+	}
+	for _, command := range commands {
+		t.Run(command.name, func(t *testing.T) {
+			err := command.run(command.args)
+			var usage *usageError
+			if !errors.As(err, &usage) {
+				t.Fatalf("多余位置参数应返回 usageError（退出码 2），得到 %T: %v", err, err)
+			}
+		})
+	}
+}
 
 func TestHomebrewPrefixOf(t *testing.T) {
 	cases := []struct {

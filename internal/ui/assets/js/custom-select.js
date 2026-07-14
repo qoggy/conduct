@@ -20,6 +20,8 @@ export function closeOnOutsideClick(wrap, close) {
 }
 
 // listSelect(current, items, onChange) → 一个 .engsel 元素。items: [{value, label, icon?}]。
+// icon 是**工厂函数** `() => Element`（不是单个元素）：选中态显示与展开菜单项各需一份 icon，同一个
+// DOM 节点不能同时挂两处，故每处各调 icon() 取一个新节点，避免选中项的图标被挪走后菜单里缺失。
 // 纯选择型下拉（不可打字）：engineSelect() 与 effortField() 共用的展示层。
 export function listSelect(current, items, onChange) {
   const display = h("div", { class: "selc engsel-display" });
@@ -32,7 +34,7 @@ export function listSelect(current, items, onChange) {
   }
   function renderDisplay(value) {
     const item = itemFor(value);
-    mount(display, h("span", { class: "engsel-cur" }, item?.icon || null, h("span", {}, item ? item.label : "")), h("span", { class: "caret" }, "▾"));
+    mount(display, h("span", { class: "engsel-cur" }, item?.icon ? item.icon() : null, h("span", {}, item ? item.label : "")), h("span", { class: "caret" }, "▾"));
   }
   function pick(value) {
     renderDisplay(value);
@@ -67,7 +69,7 @@ export function listSelect(current, items, onChange) {
             pick(item.value);
           },
         },
-        item.icon || null,
+        item.icon ? item.icon() : null,
         h("span", {}, item.label),
       ),
     ),
@@ -79,6 +81,6 @@ export function listSelect(current, items, onChange) {
 // engineSelect(current, onChange) → 引擎选择器：listSelect 套上带官方图标的引擎列表。
 // 选中态显示与展开列表项都带图标；点击外部 / 选中即关闭（继承自 listSelect）。
 export function engineSelect(current, onChange) {
-  const items = engineNames().map((name) => ({ value: name, label: name, icon: engineIconEl(name) }));
+  const items = engineNames().map((name) => ({ value: name, label: name, icon: () => engineIconEl(name) }));
   return listSelect(current, items, onChange);
 }

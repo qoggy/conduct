@@ -3,7 +3,7 @@ package workflow
 import "testing"
 
 func TestRender(t *testing.T) {
-	sysVars := map[string]string{"userPrompt": "加个按钮", "cwd": "/proj"}
+	sysVars := map[string]string{"userPrompt": "加个按钮", "cwd": "/proj", "runId": "flow-20260714-143752"}
 	artifacts := map[string]string{"plan": "方案X"}
 	valid := func(id string) bool { return id == "plan" || id == "code" }
 
@@ -14,6 +14,7 @@ func TestRender(t *testing.T) {
 	}{
 		{"系统变量", "需求：{{sys.userPrompt}}", "需求：加个按钮"},
 		{"cwd", "在 {{sys.cwd}} 工作", "在 /proj 工作"},
+		{"run id", "运行：{{sys.runId}}", "运行：flow-20260714-143752"},
 		{"节点产物", "上游：{{plan}}", "上游：方案X"},
 		{"合法节点未跑取空串", "码：{{code}}。", "码：。"},
 		{"转义保留字面量", `字面 \{{plan}}`, "字面 {{plan}}"},

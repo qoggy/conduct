@@ -108,6 +108,7 @@ func (s *Server) routes(port int) http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/summary", s.handleGetSummary)
 	mux.HandleFunc("POST /api/runs/{id}/stop", s.handleStopRun)
 	mux.HandleFunc("POST /api/runs/{id}/resume", s.handleResumeRun)
+	mux.HandleFunc("DELETE /api/runs/{id}", s.handleDeleteRun)
 
 	// 前端静态资源（内嵌）。hash 路由使浏览器只请求 / 与资源文件本身，无需 history fallback。
 	mux.Handle("/", http.FileServer(http.FS(s.assets)))
@@ -127,6 +128,11 @@ func (s *Server) withGuards(next http.Handler, port int) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Frame-Options", "DENY")           // 禁被 iframe 嵌入：Host 白名单挡不住嵌入，避免点击劫持诱导变更操作
 		w.Header().Set("X-Content-Type-Options", "nosniff") // 半可信的 text/markdown 运行总结不被浏览器嗅探执行为 HTML
+		// CSP 兜底：资产全部本地内嵌、无内联脚本、无外链，收紧到仅自身来源——万一运行总结渲染（半可信 AI
+		// 产物）某环节失手，也挡住脚本注入与外发。inline style（h() 助手直接写 el.style，另总结 HTML 可能带
+		// style 属性）需放开 style-src；脚本严格 'self'（无内联脚本），是这条 CSP 的主要防线。
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 
 		if !allowedHosts[r.Host] {
 			writeError(w, http.StatusForbidden, fmt.Sprintf("拒绝：Host %q 不在白名单（仅限本机访问）", r.Host))

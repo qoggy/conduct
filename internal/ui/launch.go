@@ -64,14 +64,14 @@ func (s *Server) resumeRun(id string) (runID, note string, err error) {
 // 从秒级子进程失败缩到毫秒级 400/404/422。真正的权威闸门仍是子进程 workflow run 自身的
 // resolveCwd（跑同一份 run.ValidateWorkingDir）。返回绝对化后的工作目录。
 func (s *Server) preflight(name, userPrompt, cwd string) (string, error) {
-	def, err := s.store.Load(name)
+	wf, err := s.store.Load(name)
 	if err != nil {
 		if errors.Is(err, store.ErrNotExist) {
 			return "", newLaunchError(http.StatusNotFound, "%s", err.Error())
 		}
 		return "", newLaunchError(http.StatusBadRequest, "%s", err.Error())
 	}
-	if problems := workflow.ValidateStructured(def); len(problems) > 0 {
+	if problems := workflow.ValidateStructured(&wf.Definition); len(problems) > 0 {
 		return "", &launchError{
 			status:   http.StatusUnprocessableEntity,
 			message:  "工作流定义校验未通过，无法运行",

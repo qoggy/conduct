@@ -16,9 +16,9 @@ func newRunWaitCommand() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "wait <id>",
-		Short: "阻塞等待一次运行到终态（等到即退 0，对标 docker wait）",
-		Long: "阻塞到 <id> 运行到达任一终态即返回并退 0——对标 docker wait / Unix wait，退出码只表达「有没有等到终态」，run 的成败不进退出码。\n" +
-			"<id> 取自 conduct run list。轮询 run.json + pid 判活，无墙钟超时。命令自身出错才非 0：不存在 / IO 失败 → 1，缺 / 非法 id → 2。\n" +
+		Short: "阻塞等待一次运行到终态（等到即退 0）",
+		Long: "阻塞到 <id> 运行到达任一终态即返回并退 0，退出码只表达「有没有等到终态」，run 的成败不进退出码。\n" +
+			"<id> 取自 conduct run list。命令自身出错才非 0：不存在 / IO 失败 → 1，缺 / 非法 id → 2。\n" +
 			"run 的成败（completed / failed / interrupted）读 stdout 摘要或 --json 的 status，别用退出码判。",
 		Args: requireArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {

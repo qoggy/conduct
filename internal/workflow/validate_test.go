@@ -5,22 +5,27 @@ import (
 	"testing"
 )
 
-func baseNode() Node {
-	return Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "做事"}
+// validDef 返回最小合法 DAG：START → a → END。各测试在其上做单点破坏。
+func validDef() *Definition {
+	return &Definition{
+		Nodes: []Node{
+			{ID: "START"},
+			{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "做事"},
+			{ID: "END"},
+		},
+		Edges: []Edge{{From: "START", To: "a"}, {From: "a", To: "END"}},
+	}
 }
 
-func oneNode(n Node) *Definition { return &Definition{Nodes: []Node{n}} }
-
+// withEngineConfig 在 validDef 的 agent 节点上换引擎与配置。
 func withEngineConfig(engineName string, config *EngineConfig) *Definition {
-	n := baseNode()
-	n.Engine = engineName
-	n.EngineConfig = config
-	return oneNode(n)
+	def := validDef()
+	def.Nodes[1].Engine = engineName
+	def.Nodes[1].EngineConfig = config
+	return def
 }
 
-func loopCount(n int) *int { return &n }
-
-// TestValidateFixturesPass 确认自带 fixtures 校验通过（避免回归时悄悄写坏样例）。
+// TestValidateFixturesPass 确认自带 DAG fixtures 校验通过（避免回归时悄悄写坏样例）。
 func TestValidateFixturesPass(t *testing.T) {
 	for _, name := range []string{"wf_autopilot.json", "wf_demo.json"} {
 		def := loadFixture(t, name)
@@ -30,18 +35,59 @@ func TestValidateFixturesPass(t *testing.T) {
 	}
 }
 
+func TestValidateValidDefPasses(t *testing.T) {
+	if err := Validate(validDef()); err != nil {
+		t.Errorf("最小合法 DAG 应通过，却报错:\n%v", err)
+	}
+	if err := Validate(diamond()); err != nil {
+		t.Errorf("菱形 DAG 应通过，却报错:\n%v", err)
+	}
+}
+
+func TestValidateKnownSystemVariables(t *testing.T) {
+	def := validDef()
+	def.Nodes[1].PromptTemplate = "{{sys.userPrompt}} / {{sys.cwd}} / {{sys.runId}}"
+	if err := Validate(def); err != nil {
+		t.Errorf("已知系统变量应通过校验，却报错:\n%v", err)
+	}
+}
+
 func TestValidateRejections(t *testing.T) {
+	// mutate 在 validDef 上做单点破坏并返回。
+	mutate := func(f func(d *Definition)) *Definition {
+		d := validDef()
+		f(d)
+		return d
+	}
 	cases := []struct {
 		name   string
 		def    *Definition
 		substr string
 	}{
 		{"空 nodes", &Definition{}, "不能为空"},
-		{"id 重复", &Definition{Nodes: []Node{baseNode(), baseNode()}}, "重复"},
-		{"id 数字开头非法", oneNode(Node{ID: "1x", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x"}), "非法"},
-		{"缺 displayName", oneNode(Node{ID: "a", Engine: "claude-code", PromptTemplate: "x"}), "displayName"},
-		{"缺 promptTemplate", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code"}), "promptTemplate"},
-		{"未知引擎", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "nope", PromptTemplate: "x"}), "未知引擎"},
+		{"缺 START", &Definition{
+			Nodes: []Node{{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x"}, {ID: "END"}},
+			Edges: []Edge{{From: "a", To: "END"}},
+		}, "一个 START"},
+		{"缺 END", &Definition{
+			Nodes: []Node{{ID: "START"}, {ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x"}},
+			Edges: []Edge{{From: "START", To: "a"}},
+		}, "一个 END"},
+		{"无 agent 节点", &Definition{
+			Nodes: []Node{{ID: "START"}, {ID: "END"}},
+			Edges: []Edge{{From: "START", To: "END"}},
+		}, "agent 节点"},
+		{"id 重复", mutate(func(d *Definition) {
+			d.Nodes = append(d.Nodes, Node{ID: "a", DisplayName: "乙", Engine: "claude-code", PromptTemplate: "y"})
+			d.Edges = append(d.Edges, Edge{From: "START", To: "a"})
+		}), "重复"},
+		{"id 数字开头非法", mutate(func(d *Definition) {
+			d.Nodes[1].ID = "1x"
+			d.Edges = []Edge{{From: "START", To: "1x"}, {From: "1x", To: "END"}}
+		}), "非法"},
+		{"缺 displayName", mutate(func(d *Definition) { d.Nodes[1].DisplayName = "" }), "displayName"},
+		{"缺 promptTemplate", mutate(func(d *Definition) { d.Nodes[1].PromptTemplate = "" }), "promptTemplate"},
+		{"未知引擎", mutate(func(d *Definition) { d.Nodes[1].Engine = "nope" }), "未知引擎"},
 		{"codex reasoningEffort 非法值", withEngineConfig("codex", &EngineConfig{ReasoningEffort: "insane"}), "允许集"},
 		{"codex 不认 effort", withEngineConfig("codex", &EngineConfig{Effort: "high"}), "不认 effort"},
 		{"claude-code effort 非法值", withEngineConfig("claude-code", &EngineConfig{Effort: "insane"}), "允许集"},
@@ -49,17 +95,46 @@ func TestValidateRejections(t *testing.T) {
 		{"antigravity 不认 effort", withEngineConfig("antigravity", &EngineConfig{Effort: "high"}), "不认 effort"},
 		{"qoder reasoningEffort 非法值", withEngineConfig("qoder", &EngineConfig{ReasoningEffort: "insane"}), "允许集"},
 		{"qoder 不认 effort", withEngineConfig("qoder", &EngineConfig{Effort: "high"}), "不认 effort"},
-		{"evaluator 与 redoTarget 并存", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x",
-			Evaluator: &Evaluator{Engine: "claude-code", PromptTemplate: "e"}, RedoTarget: "a"}), "互斥"},
-		{"redoTarget 指向后节点", &Definition{Nodes: []Node{
-			{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x", RedoTarget: "b"},
-			{ID: "b", DisplayName: "乙", Engine: "claude-code", PromptTemplate: "y"},
-		}}, "在其后或即本身"},
-		{"redoTarget 不存在", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x", RedoTarget: "ghost"}), "不存在"},
-		{"模板引用不存在节点", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "看 {{ghost}}"}), "不存在的节点"},
-		{"未知系统变量", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "{{sys.foo}}"}), "未知系统变量"},
-		{"loopCount 越界", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x",
-			Evaluator: &Evaluator{Engine: "claude-code", PromptTemplate: "e"}, LoopCount: loopCount(0)}), "1–20"},
+		// —— 标记节点必空 ——
+		{"START 带 engine", mutate(func(d *Definition) { d.Nodes[0].Engine = "claude-code" }), "必须为空"},
+		{"END 带 displayName", mutate(func(d *Definition) { d.Nodes[2].DisplayName = "尾" }), "必须为空"},
+		// —— 边规则 ——
+		{"边指向 START", mutate(func(d *Definition) { d.Edges = append(d.Edges, Edge{From: "a", To: "START"}) }), "指向 START"},
+		{"边源自 END", mutate(func(d *Definition) { d.Edges = append(d.Edges, Edge{From: "END", To: "a"}) }), "源自 END"},
+		{"START→END 直连", mutate(func(d *Definition) { d.Edges = append(d.Edges, Edge{From: "START", To: "END"}) }), "直连"},
+		{"自环", mutate(func(d *Definition) { d.Edges = append(d.Edges, Edge{From: "a", To: "a"}) }), "自环"},
+		{"重复边", mutate(func(d *Definition) { d.Edges = append(d.Edges, Edge{From: "START", To: "a"}) }), "重复边"},
+		{"边指向不存在节点", mutate(func(d *Definition) { d.Edges = append(d.Edges, Edge{From: "a", To: "ghost"}) }), "不存在的节点"},
+		// —— 无环 ——
+		{"成环", &Definition{
+			Nodes: []Node{{ID: "START"},
+				{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x"},
+				{ID: "b", DisplayName: "乙", Engine: "claude-code", PromptTemplate: "y"}, {ID: "END"}},
+			Edges: []Edge{{From: "START", To: "a"}, {From: "a", To: "b"}, {From: "b", To: "a"}, {From: "b", To: "END"}},
+		}, "检测到环"},
+		// —— 单源单汇 / 无悬空 ——
+		{"agent 无入边", &Definition{
+			Nodes: []Node{{ID: "START"},
+				{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x"},
+				{ID: "b", DisplayName: "乙", Engine: "claude-code", PromptTemplate: "y"}, {ID: "END"}},
+			Edges: []Edge{{From: "START", To: "a"}, {From: "a", To: "END"}, {From: "b", To: "END"}},
+		}, "无入边"},
+		{"agent 无出边", &Definition{
+			Nodes: []Node{{ID: "START"},
+				{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x"},
+				{ID: "b", DisplayName: "乙", Engine: "claude-code", PromptTemplate: "y"}, {ID: "END"}},
+			Edges: []Edge{{From: "START", To: "a"}, {From: "a", To: "END"}, {From: "START", To: "b"}},
+		}, "无出边"},
+		// —— 模板引用祖先 ——
+		{"引用非祖先并行分支", &Definition{
+			Nodes: []Node{{ID: "START"},
+				{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "{{sys.userPrompt}}"},
+				{ID: "b", DisplayName: "乙", Engine: "claude-code", PromptTemplate: "看 {{a}}"}, {ID: "END"}},
+			Edges: []Edge{{From: "START", To: "a"}, {From: "START", To: "b"}, {From: "a", To: "END"}, {From: "b", To: "END"}},
+		}, "非上游祖先"},
+		{"模板引用不存在节点", mutate(func(d *Definition) { d.Nodes[1].PromptTemplate = "看 {{ghost}}" }), "不存在的节点"},
+		{"模板引用 START", mutate(func(d *Definition) { d.Nodes[1].PromptTemplate = "{{START}}" }), "标记节点"},
+		{"未知系统变量", mutate(func(d *Definition) { d.Nodes[1].PromptTemplate = "{{sys.foo}}" }), "仅支持 sys.userPrompt / sys.cwd / sys.runId"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -100,7 +175,8 @@ func TestValidateCodexModelAndReasoningEffort(t *testing.T) {
 
 // TestValidateEscapedTemplateNotChecked 确认转义 \{{x}} 不参与引用校验。
 func TestValidateEscapedTemplateNotChecked(t *testing.T) {
-	def := oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: `字面量 \{{ghost}}`})
+	def := validDef()
+	def.Nodes[1].PromptTemplate = `字面量 \{{ghost}}`
 	if err := Validate(def); err != nil {
 		t.Errorf("转义模板不应校验引用，却报错: %v", err)
 	}
@@ -118,6 +194,11 @@ func findProblem(problems []Problem, path string) (Problem, bool) {
 
 // TestValidateStructuredPaths 锁死结构化契约：每类错误落在预期的字段点路径上（编辑器据此定位）。
 func TestValidateStructuredPaths(t *testing.T) {
+	mutate := func(f func(d *Definition)) *Definition {
+		d := validDef()
+		f(d)
+		return d
+	}
 	cases := []struct {
 		name        string
 		def         *Definition
@@ -125,21 +206,13 @@ func TestValidateStructuredPaths(t *testing.T) {
 		wantMsgPart string
 	}{
 		{"空 nodes 落在 nodes", &Definition{}, "nodes", "不能为空"},
-		{"缺 id 落在 nodes[0].id", oneNode(Node{DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x"}), "nodes[0].id", "必填"},
-		{"id 非法落在 nodes[0].id", oneNode(Node{ID: "1x", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x"}), "nodes[0].id", "非法"},
-		{"id 重复落在 nodes[1].id", &Definition{Nodes: []Node{baseNode(), baseNode()}}, "nodes[1].id", "重复"},
-		{"缺 displayName 落在 nodes[0].displayName", oneNode(Node{ID: "a", Engine: "claude-code", PromptTemplate: "x"}), "nodes[0].displayName", "必填"},
-		{"缺 engine 落在 nodes[0].engine", oneNode(Node{ID: "a", DisplayName: "甲", PromptTemplate: "x"}), "nodes[0].engine", "必填"},
-		{"未知引擎落在 nodes[0].engine", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "nope", PromptTemplate: "x"}), "nodes[0].engine", "未知引擎"},
-		{"effort 非法落在 engineConfig.effort", withEngineConfig("claude-code", &EngineConfig{Effort: "insane"}), "nodes[0].engineConfig.effort", "允许集"},
-		{"互斥落在 nodes[0]", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x",
-			Evaluator: &Evaluator{Engine: "claude-code", PromptTemplate: "e"}, RedoTarget: "a"}), "nodes[0]", "互斥"},
-		{"redoTarget 不存在落在 nodes[0].redoTarget", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x", RedoTarget: "ghost"}), "nodes[0].redoTarget", "不存在"},
-		{"模板引用落在 nodes[0].promptTemplate", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "看 {{ghost}}"}), "nodes[0].promptTemplate", "不存在的节点"},
-		{"loopCount 落在 nodes[0].loopCount", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x",
-			Evaluator: &Evaluator{Engine: "claude-code", PromptTemplate: "e"}, LoopCount: loopCount(0)}), "nodes[0].loopCount", "1–20"},
-		{"evaluator promptTemplate 落在 nodes[0].evaluator.promptTemplate", oneNode(Node{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x",
-			Evaluator: &Evaluator{Engine: "claude-code"}}), "nodes[0].evaluator.promptTemplate", "必填"},
+		{"缺 displayName 落在 nodes[1].displayName", mutate(func(d *Definition) { d.Nodes[1].DisplayName = "" }), "nodes[1].displayName", "必填"},
+		{"缺 engine 落在 nodes[1].engine", mutate(func(d *Definition) { d.Nodes[1].Engine = "" }), "nodes[1].engine", "必填"},
+		{"未知引擎落在 nodes[1].engine", mutate(func(d *Definition) { d.Nodes[1].Engine = "nope" }), "nodes[1].engine", "未知引擎"},
+		{"effort 非法落在 engineConfig.effort", withEngineConfig("claude-code", &EngineConfig{Effort: "insane"}), "nodes[1].engineConfig.effort", "允许集"},
+		{"START 带 engine 落在 nodes[0].engine", mutate(func(d *Definition) { d.Nodes[0].Engine = "claude-code" }), "nodes[0].engine", "必须为空"},
+		{"边指向 START 落在 edges[2]", mutate(func(d *Definition) { d.Edges = append(d.Edges, Edge{From: "a", To: "START"}) }), "edges[2]", "指向 START"},
+		{"模板引用落在 nodes[1].promptTemplate", mutate(func(d *Definition) { d.Nodes[1].PromptTemplate = "看 {{ghost}}" }), "nodes[1].promptTemplate", "不存在的节点"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

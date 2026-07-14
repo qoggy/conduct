@@ -8,8 +8,8 @@ import (
 )
 
 // RenderSummary 把一次运行渲染成 run-summary.md（给人 / AI 阅读的报告，机器读 run.json）。
-// 结构见 spec〈落盘存储结构〉：头部 + 需求 + 状态耗时 + 工作目录 + 步骤表 + XML 包裹的逐节点产物。
-// trace 提供逐步结果，record.Artifacts 提供各节点最终产物。
+// 结构见 spec〈runs/ 落盘结构〉：头部 + 需求 + 状态耗时 + 工作目录 + 节点表（按 startedAt 排序）+
+// XML 包裹的逐 agent 节点产物。trace 提供逐节点结果，record.Artifacts 提供各节点最终产物。
 func RenderSummary(record *Record, trace []TraceEntry) string {
 	var b strings.Builder
 
@@ -17,36 +17,39 @@ func RenderSummary(record *Record, trace []TraceEntry) string {
 
 	nodeCount := 0
 	if record.WorkflowSnapshot != nil {
-		nodeCount = len(record.WorkflowSnapshot.Nodes)
+		nodeCount = record.WorkflowSnapshot.Definition.AgentNodeCount()
 	}
 	fmt.Fprintf(&b, "**工作流** %s · %d 节点\n", record.Workflow, nodeCount)
 	fmt.Fprintf(&b, "**需求** %s\n", summarizePrompt(record.UserPrompt))
 	fmt.Fprintf(&b, "**状态** %s\n", statusLine(record))
 	fmt.Fprintf(&b, "**工作目录** %s\n", record.Cwd)
 	if record.Status == StatusFailed {
-		if traceStepIndex := LastUnsuccessfulStepIndex(trace); traceStepIndex != nil {
-			fmt.Fprintf(&b, "**失败步** step %d\n", *traceStepIndex)
+		if record.FailedNodeID != nil {
+			fmt.Fprintf(&b, "**失败节点** %s\n", *record.FailedNodeID)
 		}
 		if record.Error != nil {
 			fmt.Fprintf(&b, "**错误** %s\n", *record.Error)
 		}
 	}
 
-	b.WriteString("\n## 步骤\n\n")
-	b.WriteString("| # | 节点 | 引擎 | 耗时 |\n")
+	// 节点表：按 NodeID 去重取末条（resume 保留旧失败行 + 补跑行时收敛为每节点一行），再按 startedAt 排序
+	// 还原时间线（并行下 trace 追加序 = 完成序、不定）。
+	nodes := lastPerNode(trace)
+	b.WriteString("\n## 节点\n\n")
+	b.WriteString("| 节点 | 引擎 | 起 → 止 | 耗时 |\n")
 	b.WriteString("| --- | --- | --- | --- |\n")
-	// 按 stepIndex 去重取末条：resume 保留旧失败行 + 续写补跑行会让同一 stepIndex 出现多条，步骤表若逐行
-	// 全量渲染会出现重复的「step 1」且无从区分成败。此处收敛为每步一行（最终那次），与进度 k/N 的去重口径
-	// （run.ProgressCount / store.CountProgress）一致；完整审计轨迹仍走 run show --trace（不去重）。
-	for _, entry := range lastPerStep(trace) {
-		fmt.Fprintf(&b, "| %d | %s | %s | %s |\n",
-			entry.StepIndex, entry.StepLabel(), entry.Engine, formatDurationMs(entry.DurationMs))
+	for _, entry := range nodes {
+		fmt.Fprintf(&b, "| %s | %s | %s → %s | %s |\n",
+			entry.DisplayName, entry.Engine, formatSecond(entry.StartedAt), formatSecond(entry.EndedAt),
+			formatDurationMs(entry.DurationMs))
 	}
-
 	b.WriteString("\n## 产物\n\n")
-	// 按快照节点顺序输出，稳定且与定义一致；仅输出有产物的节点。
+	// 按快照节点顺序输出，稳定且与定义一致；仅输出有产物的 agent 节点。
 	if record.WorkflowSnapshot != nil {
-		for _, node := range record.WorkflowSnapshot.Nodes {
+		for _, node := range record.WorkflowSnapshot.Definition.Nodes {
+			if !node.IsAgent() {
+				continue
+			}
 			output, ok := record.Artifacts[node.ID]
 			if !ok {
 				continue
@@ -57,24 +60,40 @@ func RenderSummary(record *Record, trace []TraceEntry) string {
 	return b.String()
 }
 
-// lastPerStep 按 stepIndex 去重取末条（同一步以最后一次记录为准，语义同 ProgressCount），升序返回，供步骤表
-// 收敛 resume 后同一 stepIndex 的多条记录为每步一行。非 resume 运行每个 stepIndex 本就只出现一次，输出与
-// 原样逐行渲染完全一致；仅在 resume 保留旧失败行 + 补跑行时才发生去重。
-func lastPerStep(trace []TraceEntry) []TraceEntry {
-	last := make(map[int]TraceEntry, len(trace))
+// lastPerNode 按 NodeID 去重取末条（同一节点以最后一次记录为准，语义同 ProgressCount），再按 startedAt 升序
+// 返回（并列时按 NodeID 兜底稳定）。收敛 resume 后同一 NodeID 的多条记录为每节点一行；非 resume 运行每个
+// NodeID 本就只出现一次。
+func lastPerNode(trace []TraceEntry) []TraceEntry {
+	last := make(map[string]TraceEntry, len(trace))
 	for _, entry := range trace {
-		last[entry.StepIndex] = entry
+		last[entry.NodeID] = entry
 	}
-	indices := make([]int, 0, len(last))
-	for index := range last {
-		indices = append(indices, index)
+	result := make([]TraceEntry, 0, len(last))
+	for _, entry := range last {
+		result = append(result, entry)
 	}
-	sort.Ints(indices)
-	result := make([]TraceEntry, 0, len(indices))
-	for _, index := range indices {
-		result = append(result, last[index])
-	}
+	sort.SliceStable(result, func(i, j int) bool { return TraceOrderLess(result[i], result[j]) })
 	return result
+}
+
+// TraceOrderLess 是 trace 时间线排序的统一比较：先按 StartedAt 的真实时刻（解析 RFC3339 再比，避免裸字典序
+// 在混合时区偏移下失真——resume 跨时区 / 夏令时可能让同一次运行的时间戳混入不同偏移），同刻再按 NodeID 兜底
+// 稳定。run-summary 节点表与 run show --trace 共用它，排序口径一致。
+func TraceOrderLess(a, b TraceEntry) bool {
+	ta, tb := parseRFC3339(a.StartedAt), parseRFC3339(b.StartedAt)
+	if !ta.Equal(tb) {
+		return ta.Before(tb)
+	}
+	return a.NodeID < b.NodeID
+}
+
+// parseRFC3339 解析 RFC3339 时刻；时间戳恒由编排器以 RFC3339 写出，万一解析失败退零值时刻（排最前）、不崩。
+func parseRFC3339(s string) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // summarizePrompt 把用户需求压成头部一行摘要：取首行、按字数截断，超出 / 多行则以 … 收尾并注明全文在 run.json。

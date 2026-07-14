@@ -54,6 +54,13 @@ func TestCodexRunTakesLastAgentMessage(t *testing.T) {
 	}
 }
 
+func TestCodexRunAllowsEmptyAgentMessageText(t *testing.T) {
+	result, err := parseCodexStream(`{"type":"item.completed","item":{"type":"agent_message","text":""}}` + "\n")
+	if err != nil || result.Text != "" {
+		t.Fatalf("空 agent_message 应成功且 Text 为空，result=%+v err=%v", result, err)
+	}
+}
+
 func TestCodexRunTurnFailedIsError(t *testing.T) {
 	// turn.failed 优先返回错误，即使后面还有 agent_message、且进程退 0。
 	fakeBinary(t, "codex", `printf '%s\n' \

@@ -12,16 +12,22 @@ import (
 
 func sampleRun(id string) *run.Record {
 	return &run.Record{
-		ID:               id,
-		Workflow:         "flow",
-		WorkflowSnapshot: &workflow.Definition{Name: "flow", Nodes: []workflow.Node{{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x"}}},
-		UserPrompt:       "需求",
-		Cwd:              "/proj",
-		Status:           run.StatusRunning,
-		Pid:              os.Getpid(),
-		Steps:            1,
-		StartedAt:        "2026-07-03T15:00:00+08:00",
-		Artifacts:        map[string]string{},
+		ID:       id,
+		Workflow: "flow",
+		WorkflowSnapshot: &workflow.Workflow{Name: "flow", Definition: workflow.Definition{
+			Nodes: []workflow.Node{
+				{ID: "START"},
+				{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "x"},
+				{ID: "END"},
+			},
+			Edges: []workflow.Edge{{From: "START", To: "a"}, {From: "a", To: "END"}},
+		}},
+		UserPrompt: "需求",
+		Cwd:        "/proj",
+		Status:     run.StatusRunning,
+		Pid:        os.Getpid(),
+		StartedAt:  "2026-07-03T15:00:00+08:00",
+		Artifacts:  map[string]string{},
 	}
 }
 
@@ -64,8 +70,8 @@ func TestAppendAndLoadTrace(t *testing.T) {
 	if empty == nil || len(empty) != 0 {
 		t.Fatalf("空 trace 应返回非 nil 空切片，得到 %#v", empty)
 	}
-	for i := 0; i < 3; i++ {
-		if err := s.AppendTrace(rec.ID, run.TraceEntry{StepIndex: i, Type: "agent", NodeID: "a", Output: "o", Success: true}); err != nil {
+	for _, id := range []string{"a", "b", "c"} {
+		if err := s.AppendTrace(rec.ID, run.TraceEntry{NodeID: id, Output: "o", Success: true}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -73,7 +79,7 @@ func TestAppendAndLoadTrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadTrace 失败: %v", err)
 	}
-	if len(entries) != 3 || entries[0].StepIndex != 0 || entries[2].StepIndex != 2 {
+	if len(entries) != 3 || entries[0].NodeID != "a" || entries[2].NodeID != "c" {
 		t.Errorf("trace 追加/读取顺序错: %+v", entries)
 	}
 }
@@ -156,7 +162,7 @@ func TestCountTrace(t *testing.T) {
 
 	// 3 条完整行 + 1 条末尾无换行的半行 → 只数 3。
 	writeRawTrace(t, s, rec.ID,
-		`{"stepIndex":0}`+"\n"+`{"stepIndex":1}`+"\n"+`{"stepIndex":2}`+"\n"+`{"stepIndex":3`)
+		`{"nodeId":"a"}`+"\n"+`{"nodeId":"b"}`+"\n"+`{"nodeId":"c"}`+"\n"+`{"nodeId":"d"`)
 	if n, err := s.CountTrace(rec.ID); err != nil || n != 3 {
 		t.Fatalf("3 完整行 + 半行应为 3，得到 %d/%v", n, err)
 	}
@@ -168,7 +174,7 @@ func TestCountTrace(t *testing.T) {
 	}
 }
 
-// TestCountProgress 覆盖去重语义：唯一 stepIndex 且（最后一次记录）success 才计数，防 resume 后 k>N。
+// TestCountProgress 覆盖去重语义：唯一 nodeId 且（最后一次记录）success 才计数，防 resume 后 k>N。
 func TestCountProgress(t *testing.T) {
 	s := New(t.TempDir())
 	rec := sampleRun("flow-20260703-150000")
@@ -179,16 +185,16 @@ func TestCountProgress(t *testing.T) {
 	if n, err := s.CountProgress(rec.ID); err != nil || n != 0 {
 		t.Fatalf("空 trace 应为 0，得到 %d/%v", n, err)
 	}
-	// 模拟一次 resume 后的 trace：step5 先失败、后被补跑成功——同一 stepIndex 两条，只应算 1 次。
-	// 物理 5 行、但唯一成功 stepIndex 为 {0,1,5,6} 共 4 个（step5 末条 success 覆盖失败）。
+	// 模拟一次 resume 后的 trace：节点 c 先失败、后被补跑成功——同一 nodeId 两条，只应算 1 次。
+	// 物理 5 行、但唯一成功 nodeId 为 {a,b,c,d} 共 4 个（c 末条 success 覆盖失败）。
 	writeRawTrace(t, s, rec.ID,
-		`{"stepIndex":0,"success":true}`+"\n"+
-			`{"stepIndex":1,"success":true}`+"\n"+
-			`{"stepIndex":5,"success":false}`+"\n"+ // 首次失败行（保留）
-			`{"stepIndex":5,"success":true}`+"\n"+ // resume 补跑成功
-			`{"stepIndex":6,"success":true}`+"\n") // 真实 trace 每行以 \n 结尾（AppendTrace 保证）
+		`{"nodeId":"a","success":true}`+"\n"+
+			`{"nodeId":"b","success":true}`+"\n"+
+			`{"nodeId":"c","success":false}`+"\n"+ // 首次失败行（保留）
+			`{"nodeId":"c","success":true}`+"\n"+ // resume 补跑成功
+			`{"nodeId":"d","success":true}`+"\n") // 真实 trace 每行以 \n 结尾（AppendTrace 保证）
 	if n, err := s.CountProgress(rec.ID); err != nil || n != 4 {
-		t.Fatalf("去重后应为 4（唯一成功 stepIndex 0/1/5/6），得到 %d/%v", n, err)
+		t.Fatalf("去重后应为 4（唯一成功 nodeId a/b/c/d），得到 %d/%v", n, err)
 	}
 	// 缺文件的 id → 0。
 	missing := New(t.TempDir())
@@ -206,12 +212,12 @@ func TestLoadTraceIgnoresTrailingHalfLine(t *testing.T) {
 	}
 	// 2 条完整合法行 + 末尾一条写了一半的非法 JSON（无换行）。
 	writeRawTrace(t, s, rec.ID,
-		`{"stepIndex":0,"nodeId":"a"}`+"\n"+`{"stepIndex":1,"nodeId":"a"}`+"\n"+`{"stepIndex":2,"node`)
+		`{"nodeId":"a"}`+"\n"+`{"nodeId":"b"}`+"\n"+`{"nodeId":"c`)
 	entries, err := s.LoadTrace(rec.ID)
 	if err != nil {
 		t.Fatalf("末尾半行不应导致 LoadTrace 报错: %v", err)
 	}
-	if len(entries) != 2 || entries[0].StepIndex != 0 || entries[1].StepIndex != 1 {
+	if len(entries) != 2 || entries[0].NodeID != "a" || entries[1].NodeID != "b" {
 		t.Errorf("应只读到 2 条完整行，得到 %+v", entries)
 	}
 }

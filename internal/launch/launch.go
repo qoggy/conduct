@@ -151,7 +151,7 @@ func (l *Launcher) spawn(args []string, stdinData *string) (*launchedProcess, er
 			_ = stdin.Close()
 		}
 	}
-	// stdout → /dev/null：进度已逐步落盘 trace，无需管道。绝不 pipe——发起方先退出会令子进程写 stdout 时
+	// stdout → /dev/null：节点进度已写入 trace，无需管道。绝不 pipe——发起方先退出会令子进程写 stdout 时
 	// EPIPE，Go 运行时对 fd 1/2 写失败重升 SIGPIPE 杀死 run，恰好击穿「发起方退出、run 继续跑」的承诺。
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {

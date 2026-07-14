@@ -23,19 +23,24 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
-func sampleDef(name string) *workflow.Definition {
-	return &workflow.Definition{
+func sampleDef(name string) *workflow.Workflow {
+	return &workflow.Workflow{
 		Name: name,
-		Nodes: []workflow.Node{
-			{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "{{sys.userPrompt}}"},
+		Definition: workflow.Definition{
+			Nodes: []workflow.Node{
+				{ID: "START"},
+				{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "{{sys.userPrompt}}"},
+				{ID: "END"},
+			},
+			Edges: []workflow.Edge{{From: "START", To: "a"}, {From: "a", To: "END"}},
 		},
 	}
 }
 
-func names(defs []*workflow.Definition) []string {
-	out := make([]string, len(defs))
-	for i, d := range defs {
-		out[i] = d.Name
+func names(workflows []*workflow.Workflow) []string {
+	out := make([]string, len(workflows))
+	for i, w := range workflows {
+		out[i] = w.Name
 	}
 	return out
 }
@@ -52,8 +57,8 @@ func TestStoreCreateLoadRoundTrip(t *testing.T) {
 	if got.Name != "flow" || got.CreatedAt == "" || got.UpdatedAt == "" {
 		t.Errorf("加载结果元数据不全: %+v", got)
 	}
-	if len(got.Nodes) != 1 || got.Nodes[0].ID != "a" {
-		t.Errorf("节点未正确往返: %+v", got.Nodes)
+	if len(got.Definition.Nodes) != 3 || got.Definition.Nodes[1].ID != "a" {
+		t.Errorf("节点未正确往返: %+v", got.Definition.Nodes)
 	}
 }
 
@@ -75,7 +80,7 @@ func TestStoreSavePreservesCreatedAtRestampsUpdatedAt(t *testing.T) {
 	created, _ := s.Load("flow")
 
 	edited := sampleDef("flow")
-	edited.Nodes[0].DisplayName = "改了"
+	edited.Definition.Nodes[1].DisplayName = "改了"
 	if err := s.Save(edited); err != nil {
 		t.Fatal(err)
 	}
@@ -86,8 +91,8 @@ func TestStoreSavePreservesCreatedAtRestampsUpdatedAt(t *testing.T) {
 	if after.UpdatedAt == created.UpdatedAt {
 		t.Errorf("updatedAt 应重戳，仍为 %q", after.UpdatedAt)
 	}
-	if after.Nodes[0].DisplayName != "改了" {
-		t.Errorf("定义未更新: %+v", after.Nodes[0])
+	if after.Definition.Nodes[1].DisplayName != "改了" {
+		t.Errorf("定义未更新: %+v", after.Definition.Nodes[1])
 	}
 }
 
@@ -95,6 +100,59 @@ func TestStoreSaveNonexistent(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Save(sampleDef("ghost")); !errors.Is(err, ErrNotExist) {
 		t.Errorf("Save 不存在的应返回 ErrNotExist，得到 %v", err)
+	}
+}
+
+func TestStoreReplaceDefinitionRepairsCorruptFile(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Create(sampleDef("flow")); err != nil {
+		t.Fatal(err)
+	}
+	corrupt := s.path("flow")
+	if err := os.WriteFile(corrupt, []byte("{ not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement := sampleDef("flow")
+	replacement.Definition.Nodes[1].DisplayName = "已修复"
+	if err := s.ReplaceDefinition(replacement); err != nil {
+		t.Fatalf("ReplaceDefinition 应能修复结构损坏的旧文件: %v", err)
+	}
+	loaded, err := s.Load("flow")
+	if err != nil {
+		t.Fatalf("替换后应能严格载入: %v", err)
+	}
+	if loaded.Definition.Nodes[1].DisplayName != "已修复" {
+		t.Fatalf("替换定义未落盘: %+v", loaded.Definition.Nodes[1])
+	}
+	if loaded.CreatedAt == "" || loaded.UpdatedAt == "" {
+		t.Fatalf("损坏文件恢复后应重建系统时间戳: %+v", loaded)
+	}
+}
+
+func TestStoreReplaceDefinitionPreservesReadableCreatedAt(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Create(sampleDef("flow")); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.Load("flow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 未知字段令严格 Load 失败，但 JSON 元数据仍可读取；整体替换应修复结构并保留 createdAt。
+	data := []byte(`{"name":"flow","createdAt":"` + before.CreatedAt + `","unexpected":true}`)
+	if err := os.WriteFile(s.path("flow"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceDefinition(sampleDef("flow")); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.Load("flow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.CreatedAt != before.CreatedAt {
+		t.Fatalf("可读取的 createdAt 应保留 %q，得到 %q", before.CreatedAt, after.CreatedAt)
 	}
 }
 

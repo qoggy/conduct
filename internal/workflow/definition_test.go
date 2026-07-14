@@ -1,6 +1,24 @@
 package workflow
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// loadFixture 读入 testdata 下的定义主体夹具（{nodes, edges}），供各测试复用。
+func loadFixture(t *testing.T, name string) *Definition {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("读取 fixture %s 失败: %v", name, err)
+	}
+	def, err := ParseDefinition(data)
+	if err != nil {
+		t.Fatalf("解析 fixture %s 失败: %v", name, err)
+	}
+	return def
+}
 
 func TestParseDefinitionRejectsUnknownField(t *testing.T) {
 	// promptTemplate 拼错成 promtTemplate → 未知字段，应被 fail-loud 拒绝
@@ -17,26 +35,58 @@ func TestParseDefinitionRejectsTrailingContent(t *testing.T) {
 	}
 }
 
-// srcWithPointers 构造一份带全部指针字段（EngineConfig / Evaluator / LoopCount）的源定义，用于验证 CopyAs 深拷。
-func srcWithPointers() *Definition {
-	three := 3
-	return &Definition{
+// TestParseDefinitionAcceptsBody 确认直接给定义主体 {nodes, edges} 原样解析。
+func TestParseDefinitionAcceptsBody(t *testing.T) {
+	data := []byte(`{"nodes":[{"id":"START"}],"edges":[{"from":"START","to":"a"}]}`)
+	def, err := ParseDefinition(data)
+	if err != nil {
+		t.Fatalf("主体应可解析，却报错: %v", err)
+	}
+	if len(def.Nodes) != 1 || len(def.Edges) != 1 {
+		t.Fatalf("解析结果不符: %+v", def)
+	}
+}
+
+// TestParseDefinitionUnwrapsFullRecord 确认整条记录（show --json 输出）被解包为主体、元数据忽略。
+func TestParseDefinitionUnwrapsFullRecord(t *testing.T) {
+	data := []byte(`{"name":"x","createdAt":"t1","updatedAt":"t2","definition":{"nodes":[{"id":"START"}],"edges":[]}}`)
+	def, err := ParseDefinition(data)
+	if err != nil {
+		t.Fatalf("整条记录应被解包，却报错: %v", err)
+	}
+	if len(def.Nodes) != 1 || def.Nodes[0].ID != "START" {
+		t.Fatalf("解包结果不符: %+v", def)
+	}
+}
+
+// TestParseDefinitionRejectsUnknownFieldInFullRecord 确认整条记录路径同样 fail-loud 拒绝未知外壳字段。
+func TestParseDefinitionRejectsUnknownFieldInFullRecord(t *testing.T) {
+	data := []byte(`{"name":"x","bogus":1,"definition":{"nodes":[],"edges":[]}}`)
+	if _, err := ParseDefinition(data); err == nil {
+		t.Fatal("期望拒绝整条记录里的未知字段 bogus，却通过了")
+	}
+}
+
+// srcWithPointers 构造一份带 EngineConfig 指针字段的源记录，用于验证 CopyAs 深拷。
+func srcWithPointers() *Workflow {
+	return &Workflow{
 		Name:      "src",
 		CreatedAt: "2026-07-03T10:00:00Z",
 		UpdatedAt: "2026-07-03T10:05:00Z",
-		Nodes: []Node{{
-			ID:             "gen",
-			DisplayName:    "生成",
-			Engine:         "claude-code",
-			PromptTemplate: "{{sys.userPrompt}}",
-			EngineConfig:   &EngineConfig{Model: "sonnet", Effort: "high"},
-			Evaluator: &Evaluator{
-				Engine:         "claude-code",
-				EngineConfig:   &EngineConfig{Model: "opus"},
-				PromptTemplate: "审阅",
+		Definition: Definition{
+			Nodes: []Node{
+				{ID: "START"},
+				{
+					ID:             "gen",
+					DisplayName:    "生成",
+					Engine:         "claude-code",
+					PromptTemplate: "{{sys.userPrompt}}",
+					EngineConfig:   &EngineConfig{Model: "sonnet", Effort: "high"},
+				},
+				{ID: "END"},
 			},
-			LoopCount: &three,
-		}},
+			Edges: []Edge{{From: "START", To: "gen"}, {From: "gen", To: "END"}},
+		},
 	}
 }
 
@@ -50,8 +100,8 @@ func TestCopyAsRenamesAndDropsTimestamps(t *testing.T) {
 	if copied.CreatedAt != "" || copied.UpdatedAt != "" {
 		t.Errorf("不应携带源时间戳，得到 createdAt=%q updatedAt=%q", copied.CreatedAt, copied.UpdatedAt)
 	}
-	if len(copied.Nodes) != 1 || copied.Nodes[0].ID != "gen" {
-		t.Fatalf("nodes 未正确复制: %+v", copied.Nodes)
+	if len(copied.Definition.Nodes) != 3 || len(copied.Definition.Edges) != 2 {
+		t.Fatalf("定义主体未正确复制: %+v", copied.Definition)
 	}
 }
 
@@ -59,70 +109,66 @@ func TestCopyAsDeepCopiesPointerFields(t *testing.T) {
 	src := srcWithPointers()
 	copied := src.CopyAs("dst")
 
-	cNode := &copied.Nodes[0]
-	sNode := &src.Nodes[0]
+	cNode := &copied.Definition.Nodes[1]
+	sNode := &src.Definition.Nodes[1]
 
-	// 指针不得共享底层。
 	if cNode.EngineConfig == sNode.EngineConfig {
 		t.Error("EngineConfig 指针被浅拷共享")
 	}
-	if cNode.Evaluator == sNode.Evaluator {
-		t.Error("Evaluator 指针被浅拷共享")
-	}
-	if cNode.Evaluator.EngineConfig == sNode.Evaluator.EngineConfig {
-		t.Error("Evaluator.EngineConfig 指针被浅拷共享")
-	}
-	if cNode.LoopCount == sNode.LoopCount {
-		t.Error("LoopCount 指针被浅拷共享")
-	}
-
 	// 改动 copied 的指针指向值，src 不得受影响。
 	cNode.EngineConfig.Model = "haiku"
 	cNode.EngineConfig.Effort = "low"
-	cNode.Evaluator.EngineConfig.Model = "改了"
-	cNode.Evaluator.PromptTemplate = "改了"
-	*cNode.LoopCount = 20
-
 	if sNode.EngineConfig.Model != "sonnet" || sNode.EngineConfig.Effort != "high" {
 		t.Errorf("src.EngineConfig 被串改: %+v", sNode.EngineConfig)
 	}
-	if sNode.Evaluator.EngineConfig.Model != "opus" {
-		t.Errorf("src.Evaluator.EngineConfig 被串改: %+v", sNode.Evaluator.EngineConfig)
-	}
-	if sNode.Evaluator.PromptTemplate != "审阅" {
-		t.Errorf("src.Evaluator.PromptTemplate 被串改: %q", sNode.Evaluator.PromptTemplate)
-	}
-	if *sNode.LoopCount != 3 {
-		t.Errorf("src.LoopCount 被串改: %d", *sNode.LoopCount)
+	// 改动 copied 的边不得影响 src（切片独立）。
+	copied.Definition.Edges[0].To = "改了"
+	if src.Definition.Edges[0].To != "gen" {
+		t.Errorf("src.Edges 被串改: %+v", src.Definition.Edges[0])
 	}
 }
 
 func TestCopyAsHandlesNilPointers(t *testing.T) {
-	// 最小节点（无任何指针字段）不应 panic，指针字段应保持 nil。
-	src := &Definition{
+	src := &Workflow{
 		Name: "src",
-		Nodes: []Node{{
-			ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "{{sys.userPrompt}}",
-		}},
+		Definition: Definition{
+			Nodes: []Node{
+				{ID: "START"},
+				{ID: "a", DisplayName: "甲", Engine: "claude-code", PromptTemplate: "{{sys.userPrompt}}"},
+				{ID: "END"},
+			},
+			Edges: []Edge{{From: "START", To: "a"}, {From: "a", To: "END"}},
+		},
 	}
 	copied := src.CopyAs("dst")
-	node := copied.Nodes[0]
-	if node.EngineConfig != nil || node.Evaluator != nil || node.LoopCount != nil {
-		t.Errorf("nil 指针字段应保持 nil，得到 %+v", node)
+	if copied.Definition.Nodes[1].EngineConfig != nil {
+		t.Errorf("nil 指针字段应保持 nil，得到 %+v", copied.Definition.Nodes[1])
 	}
 }
 
-func TestNormalizeFillsLoopCountOnlyWhereApplicable(t *testing.T) {
-	def := &Definition{Nodes: []Node{
-		{ID: "a", DisplayName: "A", Engine: "claude-code", PromptTemplate: "x",
-			Evaluator: &Evaluator{Engine: "claude-code", PromptTemplate: "e"}},
-		{ID: "b", DisplayName: "B", Engine: "claude-code", PromptTemplate: "y"},
-	}}
-	def.Normalize()
-	if def.Nodes[0].LoopCount == nil || *def.Nodes[0].LoopCount != 1 {
-		t.Errorf("带 evaluator 的节点 loopCount 应补为 1，得到 %v", def.Nodes[0].LoopCount)
+// TestScaffoldIsRunnable 确认脚手架骨架（START→node-1→END）本身校验通过。
+func TestScaffoldIsRunnable(t *testing.T) {
+	def := Scaffold()
+	if err := Validate(&def); err != nil {
+		t.Fatalf("脚手架骨架应校验通过，却报错:\n%v", err)
 	}
-	if def.Nodes[1].LoopCount != nil {
-		t.Errorf("无 evaluator/redoTarget 的节点不应补 loopCount，得到 %v", def.Nodes[1].LoopCount)
+	if def.AgentNodeCount() != 1 {
+		t.Errorf("脚手架应有 1 个 agent 节点，得到 %d", def.AgentNodeCount())
+	}
+}
+
+// TestNodeClassification 确认 START/END/agent 的判别方法。
+func TestNodeClassification(t *testing.T) {
+	start := Node{ID: NodeIDStart}
+	end := Node{ID: NodeIDEnd}
+	agent := Node{ID: "a"}
+	if !start.IsStart() || !start.IsMarker() || start.IsAgent() {
+		t.Errorf("START 判别错误: %+v", start)
+	}
+	if !end.IsEnd() || !end.IsMarker() || end.IsAgent() {
+		t.Errorf("END 判别错误: %+v", end)
+	}
+	if agent.IsMarker() || !agent.IsAgent() {
+		t.Errorf("agent 判别错误: %+v", agent)
 	}
 }

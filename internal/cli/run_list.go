@@ -14,7 +14,7 @@ func newRunListCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "列出历史运行记录",
-		Long: "列出历史运行记录（~/.conduct/runs/ 下每个目录一条），按时间倒序。默认列全部（含已完成 / 失败 / 中断）。\n" +
+		Long: "列出历史运行记录，按时间倒序。默认列全部（含已完成 / 失败 / 中断）。\n" +
 			"--status 按派生态过滤：running（pid 真存活）/ completed / failed / interrupted（已崩溃）；非法取值退 2。",
 		Args: requireArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -42,10 +42,10 @@ func newRunListCommand() *cobra.Command {
 				return nil
 			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(writer, "RUN ID\tWORKFLOW\tSTATUS\tSTEPS\tSTARTED\tPROMPT")
+			fmt.Fprintln(writer, "RUN ID\tWORKFLOW\tSTATUS\tNODES\tSTARTED\tPROMPT")
 			for _, record := range records {
 				fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\t%s\n",
-					record.ID, record.Workflow, record.EffectiveStatus(), record.Steps,
+					record.ID, record.Workflow, record.EffectiveStatus(), recordNodeCount(record),
 					formatTimestamp(record.StartedAt), preview(record.UserPrompt, 20))
 			}
 			return writer.Flush()
@@ -84,11 +84,12 @@ func filterRunsByStatus(records []*run.Record, want run.Status) []*run.Record {
 }
 
 // runListItem 是 run list --json 的条目（userPrompt 全文，截断只发生在人类表格）。
+// nodeCount = agent 节点数（读时由快照算），替代旧的 steps。
 type runListItem struct {
 	ID         string     `json:"id"`
 	Workflow   string     `json:"workflow"`
 	Status     run.Status `json:"status"`
-	Steps      int        `json:"steps"`
+	NodeCount  int        `json:"nodeCount"`
 	StartedAt  string     `json:"startedAt"`
 	UserPrompt string     `json:"userPrompt"`
 }
@@ -100,7 +101,7 @@ func runListItems(records []*run.Record) []runListItem {
 			ID:         record.ID,
 			Workflow:   record.Workflow,
 			Status:     record.EffectiveStatus(),
-			Steps:      record.Steps,
+			NodeCount:  recordNodeCount(record),
 			StartedAt:  record.StartedAt,
 			UserPrompt: record.UserPrompt,
 		})

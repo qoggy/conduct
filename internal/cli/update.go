@@ -20,7 +20,7 @@ const updateRepoSlug = "qoggy/conduct"
 // GOOS/GOARCH 的预编译二进制、校验 checksum 后原地热替换当前可执行文件。
 //
 // 更新机制镜像分发机制——conduct 经预编译 Release 分发（GoReleaser），故自更新
-// 是「下二进制、验签、原子替换」，而非重新编译。因此无需本机装 Go 工具链。
+// 是「下二进制、校验 checksum、原子替换」，而非重新编译。因此无需本机装 Go 工具链。
 func newUpdateCommand() *cobra.Command {
 	var (
 		checkOnly bool
@@ -42,7 +42,7 @@ func newUpdateCommand() *cobra.Command {
   · 若 conduct 由 Homebrew 安装，请改用对应的包管理器命令（如 brew upgrade
     conduct），自更新会拒绝执行以免与包管理器冲突。
   · 尚无任何 Release 时命令会明确报错，而非静默无动作。`,
-		Args:          cobra.MaximumNArgs(1),
+		Args:          requireArgs(cobra.MaximumNArgs(1)),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

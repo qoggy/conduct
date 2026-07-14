@@ -35,7 +35,7 @@ func (s *Server) handleEngines(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListWorkflows(w http.ResponseWriter, r *http.Request) {
-	defs, skipped, err := s.store.List()
+	workflows, skipped, err := s.store.List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -45,13 +45,13 @@ func (s *Server) handleListWorkflows(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	summaries := make([]workflowSummary, 0, len(defs))
-	for _, def := range defs {
+	summaries := make([]workflowSummary, 0, len(workflows))
+	for _, wf := range workflows {
 		summaries = append(summaries, workflowSummary{
-			Name:         def.Name,
-			NodeIDs:      nodeIDsOf(def),
-			UpdatedAt:    def.UpdatedAt,
-			RunningCount: runningByWorkflow[def.Name],
+			Name:         wf.Name,
+			NodeIDs:      workflow.AgentNodeIDs(&wf.Definition),
+			UpdatedAt:    wf.UpdatedAt,
+			RunningCount: runningByWorkflow[wf.Name],
 		})
 	}
 	writeJSON(w, http.StatusOK, workflowsResponse{Workflows: summaries, Warnings: warningsFrom(skipped)})
@@ -66,13 +66,12 @@ func (s *Server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	def := workflow.Scaffold()
-	def.Name = req.Name
-	if err := s.store.Create(def); err != nil { // Create 内部戳时间戳 + Normalize + 落盘
+	wf := &workflow.Workflow{Name: req.Name, Definition: workflow.Scaffold()}
+	if err := s.store.Create(wf); err != nil { // Create 内部戳时间戳 + 落盘
 		writeError(w, statusForStoreError(err), err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, def)
+	writeJSON(w, http.StatusCreated, wf)
 }
 
 func (s *Server) handleGetWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -81,14 +80,13 @@ func (s *Server) handleGetWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	def, err := s.store.Load(name)
+	wf, err := s.store.Load(name)
 	if err != nil {
 		writeError(w, statusForStoreError(err), err.Error())
 		return
 	}
 	// 刻意不做语义 Validate：编辑器须能载入语义非法的定义去修复（校验在保存时把关，见 handlePutWorkflow）。
-	def.Normalize()
-	writeJSON(w, http.StatusOK, def)
+	writeJSON(w, http.StatusOK, wf)
 }
 
 func (s *Server) handlePutWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -102,23 +100,16 @@ func (s *Server) handlePutWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "读取请求体失败: "+err.Error())
 		return
 	}
-	def, err := workflow.ParseDefinition(body) // DisallowUnknownFields：拼写错误 / 未知字段即拒
+	body2, err := workflow.ParseDefinition(body) // 主体或整条记录皆容忍（解包 definition、忽略元数据）；DisallowUnknownFields 拒拼写错误
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// 导入体 name 若出现须与目标一致（绝不静默改名，改名走 rename 入口）。
-	if def.Name != "" && def.Name != name {
-		writeError(w, http.StatusConflict,
-			fmt.Sprintf("导入定义的 name=%q 与目标 %q 不一致（改名请用 rename）", def.Name, name))
-		return
-	}
-	def.Name = name
-	if problems := workflow.ValidateStructured(def); len(problems) > 0 {
+	if problems := workflow.ValidateStructured(body2); len(problems) > 0 {
 		writeProblems(w, "定义校验未通过", problemsFrom(problems))
 		return
 	}
-	// 乐观并发：客户端带载入时 updatedAt 基线；若已被外部（CLI edit / 另一标签页）改过 → 409 + 现定义，
+	// 乐观并发：客户端带载入时 updatedAt 基线；若已被外部（CLI edit / 另一标签页）改过 → 409 + 现记录，
 	// 前端弹「覆盖 / 重载」。软提示不硬锁，不超出 edit 的 last-write-wins。
 	if baseline := r.Header.Get("X-Conduct-Base-UpdatedAt"); baseline != "" {
 		current, err := s.store.Load(name)
@@ -127,7 +118,6 @@ func (s *Server) handlePutWorkflow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if current.UpdatedAt != baseline {
-			current.Normalize()
 			writeJSON(w, http.StatusConflict, conflictResponse{
 				Error:   "定义已被外部修改，保存基线过期",
 				Current: current,
@@ -135,11 +125,12 @@ func (s *Server) handlePutWorkflow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.store.Save(def); err != nil { // 保留 createdAt、重戳 updatedAt、Normalize、落盘
+	wf := &workflow.Workflow{Name: name, Definition: *body2}
+	if err := s.store.ReplaceDefinition(wf); err != nil { // 整体替换兼作坏文件恢复通道；可读时保留 createdAt
 		writeError(w, statusForStoreError(err), err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, def)
+	writeJSON(w, http.StatusOK, wf)
 }
 
 func (s *Server) handleRenameWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -160,17 +151,16 @@ func (s *Server) handleRenameWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, statusForStoreError(err), err.Error())
 		return
 	}
-	def, err := s.store.Load(req.NewName)
+	wf, err := s.store.Load(req.NewName)
 	if err != nil {
 		writeError(w, statusForStoreError(err), err.Error())
 		return
 	}
-	def.Normalize()
-	writeJSON(w, http.StatusOK, def)
+	writeJSON(w, http.StatusOK, wf)
 }
 
 // handleCopyWorkflow 从 {name} 复制出一份名为 newName 的新工作流（造变体），语义同 CLI `workflow copy`：
-// 复制定义主体（nodes）、newName 为全新托管对象（时间戳由 store 重戳）、newName 已存在则拒绝不覆盖。
+// 复制定义主体（nodes + edges，含 START / END）、newName 为全新托管对象（时间戳由 store 重戳）、newName 已存在则拒绝不覆盖。
 func (s *Server) handleCopyWorkflow(w http.ResponseWriter, r *http.Request) {
 	src := r.PathValue("name")
 	if err := workflow.ValidateName(src); err != nil {
@@ -185,14 +175,14 @@ func (s *Server) handleCopyWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	def, err := s.store.Load(src) // 源不存在 → ErrNotExist → 404
+	srcWorkflow, err := s.store.Load(src) // 源不存在 → ErrNotExist → 404
 	if err != nil {
 		writeError(w, statusForStoreError(err), err.Error())
 		return
 	}
-	copied := def.CopyAs(req.NewName)
+	copied := srcWorkflow.CopyAs(req.NewName)
 	// 防御式校验：源已在库应已合法，仍校验一遍；不过即拒、不写盘（与 CLI copy 同）。
-	if err := workflow.Validate(copied); err != nil {
+	if err := workflow.Validate(&copied.Definition); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
@@ -260,7 +250,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 		if statusFilter != "" && string(effective) != statusFilter {
 			continue
 		}
-		// 进度分子按唯一 stepIndex 且 success 去重（防 resume 后 k>N，见 cli-runtime.md〈run resume〉）。
+		// 进度分子按唯一 nodeId 且 success 去重（防 resume 后 k>N，见 cli-runtime.md〈run resume〉）。
 		progress, err := s.store.CountProgress(record.ID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -270,7 +260,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 			ID:         record.ID,
 			Workflow:   record.Workflow,
 			Status:     effective,
-			Steps:      record.Steps,
+			NodeCount:  recordNodeCount(record),
 			Progress:   progress,
 			StartedAt:  record.StartedAt,
 			EndedAt:    record.EndedAt,
@@ -300,7 +290,7 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		detail.Trace = &trace // 恒非 nil（LoadTrace 空时返回 []），故 ?trace=1 恒有 trace 字段（空则为 []）
-		// 进度按唯一 stepIndex 且 success 去重（trace 已在手，直接用纯函数），防 resume 后 k>N。
+		// 进度按唯一 nodeId 且 success 去重（trace 已在手，直接用纯函数），防 resume 后 k>N。
 		detail.Progress = run.ProgressCount(trace)
 	} else {
 		progress, err := s.store.CountProgress(id)
@@ -397,6 +387,32 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, launchResponse{RunID: runID, Note: note})
 }
 
+// handleDeleteRun 删除一条运行记录（= conduct run rm <id>）：UI 确认弹窗承担交互确认职责，能力面对齐
+// CLI。仅终态可删——running（派生态：pid 存活）→ 409，须先终止再删；不存在 → 404；非法 id → 400。
+func (s *Server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := run.ValidateID(id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	record, err := s.store.LoadRun(id)
+	if err != nil {
+		writeError(w, statusForStoreError(err), err.Error())
+		return
+	}
+	// 派生态判断：running 但 pid 已死会折算为 interrupted（可删），与 run rm / run stop 同源。
+	if status := record.EffectiveStatus(); status == run.StatusRunning {
+		writeError(w, http.StatusConflict,
+			fmt.Sprintf("运行 %s 仍在进行中，无法删除；请先终止再删", id))
+		return
+	}
+	if err := s.store.RemoveRun(id); err != nil {
+		writeError(w, statusForStoreError(err), err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // handleFS 为工作目录选择器列出某目录下的子目录（应用内目录浏览器的后端）。conduct ui 只绑
 // 127.0.0.1、有 Host/Origin 白名单、单机单用户，浏览的是用户自己账号权限内的文件系统——无提权，
 // 故不设根牢笼。只列目录（选工作目录不需要文件），保留隐藏目录（.claude 这类正是常见目标）。
@@ -483,12 +499,12 @@ func (s *Server) runningCounts() (map[string]int, error) {
 	return counts, nil
 }
 
-func nodeIDsOf(def *workflow.Definition) []string {
-	ids := make([]string, len(def.Nodes))
-	for i, node := range def.Nodes {
-		ids[i] = node.ID
+// recordNodeCount 返回进度分母 N = 快照里的 agent 节点数（排除 START / END）；缺快照返回 0。
+func recordNodeCount(record *run.Record) int {
+	if record.WorkflowSnapshot == nil {
+		return 0
 	}
-	return ids
+	return record.WorkflowSnapshot.Definition.AgentNodeCount()
 }
 
 // warningsFrom 把 store.List / ListRuns 的 skipped 错误转成如实带回前端的告警串（不静默隐藏坏文件）。

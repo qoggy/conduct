@@ -108,6 +108,30 @@ func TestClaudeCodeRunIsError(t *testing.T) {
 	}
 }
 
+func TestSingleObjectEnginesAllowEmptyText(t *testing.T) {
+	t.Run("claude-code", func(t *testing.T) {
+		fakeBinary(t, "claude", `echo '{"result":"","is_error":false}'`)
+		result, err := (claudeCodeEngine{}).Run(context.Background(), RunRequest{Prompt: "p"})
+		if err != nil || result.Text != "" {
+			t.Fatalf("空产物应成功且 Text 为空，result=%+v err=%v", result, err)
+		}
+	})
+	t.Run("qoder", func(t *testing.T) {
+		fakeBinary(t, "qodercli", `echo '{"result":"","is_error":false}'`)
+		result, err := (qoderEngine{}).Run(context.Background(), RunRequest{Prompt: "p"})
+		if err != nil || result.Text != "" {
+			t.Fatalf("空产物应成功且 Text 为空，result=%+v err=%v", result, err)
+		}
+	})
+	t.Run("antigravity", func(t *testing.T) {
+		fakeBinary(t, "agy", `echo '{"status":"SUCCESS","response":""}'`)
+		result, err := (antigravityEngine{}).Run(context.Background(), RunRequest{Prompt: "p"})
+		if err != nil || result.Text != "" {
+			t.Fatalf("空产物应成功且 Text 为空，result=%+v err=%v", result, err)
+		}
+	})
+}
+
 func TestAntigravityRunUsesArgAndDir(t *testing.T) {
 	dir := fakeBinary(t, "agy", `echo "$@" > "$FAKE_OUT/args"
 pwd > "$FAKE_OUT/pwd"

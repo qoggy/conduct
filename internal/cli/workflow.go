@@ -10,7 +10,6 @@ import (
 
 	"github.com/qoggy/conduct/internal/engine"
 	"github.com/qoggy/conduct/internal/store"
-	"github.com/qoggy/conduct/internal/workflow"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -46,7 +45,7 @@ func newWorkflowCommand() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return usageErrorf("未知子命令 %q（可用：create / copy / edit / node / rename / delete / list / show / run）", args[0])
+			return usageErrorf("未知子命令 %q（可用：create / copy / edit / node / edge / rename / delete / list / show / run）", args[0])
 		},
 	}
 	cmd.AddCommand(
@@ -55,6 +54,7 @@ func newWorkflowCommand() *cobra.Command {
 		newWorkflowRenameCommand(),
 		newWorkflowCopyCommand(),
 		newWorkflowNodeCommand(),
+		newWorkflowEdgeCommand(),
 		newWorkflowDeleteCommand(),
 		newWorkflowListCommand(),
 		newWorkflowShowCommand(),
@@ -91,15 +91,6 @@ func readStdinDefinition() ([]byte, error) {
 	return readStdin("缺少定义：请通过 stdin 传入（如 cat def.json | conduct workflow ...）；可视化编辑用 conduct ui")
 }
 
-// reconcileImportName 处理导入体里的 name：若出现且与目标名不一致则拒绝（绝不静默改名）。
-// createdAt / updatedAt 等系统元数据由 store 写入，导入值忽略。
-func reconcileImportName(def *workflow.Definition, target string) error {
-	if def.Name != "" && def.Name != target {
-		return fmt.Errorf("导入定义的 name=%q 与目标 %q 不一致（改名请用 conduct workflow rename）", def.Name, target)
-	}
-	return nil
-}
-
 // confirmDeletion 在交互终端下就删除做二次确认，回答 y / yes 才算确认。
 func confirmDeletion(cmd *cobra.Command, names []string) (bool, error) {
 	fmt.Fprintf(cmd.ErrOrStderr(), "将删除 %d 个工作流：%s。确认？[y/N] ", len(names), strings.Join(names, ", "))
@@ -111,28 +102,45 @@ func confirmDeletion(cmd *cobra.Command, names []string) (bool, error) {
 	return answer == "y" || answer == "yes", nil
 }
 
-// workflowDefinitionHelp 返回「从 stdin 读入的工作流定义 JSON」的结构说明 + 最小示例，
+// 下列三段帮助文案描述「提示词模板变量 / 图约束 / promptTemplate 写法」，被 create --definition、edit、
+// node add 等多处 --help 共用；提取为常量集中一处，避免各命令文案漂移。
+const (
+	templateVariablesHelp = `模板变量：{{sys.userPrompt}}=用户需求  {{sys.cwd}}=工作目录  {{sys.runId}}=本次运行的 run id  {{<节点id>}}=引用该上游祖先节点产物（未运行则空串）  \{{x}}=转义为字面量`
+	graphConstraintsHelp  = `图约束：恰好一个 START、一个 END；无环；每个 agent 节点有入有出；{{<id>}} 只能引用上游祖先 agent 节点（禁 {{START}}/{{END}}）。`
+	promptTemplateHint    = `promptTemplate 怎么写好（模板变量、节点隔离、并行分支避免写盘冲突）见 conduct help prompts。`
+)
+
+// effortEnum 返回某引擎 effort / reasoningEffort 字段合法取值的 "a|b|c" 串（无该字段或引擎未登记能力表则空串），
+// 供 node add 的 --effort / --reasoning-effort 说明从能力表动态取值，不在文案里硬编码枚举。
+func effortEnum(engineName string) string {
+	capability, ok := engine.Capability(engineName)
+	if !ok || capability.EffortField == "" {
+		return ""
+	}
+	return strings.Join(capability.EffortValues, "|")
+}
+
+// workflowDefinitionHelp 返回「从 stdin 读入的工作流定义主体 JSON」的结构说明 + 最小示例，
 // 供 create --definition / edit 的 --help 引用（让不熟悉 conduct 的调用方仅凭 --help 即可拼出合法定义）。
 // 引擎名与各引擎 engineConfig 允许字段从 engine 能力表动态生成，避免静态文案与实现漂移。
 func workflowDefinitionHelp() string {
 	var b strings.Builder
-	b.WriteString(`定义 JSON（stdin，单个对象）结构：
+	b.WriteString(`定义主体 JSON（stdin，单个对象 {nodes, edges}）：
 {
-  "nodes": [                                 // 必填，≥1 个，按数组顺序执行
+  "nodes": [                                 // 必填，含两个保留标记节点 START、END + ≥1 个 agent 节点
+    { "id": "START" },                       // 保留标记：无 engine/prompt、不执行、唯一源（无入边）
     {
-      "id": "gen",                           // 必填，同一定义内唯一，须匹配 ^[A-Za-z_][A-Za-z0-9_-]{0,63}$
+      "id": "gen",                           // agent 节点 id：必填、唯一、须匹配 ^[A-Za-z_][A-Za-z0-9_-]{0,63}$、不得为 START/END
       "displayName": "生成",                  // 必填，人类可读名
       "engine": "claude-code",               // 必填，见下方「引擎」
       "promptTemplate": "{{sys.userPrompt}}",// 必填，见下方「模板变量」
-      "engineConfig": { "model": "" },       // 选填，字段随 engine 而定，见下方「引擎」；字段均选填
-      "evaluator": {                         // 选填，节点内循环：本节点产出后由 evaluator 评测再重做本节点；与 redoTarget 互斥
-        "engine": "claude-code",
-        "engineConfig": { "model": "" },     // 选填，同构支持——可单独配 model/effort/reasoningEffort，字段随 engine 而定
-        "promptTemplate": "审阅下面待评产物，指出改进点"
-      },
-      "redoTarget": "gen",                   // 选填，回跳到之前某节点 id、重跑该段；与 evaluator 互斥
-      "loopCount": 1                         // 选填，仅配 evaluator/redoTarget 时生效，取值 1–20，默认 1
-    }
+      "engineConfig": { "model": "" }        // 选填，字段随 engine 而定，见下方「引擎」；字段均选填
+    },
+    { "id": "END" }                          // 保留标记：无 engine/prompt、不执行、唯一汇（无出边）
+  ],
+  "edges": [                                 // 必填，表达执行依赖（from 跑完才轮到 to）；from 可为 START、to 可为 END
+    { "from": "START", "to": "gen" },
+    { "from": "gen",   "to": "END" }
   ]
 }
 引擎（engine 取值）与各自 engineConfig 允许字段：
@@ -156,10 +164,7 @@ func workflowDefinitionHelp() string {
 		}
 		fmt.Fprintf(&b, "  %s：%s\n", name, line)
 	}
-	b.WriteString(`模板变量：{{sys.userPrompt}}=用户需求  {{sys.cwd}}=工作目录  {{<节点id>}}=引用该节点产物（未运行则空串）  \{{x}}=转义为字面量
-name 若出现须与目标名一致（否则拒绝，改名用 conduct workflow rename）；createdAt/updatedAt 导入时忽略。
-示例：echo '{"nodes":[{"id":"s1","displayName":"步骤1","engine":"claude-code","promptTemplate":"{{sys.userPrompt}}"}]}' | conduct workflow edit <name>
-promptTemplate 怎么写好（模板变量、节点隔离、最佳实践）见 conduct help prompts。`)
+	b.WriteString(templateVariablesHelp + "\n" + graphConstraintsHelp + "\n" + promptTemplateHint)
 	return b.String()
 }
 

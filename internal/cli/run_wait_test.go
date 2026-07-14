@@ -15,16 +15,22 @@ import (
 func seedRun(t *testing.T, st *store.Store, id string, status run.Status, pid int) *run.Record {
 	t.Helper()
 	rec := &run.Record{
-		ID:               id,
-		Workflow:         "flow",
-		WorkflowSnapshot: &workflow.Definition{Name: "flow", Nodes: []workflow.Node{plainNode("a")}},
-		UserPrompt:       "需求",
-		Cwd:              "/proj",
-		Status:           status,
-		Pid:              pid,
-		Steps:            1,
-		StartedAt:        "2026-07-03T15:00:00+08:00",
-		Artifacts:        map[string]string{},
+		ID:       id,
+		Workflow: "flow",
+		WorkflowSnapshot: &workflow.Workflow{Name: "flow", Definition: workflow.Definition{
+			Nodes: []workflow.Node{
+				{ID: "START"},
+				plainNode("a"),
+				{ID: "END"},
+			},
+			Edges: []workflow.Edge{{From: "START", To: "a"}, {From: "a", To: "END"}},
+		}},
+		UserPrompt: "需求",
+		Cwd:        "/proj",
+		Status:     status,
+		Pid:        pid,
+		StartedAt:  "2026-07-03T15:00:00+08:00",
+		Artifacts:  map[string]string{},
 	}
 	if err := st.CreateRun(rec); err != nil {
 		t.Fatalf("落运行记录失败: %v", err)
