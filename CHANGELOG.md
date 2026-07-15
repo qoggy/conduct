@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-16
+
+### Added
+
+- Chinese and English localization for CLI help, user-facing commands and errors, generated run summaries, and the web UI. Language resolution uses `~/.conduct/settings.json` first, then `LC_ALL`, `LC_MESSAGES`, and `LANG`, with English as the fallback.
+- A global UI settings page for choosing Chinese, English, or the environment language, and for choosing light, dark, or the system theme. Both preferences are stored in `~/.conduct/settings.json`, so language changes also apply to subsequently started CLI commands.
+- Independently designed light and dark UI themes, including system-theme following and accessible dark-theme contrast, without changing page layouts.
+
+### Changed
+
+- conduct's own technical diagnostics, engine-adapter errors, logs, and browser console diagnostics now use stable English text, while user input, AI output, and original third-party error text remain unchanged.
+- New run records persist the resolved language and use that snapshot for summaries and resume. Run records without a valid `language` field are treated as corrupt rather than silently falling back to a current or legacy language.
+
+Run records created before v0.1.1 do not contain the required language snapshot and are not compatible with this release; they must be recreated before they can be read or resumed.
+
 ## [0.1.0] - 2026-07-15
 
 ### Added
@@ -111,7 +126,8 @@ Initial public release.
 - One-line install script: `curl -sSL https://raw.githubusercontent.com/qoggy/conduct/main/install.sh | sh`, which detects the OS and architecture and installs the latest version.
 - Released under the MIT license.
 
-[unreleased]: https://github.com/qoggy/conduct/compare/v0.1.0...HEAD
+[unreleased]: https://github.com/qoggy/conduct/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/qoggy/conduct/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/qoggy/conduct/compare/v0.0.3...v0.1.0
 [0.0.3]: https://github.com/qoggy/conduct/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/qoggy/conduct/compare/v0.0.1...v0.0.2
