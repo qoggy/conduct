@@ -1,4 +1,4 @@
-// conduct ui 前端入口：拉版本号填顶栏、登记四条路由、启动 hash 路由器。
+// conduct ui 前端入口：拉全局设置与版本号、登记五条路由、启动 hash 路由器。
 
 import { register, rerender, setNotFound, start } from "./router.js";
 import { api } from "./api.js";
@@ -7,12 +7,17 @@ import { renderWorkflowsPage } from "./pages/workflows.js";
 import { renderEditorPage } from "./pages/editor.js";
 import { renderRunsPage } from "./pages/runs.js";
 import { renderRunDetailPage } from "./pages/run-detail.js";
+import { renderSettingsPage } from "./pages/settings.js";
 import { i18n, setLanguage } from "./i18n.js";
+
+const themeController = globalThis.conductTheme;
+let currentSettings = null;
 
 register("/workflows", (params, query, outlet) => renderWorkflowsPage(outlet));
 register("/workflows/:name", (params, query, outlet) => renderEditorPage(outlet, params.name));
 register("/runs", (params, query, outlet) => renderRunsPage(outlet, query));
 register("/runs/:id", (params, query, outlet) => renderRunDetailPage(outlet, params.id));
+register("/settings", (params, query, outlet) => renderSettingsPage(outlet, currentSettings, applySettings));
 
 setNotFound((outlet) => {
   outlet.innerHTML = "";
@@ -30,36 +35,24 @@ function syncChrome(settings) {
   for (const tab of document.querySelectorAll(".tab[data-tab]")) {
     tab.textContent = tabText[tab.dataset.tab] || "";
   }
-  document.getElementById("language-label").textContent = i18n.language;
-  const select = document.getElementById("language");
-  select.options[0].textContent = i18n.followEnvironment;
-  select.options[1].textContent = i18n.chinese;
-  select.options[2].textContent = i18n.english;
-  select.value = settings.language || "";
+  const settingsLink = document.getElementById("settings-link");
+  settingsLink.setAttribute("aria-label", i18n.settings);
+  settingsLink.setAttribute("title", i18n.settings);
+  if (themeController) themeController.setPreference(settings.theme || null);
+}
+
+async function applySettings(update) {
+  const updated = await api.updateSettings(update);
+  setLanguage(updated.resolvedLanguage);
+  currentSettings = updated;
+  syncChrome(updated);
+  rerender();
 }
 
 async function bootstrap() {
-  let currentSettings = await api.settings();
+  currentSettings = await api.settings();
   setLanguage(currentSettings.resolvedLanguage);
   syncChrome(currentSettings);
-
-  const languageSelect = document.getElementById("language");
-  languageSelect.addEventListener("change", async () => {
-    const requestedLanguage = languageSelect.value || null;
-    languageSelect.disabled = true;
-    try {
-      const updated = await api.updateLanguage(requestedLanguage);
-      setLanguage(updated.resolvedLanguage);
-      syncChrome(updated);
-      currentSettings = updated;
-      rerender();
-    } catch (err) {
-      languageSelect.value = currentSettings.language || "";
-      window.alert(i18n.settingsSaveFail + err.message);
-    } finally {
-      languageSelect.disabled = false;
-    }
-  });
 
   start(document.getElementById("app"));
 
@@ -77,7 +70,7 @@ async function bootstrap() {
 
 bootstrap().catch((err) => {
   setLanguage("en");
-  syncChrome({ language: null, resolvedLanguage: "en" });
+  syncChrome({ language: null, resolvedLanguage: "en", theme: null });
   const app = document.getElementById("app");
   app.innerHTML = "";
   const box = document.createElement("div");

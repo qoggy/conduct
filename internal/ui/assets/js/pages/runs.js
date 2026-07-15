@@ -159,7 +159,7 @@ function progressCell(r) {
   const isPartial = r.status === "running" || r.status === "interrupted";
   if (isPartial && r.nodeCount > 0) {
     const pct = Math.min(100, (r.progress / r.nodeCount) * 100);
-    const color = r.status === "running" ? "#3E63DD" : "#C99A2E";
+    const color = r.status === "running" ? "var(--run-dot)" : "var(--warn-progress)";
     return h(
       "span",
       { class: "pbar" },

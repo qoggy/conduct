@@ -108,7 +108,7 @@ conduct ui — 可视化界面已启动
 - **v1 不做账号鉴权**，但所有 `/api/*` 校验 `Host` / `Origin` 白名单（仅 `127.0.0.1:<port>` / `localhost:<port>`）、变更类端点仅接受 `application/json`。诚实边界：这防的是**浏览器跨站**（恶意网页 fetch 本地端口）与 DNS rebinding，**不防本机进程**——单用户本机工具下可接受。
 - **启动运行走 self-exec 子进程**：UI 服务端以 `os.Executable()` 自呼 `conduct workflow run <name> --cwd <dir>`（`Setsid` 独立成组、stdin 喂需求、stdout→`/dev/null`），使 pid 判活 / `interrupted` 语义与终端启动逐字节一致，且关掉 UI 不连累在跑的 run。这是「UI 无独占能力」不变量的最强证明——启动 ≡ 执行一条 CLI 命令。
 
-工作流的可视化编辑统一由本命令承担，非交互的 CLI 编辑走 [cli-authoring.md](./cli-authoring.md) 的 `workflow edit`（全量）/ `workflow node …`（局部）。前端（内嵌 SPA）见 [ui.md](./ui.md)〈前端技术栈〉，浏览器验收用例见 [ui-frontend.md](../test-cases/ui-frontend.md)。
+工作流的可视化编辑统一由本命令承担，非交互的 CLI 编辑走 [cli-authoring.md](./cli-authoring.md) 的 `workflow edit`（全量）/ `workflow node …`（局部）。前端（内嵌 SPA）通过顶栏设置入口进入独立设置页，在其中选择语言（跟随环境 / 中文 / English）与主题（跟随系统 / light / dark）；选择写入 `~/.conduct/settings.json`，浏览器不使用 `localStorage` 另存偏好。完整行为见 [ui.md](./ui.md)〈设置〉与〈前端技术栈〉，持久化 schema 和语言解析规则见 [i18n.md](./i18n.md)，浏览器验收用例见 [ui-frontend.md](../test-cases/ui-frontend.md)。
 
 ---
 
@@ -213,7 +213,7 @@ conduct help workflow node set  # 查看多级命令用法
 | 命令 | 状态 |
 | --- | --- |
 | `version` | **已实现**（构建期 `ldflags` 注入版本；根命令 `--version` 等价） |
-| `ui` | **已实现**（`conduct ui --port/--open`、服务端已注册 API、self-exec 发射器与内嵌 SPA 均已落地；只绑 127.0.0.1、启动探测 store、Host/Origin 白名单、变更类强制 JSON。`ui.md` 明确延后的 node / edge 粒度端点不在当前已实现面，编辑器通过整体 `PUT` 保存；浏览器交互按 `docs/test-cases/ui-frontend.md` 验收） |
+| `ui` | **已实现**（`conduct ui --port/--open`、服务端已注册 API、self-exec 发射器与内嵌 SPA、light / dark 主题均已落地；只绑 127.0.0.1、启动探测 store、Host/Origin 白名单、变更类强制 JSON。`ui.md` 明确延后的 node / edge 粒度端点不在当前已实现面，编辑器通过整体 `PUT` 保存；浏览器交互按 `docs/test-cases/ui-frontend.md` 验收） |
 | `update` | **已实现**（`internal/cli/update.go`：经 `creativeprojects/go-selfupdate` 从 GitHub Releases 下载匹配架构资产、`checksums.txt` 校验、原地替换；`--check` / `--pre` / 显式版本；Homebrew 前缀拒绝自替换；非规范当前版本跳过比较。资产命名与 `.goreleaser.yaml` 对齐，改一处须同步另一处） |
 | `help` | **部分实现**（命令 + `internal/help` 内嵌 `go:embed` 落地；`--help`、命令路径帮助与内嵌主题已按 `settings.json` > `LC_ALL` > `LC_MESSAGES` > `LANG` > 英文的统一规则支持中英文；当前仅 `prompts` 一个主题，按概念继续扩充） |
 

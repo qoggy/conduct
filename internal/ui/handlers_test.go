@@ -111,7 +111,7 @@ func TestSettingsEndpoints(t *testing.T) {
 	}
 	var settings locale.Settings
 	decodeBody(t, get, &settings)
-	if settings.Language != nil || settings.ResolvedLanguage != locale.English {
+	if settings.Language != nil || settings.ResolvedLanguage != locale.English || settings.Theme != nil {
 		t.Fatalf("initial settings = %+v", settings)
 	}
 
@@ -144,16 +144,33 @@ func TestSettingsEndpoints(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !strings.Contains(string(data), `"theme": "dark"`) {
-				t.Errorf("unknown setting was not preserved: %s", data)
+				t.Errorf("theme setting was not preserved: %s", data)
 			}
 		})
+	}
+
+	light := do(t, s, http.MethodPatch, "/api/settings", `{"theme":"light"}`, nil)
+	if light.Code != http.StatusOK {
+		t.Fatalf("PATCH light theme = %d: %s", light.Code, light.Body.String())
+	}
+	decodeBody(t, light, &settings)
+	if settings.Theme == nil || *settings.Theme != locale.ThemeLight || settings.Language != nil {
+		t.Fatalf("light theme settings = %+v", settings)
+	}
+	followSystem := do(t, s, http.MethodPatch, "/api/settings", `{"theme":null,"language":"zh-CN"}`, nil)
+	if followSystem.Code != http.StatusOK {
+		t.Fatalf("PATCH combined settings = %d: %s", followSystem.Code, followSystem.Body.String())
+	}
+	decodeBody(t, followSystem, &settings)
+	if settings.Theme != nil || settings.Language == nil || *settings.Language != locale.Chinese {
+		t.Fatalf("combined settings = %+v", settings)
 	}
 }
 
 func TestPatchSettingsRejectsInvalidRequests(t *testing.T) {
 	s := newTestServer(t)
 	for _, body := range []string{
-		`[]`, `{}`, `{"language":"fr"}`, `{"language":1}`, `{"language":"en","theme":"dark"}`, `{"language":"en"} {}`,
+		`[]`, `{}`, `{"language":"fr"}`, `{"language":1}`, `{"theme":"sepia"}`, `{"theme":1}`, `{"language":"en","other":true}`, `{"language":"en"} {}`,
 	} {
 		rec := do(t, s, http.MethodPatch, "/api/settings", body, nil)
 		if rec.Code != http.StatusBadRequest {
@@ -165,6 +182,26 @@ func TestPatchSettingsRejectsInvalidRequests(t *testing.T) {
 		if response.Error.Code != apperror.CodeInvalidSettingsRequest || response.Error.TechnicalDetail != "" {
 			t.Errorf("body %s: error = %+v", body, response.Error)
 		}
+	}
+}
+
+func TestIndexInjectsLanguageAndThemeBeforeThemeScript(t *testing.T) {
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	s := newTestServer(t)
+	path := filepath.Join(s.store.Root(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"language":"zh-CN","theme":"dark"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := do(t, s, http.MethodGet, "/", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `<html lang="zh-CN" data-theme-setting="dark">`) {
+		t.Fatalf("index settings were not injected: %s", body)
+	}
+	if strings.Contains(body, "__CONDUCT_") {
+		t.Fatalf("index leaked a settings placeholder: %s", body)
 	}
 }
 

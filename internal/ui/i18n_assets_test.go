@@ -32,20 +32,24 @@ func TestUIRendersEveryApplicationErrorCode(t *testing.T) {
 func TestUILanguageUsesServerSettingsOnly(t *testing.T) {
 	application := readUIAsset(t, "assets/js/app.js")
 	html := readUIAsset(t, "assets/index.html")
-	allJavaScript := application + readUIAsset(t, "assets/js/i18n.js")
+	settingsPage := readUIAsset(t, "assets/js/pages/settings.js")
+	allJavaScript := application + readUIAsset(t, "assets/js/i18n.js") + readUIAsset(t, "assets/js/theme.js")
 	for _, forbidden := range []string{"navigator.language", "localStorage"} {
 		if strings.Contains(allJavaScript, forbidden) {
 			t.Errorf("browser language implementation must not use %s", forbidden)
 		}
 	}
-	for _, required := range []string{"api.settings()", "api.updateLanguage", "document.documentElement.lang", "rerender()"} {
+	for _, required := range []string{"api.settings()", "api.updateSettings", "document.documentElement.lang", "rerender()"} {
 		if !strings.Contains(application, required) {
 			t.Errorf("UI language bootstrap is missing %q", required)
 		}
 	}
-	for _, value := range []string{`value=""`, `value="zh-CN"`, `value="en"`} {
-		if !strings.Contains(html, value) {
-			t.Errorf("language selector is missing %s", value)
+	if strings.Contains(html, "<select") {
+		t.Error("SPA 外壳不得继续使用原生语言下拉")
+	}
+	for _, required := range []string{`listSelect(`, `value: "zh-CN"`, `value: "en"`, `value: "light"`, `value: "dark"`} {
+		if !strings.Contains(settingsPage, required) {
+			t.Errorf("settings page custom selectors are missing %s", required)
 		}
 	}
 }

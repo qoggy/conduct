@@ -1,9 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="__CONDUCT_LANGUAGE__" data-theme-setting="__CONDUCT_THEME_SETTING__">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>conduct ui</title>
+    <!-- 同步执行，在样式表解析前恢复主题，避免刷新时先闪出另一套配色。 -->
+    <script src="./js/theme.js"></script>
     <link rel="stylesheet" href="./style.css" />
     <!-- 第三方库（内嵌随 go:embed 走，不引 CDN）。非模块脚本，先于 ES 模块加载，挂 globalThis。
          marked（MIT）：运行总结、需求和节点输入/输出的 Markdown 渲染；prism（MIT）：提示词 / JSON 编辑器及
@@ -19,15 +21,15 @@
         <a class="tab" data-tab="workflows" href="#/workflows"></a>
         <a class="tab" data-tab="runs" href="#/runs"></a>
       </div>
-      <label class="language-picker">
-        <span id="language-label"></span>
-        <select id="language">
-          <option value=""></option>
-          <option value="zh-CN"></option>
-          <option value="en"></option>
-        </select>
-      </label>
-      <span class="ver" id="version"></span>
+      <div class="toptools">
+        <span class="ver" id="version"></span>
+        <a class="settings-link" id="settings-link" data-tab="settings" href="#/settings">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 8.97 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.09A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 10 3.01V3h4v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06L19.8 7l-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.96 10H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z"></path>
+          </svg>
+        </a>
+      </div>
     </div>
     <main id="app"></main>
     <script type="module" src="./js/app.js"></script>

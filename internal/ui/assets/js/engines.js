@@ -23,10 +23,10 @@ export function engineIconEl(name) {
 
 // 节点 id chip 的 4 色轮转板，按节点序号取色。
 const PALETTE = [
-  { fg: "#6D4FC4", bg: "#F1EDFB" },
-  { fg: "#0E7A6E", bg: "#E7F4F2" },
-  { fg: "#3D6C9E", bg: "#EAF1F8" },
-  { fg: "#A3459B", bg: "#F8EDF7" },
+  { fg: "var(--node-1-fg)", bg: "var(--node-1-bg)" },
+  { fg: "var(--node-2-fg)", bg: "var(--node-2-bg)" },
+  { fg: "var(--node-3-fg)", bg: "var(--node-3-bg)" },
+  { fg: "var(--node-4-fg)", bg: "var(--node-4-bg)" },
 ];
 
 export function paletteFor(index) {

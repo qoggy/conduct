@@ -19,15 +19,23 @@ export function closeOnOutsideClick(wrap, close) {
   };
 }
 
-// listSelect(current, items, onChange) → 一个 .engsel 元素。items: [{value, label, icon?}]。
+// listSelect(current, items, onChange, options?) → 一个 .engsel 元素。items: [{value, label, icon?}]。
 // icon 是**工厂函数** `() => Element`（不是单个元素）：选中态显示与展开菜单项各需一份 icon，同一个
 // DOM 节点不能同时挂两处，故每处各调 icon() 取一个新节点，避免选中项的图标被挪走后菜单里缺失。
 // 纯选择型下拉（不可打字）：engineSelect() 与 effortField() 共用的展示层。
-export function listSelect(current, items, onChange) {
-  const display = h("div", { class: "selc engsel-display" });
-  const menu = h("div", { class: "engsel-menu" });
+export function listSelect(current, items, onChange, options = {}) {
+  const display = h("div", {
+    class: "selc engsel-display",
+    role: "button",
+    tabindex: "0",
+    "aria-haspopup": "listbox",
+    "aria-expanded": "false",
+    "aria-label": options.label || null,
+  });
+  const menu = h("div", { class: "engsel-menu", role: "listbox" });
   const wrap = h("div", { class: "engsel" }, display, menu);
   let stopOutsideClick = null;
+  let selected = current;
 
   function itemFor(value) {
     return items.find((it) => it.value === value);
@@ -37,16 +45,24 @@ export function listSelect(current, items, onChange) {
     mount(display, h("span", { class: "engsel-cur" }, item?.icon ? item.icon() : null, h("span", {}, item ? item.label : "")), h("span", { class: "caret" }, "▾"));
   }
   function pick(value) {
+    selected = value;
     renderDisplay(value);
+    for (const item of menu.querySelectorAll(".engsel-item")) {
+      const on = item.dataset.value === value;
+      item.classList.toggle("engsel-item--on", on);
+      item.setAttribute("aria-selected", String(on));
+    }
     close();
     onChange(value);
   }
   function open() {
     wrap.classList.add("open");
+    display.setAttribute("aria-expanded", "true");
     stopOutsideClick = closeOnOutsideClick(wrap, close);
   }
   function close() {
     wrap.classList.remove("open");
+    display.setAttribute("aria-expanded", "false");
     if (stopOutsideClick) {
       stopOutsideClick();
       stopOutsideClick = null;
@@ -57,6 +73,14 @@ export function listSelect(current, items, onChange) {
     e.stopPropagation();
     wrap.classList.contains("open") ? close() : open();
   });
+  display.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      wrap.classList.contains("open") ? close() : open();
+    } else if (e.key === "Escape") {
+      close();
+    }
+  });
   mount(
     menu,
     ...items.map((item) =>
@@ -64,6 +88,9 @@ export function listSelect(current, items, onChange) {
         "div",
         {
           class: "engsel-item" + (item.value === current ? " engsel-item--on" : ""),
+          role: "option",
+          "aria-selected": String(item.value === selected),
+          dataset: { value: item.value },
           onClick: (e) => {
             e.stopPropagation();
             pick(item.value);

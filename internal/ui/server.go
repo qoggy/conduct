@@ -10,6 +10,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -120,10 +121,36 @@ func (s *Server) routes(port int) http.Handler {
 	mux.HandleFunc("POST /api/runs/{id}/resume", s.handleResumeRun)
 	mux.HandleFunc("DELETE /api/runs/{id}", s.handleDeleteRun)
 
+	// 首页需要在样式表前注入全局主题偏好，不能直接交给静态 FileServer，否则显式 dark 会先闪出 light。
+	mux.HandleFunc("GET /{$}", s.handleIndex)
+	mux.HandleFunc("GET /index.html", s.handleIndex)
 	// 前端静态资源（内嵌）。hash 路由使浏览器只请求 / 与资源文件本身，无需 history fallback。
 	mux.Handle("/", http.FileServer(http.FS(s.assets)))
 
 	return s.withGuards(mux, port)
+}
+
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	settings, err := locale.Read(s.store.Root())
+	if err != nil {
+		writeTechnicalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	contents, err := fs.ReadFile(s.assets, "index.html")
+	if err != nil {
+		writeTechnicalError(w, http.StatusInternalServerError, fmt.Errorf("failed to read embedded index.html: %w", err))
+		return
+	}
+	theme := ""
+	if settings.Theme != nil {
+		theme = string(*settings.Theme)
+	}
+	page := strings.ReplaceAll(string(contents), "__CONDUCT_LANGUAGE__", string(settings.ResolvedLanguage))
+	page = strings.ReplaceAll(page, "__CONDUCT_THEME_SETTING__", theme)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if _, err := w.Write([]byte(page)); err != nil {
+		log.Printf("conduct ui: failed to write index response: %v", err)
+	}
 }
 
 // withGuards 套三层防护：① 所有响应 no-store（防浏览器缓存让刷新失真）；② Host / Origin 白名单

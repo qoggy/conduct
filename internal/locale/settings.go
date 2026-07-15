@@ -15,10 +15,31 @@ const settingsFileName = "settings.json"
 
 var replaceFile = os.Rename
 
-// Settings 是 settings API 对外需要的语言视图。Language=nil 表示跟随环境。
+// Theme 是 conduct UI 支持的显式主题。settings.json 不含 theme 时由浏览器跟随系统。
+type Theme string
+
+const (
+	ThemeLight Theme = "light"
+	ThemeDark  Theme = "dark"
+)
+
+func (theme Theme) Valid() bool {
+	return theme == ThemeLight || theme == ThemeDark
+}
+
+// Settings 是 settings API 对外视图。Language=nil 表示跟随环境，Theme=nil 表示跟随系统。
 type Settings struct {
 	Language         *Language `json:"language"`
 	ResolvedLanguage Language  `json:"resolvedLanguage"`
+	Theme            *Theme    `json:"theme"`
+}
+
+// SettingsUpdate 表示一次严格的部分更新。Present 区分“未修改该字段”与“删除该字段（值为 nil）”。
+type SettingsUpdate struct {
+	LanguagePresent bool
+	Language        *Language
+	ThemePresent    bool
+	Theme           *Theme
 }
 
 // DefaultRoot 返回生产设置目录 ~/.conduct。
@@ -53,41 +74,77 @@ func Read(root string) (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
+	theme, err := themeFromObject(raw)
+	if err != nil {
+		return Settings{}, err
+	}
 	resolved := Detect()
 	if explicit != nil {
 		resolved = *explicit
 	}
 	if !exists {
 		explicit = nil
+		theme = nil
 	}
-	return Settings{Language: explicit, ResolvedLanguage: resolved}, nil
+	return Settings{Language: explicit, ResolvedLanguage: resolved, Theme: theme}, nil
 }
 
 // UpdateLanguage 只修改 root/settings.json 的 language 属性。nil 表示跟随环境。
 // 未知属性原样保留，最终通过同目录临时文件 + rename 原子替换。
 func UpdateLanguage(root string, language *Language) (Settings, error) {
-	if language != nil && !language.Valid() {
-		return Settings{}, fmt.Errorf("unsupported language %q", *language)
+	return UpdateSettings(root, SettingsUpdate{LanguagePresent: true, Language: language})
+}
+
+// UpdateSettings 严格部分更新 language / theme；nil 删除对应属性，未出现的字段保持不变。
+func UpdateSettings(root string, update SettingsUpdate) (Settings, error) {
+	if !update.LanguagePresent && !update.ThemePresent {
+		return Settings{}, fmt.Errorf("settings update must contain language or theme")
+	}
+	if update.LanguagePresent && update.Language != nil && !update.Language.Valid() {
+		return Settings{}, fmt.Errorf("unsupported language %q", *update.Language)
+	}
+	if update.ThemePresent && update.Theme != nil && !update.Theme.Valid() {
+		return Settings{}, fmt.Errorf("unsupported theme %q", *update.Theme)
 	}
 	path := filepath.Join(root, settingsFileName)
 	raw, exists, err := readObject(path)
 	if err != nil {
 		return Settings{}, err
 	}
-	if language == nil && !exists {
-		return Settings{Language: nil, ResolvedLanguage: Detect()}, nil
+	if _, err := languageFromObject(raw); err != nil {
+		return Settings{}, err
+	}
+	if _, err := themeFromObject(raw); err != nil {
+		return Settings{}, err
+	}
+	deletingFromMissingFile := !exists && (!update.LanguagePresent || update.Language == nil) && (!update.ThemePresent || update.Theme == nil)
+	if deletingFromMissingFile {
+		return Settings{Language: nil, ResolvedLanguage: Detect(), Theme: nil}, nil
 	}
 	if raw == nil {
 		raw = make(map[string]json.RawMessage)
 	}
-	if language == nil {
-		delete(raw, "language")
-	} else {
-		encoded, marshalErr := json.Marshal(*language)
-		if marshalErr != nil {
-			return Settings{}, fmt.Errorf("failed to encode language setting: %w", marshalErr)
+	if update.LanguagePresent {
+		if update.Language == nil {
+			delete(raw, "language")
+		} else {
+			encoded, marshalErr := json.Marshal(*update.Language)
+			if marshalErr != nil {
+				return Settings{}, fmt.Errorf("failed to encode language setting: %w", marshalErr)
+			}
+			raw["language"] = encoded
 		}
-		raw["language"] = encoded
+	}
+	if update.ThemePresent {
+		if update.Theme == nil {
+			delete(raw, "theme")
+		} else {
+			encoded, marshalErr := json.Marshal(*update.Theme)
+			if marshalErr != nil {
+				return Settings{}, fmt.Errorf("failed to encode theme setting: %w", marshalErr)
+			}
+			raw["theme"] = encoded
+		}
 	}
 	data, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
@@ -97,11 +154,7 @@ func UpdateLanguage(root string, language *Language) (Settings, error) {
 	if err := atomicWrite(path, data); err != nil {
 		return Settings{}, err
 	}
-	resolved := Detect()
-	if language != nil {
-		resolved = *language
-	}
-	return Settings{Language: language, ResolvedLanguage: resolved}, nil
+	return Read(root)
 }
 
 func readObject(path string) (map[string]json.RawMessage, bool, error) {
@@ -149,6 +202,22 @@ func languageFromObject(raw map[string]json.RawMessage) (*Language, error) {
 		return nil, fmt.Errorf("unsupported language %q", value)
 	}
 	return &language, nil
+}
+
+func themeFromObject(raw map[string]json.RawMessage) (*Theme, error) {
+	encoded, ok := raw["theme"]
+	if !ok {
+		return nil, nil
+	}
+	var value string
+	if err := json.Unmarshal(encoded, &value); err != nil {
+		return nil, fmt.Errorf("failed to parse theme setting: theme must be a string")
+	}
+	theme := Theme(value)
+	if !theme.Valid() {
+		return nil, fmt.Errorf("unsupported theme %q", value)
+	}
+	return &theme, nil
 }
 
 func atomicWrite(path string, data []byte) (err error) {

@@ -18,10 +18,12 @@ func TestReadSettings(t *testing.T) {
 		asDirectory  bool
 		wantExplicit *Language
 		wantResolved Language
+		wantTheme    *Theme
 		wantError    string
 	}{
 		{name: "missing", wantResolved: English},
-		{name: "language missing", contents: stringPointer(`{"theme":"dark"}`), wantResolved: English},
+		{name: "language missing", contents: stringPointer(`{"theme":"dark"}`), wantResolved: English, wantTheme: themePointer(ThemeDark)},
+		{name: "light theme", contents: stringPointer(`{"theme":"light"}`), wantResolved: English, wantTheme: themePointer(ThemeLight)},
 		{name: "english", contents: stringPointer(`{"language":"en"}`), wantExplicit: languagePointer(English), wantResolved: English},
 		{name: "chinese", contents: stringPointer(`{"language":"zh-CN"}`), wantExplicit: languagePointer(Chinese), wantResolved: Chinese},
 		{name: "unreadable", asDirectory: true, wantError: "failed to read"},
@@ -30,6 +32,8 @@ func TestReadSettings(t *testing.T) {
 		{name: "null", contents: stringPointer(`null`), wantError: "top-level value must be an object"},
 		{name: "non string", contents: stringPointer(`{"language":1}`), wantError: "language must be a string"},
 		{name: "unsupported", contents: stringPointer(`{"language":"fr"}`), wantError: `unsupported language "fr"`},
+		{name: "theme non string", contents: stringPointer(`{"theme":1}`), wantError: "theme must be a string"},
+		{name: "unsupported theme", contents: stringPointer(`{"theme":"sepia"}`), wantError: `unsupported theme "sepia"`},
 		{name: "trailing", contents: stringPointer(`{} {}`), wantError: "unexpected trailing JSON value"},
 	}
 	for _, test := range tests {
@@ -55,8 +59,8 @@ func TestReadSettings(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !sameLanguagePointer(got.Language, test.wantExplicit) || got.ResolvedLanguage != test.wantResolved {
-				t.Fatalf("Read() = %+v, want language=%v resolved=%s", got, test.wantExplicit, test.wantResolved)
+			if !sameLanguagePointer(got.Language, test.wantExplicit) || got.ResolvedLanguage != test.wantResolved || !sameThemePointer(got.Theme, test.wantTheme) {
+				t.Fatalf("Read() = %+v, want language=%v resolved=%s theme=%v", got, test.wantExplicit, test.wantResolved, test.wantTheme)
 			}
 		})
 	}
@@ -144,6 +148,46 @@ func TestUpdateLanguagePreservesUnknownProperties(t *testing.T) {
 	}
 }
 
+func TestUpdateSettingsPartiallyUpdatesLanguageAndTheme(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, settingsFileName)
+	if err := os.WriteFile(path, []byte(`{"language":"en","theme":"light","nested":{"n":1}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := UpdateSettings(root, SettingsUpdate{ThemePresent: true, Theme: themePointer(ThemeDark)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Theme == nil || *settings.Theme != ThemeDark || settings.Language == nil || *settings.Language != English {
+		t.Fatalf("theme update changed another setting: %+v", settings)
+	}
+	settings, err = UpdateSettings(root, SettingsUpdate{LanguagePresent: true, Language: languagePointer(Chinese), ThemePresent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Theme != nil || settings.Language == nil || *settings.Language != Chinese {
+		t.Fatalf("combined update = %+v", settings)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"theme"`) || !strings.Contains(string(data), `"nested"`) {
+		t.Fatalf("theme deletion did not preserve unknown properties:\n%s", data)
+	}
+}
+
+func TestUpdateSettingsRejectsExistingInvalidSupportedValue(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, settingsFileName)
+	if err := os.WriteFile(path, []byte(`{"theme":"sepia"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLanguage(root, languagePointer(Chinese)); err == nil || !strings.Contains(err.Error(), `unsupported theme "sepia"`) {
+		t.Fatalf("UpdateLanguage() error = %v", err)
+	}
+}
+
 func TestUpdateLanguageMissingFollowEnvironmentDoesNotCreateFile(t *testing.T) {
 	root := t.TempDir()
 	if _, err := UpdateLanguage(root, nil); err != nil {
@@ -185,7 +229,12 @@ func TestUpdateLanguageReplaceFailureLeavesOriginalUnchanged(t *testing.T) {
 
 func stringPointer(value string) *string       { return &value }
 func languagePointer(value Language) *Language { return &value }
+func themePointer(value Theme) *Theme          { return &value }
 
 func sameLanguagePointer(left, right *Language) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
+}
+
+func sameThemePointer(left, right *Theme) bool {
 	return left == nil && right == nil || left != nil && right != nil && *left == *right
 }

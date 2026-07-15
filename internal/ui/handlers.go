@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,32 +69,50 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("body_object", ""))
 		return
 	}
+	if len(body) == 0 {
+		writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("setting_required", ""))
+		return
+	}
 	for field := range body {
-		if field != "language" {
+		if field != "language" && field != "theme" {
 			writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("unknown_field", field))
 			return
 		}
 	}
-	encoded, ok := body["language"]
-	if !ok {
-		writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("language_required", ""))
-		return
-	}
-	var language *locale.Language
-	if string(encoded) != "null" {
-		var value string
-		if err := json.Unmarshal(encoded, &value); err != nil {
-			writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("language_type", ""))
-			return
+	update := locale.SettingsUpdate{}
+	if encoded, ok := body["language"]; ok {
+		update.LanguagePresent = true
+		if !bytes.Equal(bytes.TrimSpace(encoded), []byte("null")) {
+			var value string
+			if err := json.Unmarshal(encoded, &value); err != nil {
+				writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("language_type", ""))
+				return
+			}
+			parsed := locale.Language(value)
+			if !parsed.Valid() {
+				writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("language_type", ""))
+				return
+			}
+			update.Language = &parsed
 		}
-		parsed := locale.Language(value)
-		if !parsed.Valid() {
-			writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("language_type", ""))
-			return
-		}
-		language = &parsed
 	}
-	settings, err := locale.UpdateLanguage(s.store.Root(), language)
+	if encoded, ok := body["theme"]; ok {
+		update.ThemePresent = true
+		if !bytes.Equal(bytes.TrimSpace(encoded), []byte("null")) {
+			var value string
+			if err := json.Unmarshal(encoded, &value); err != nil {
+				writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("theme_type", ""))
+				return
+			}
+			parsed := locale.Theme(value)
+			if !parsed.Valid() {
+				writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("theme_type", ""))
+				return
+			}
+			update.Theme = &parsed
+		}
+	}
+	settings, err := locale.UpdateSettings(s.store.Root(), update)
 	if err != nil {
 		writeTechnicalError(w, http.StatusInternalServerError, err)
 		return

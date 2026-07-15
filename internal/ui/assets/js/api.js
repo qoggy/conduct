@@ -91,7 +91,7 @@ export const api = {
   stopRun: (id) => request("POST", `/api/runs/${encodeURIComponent(id)}/stop`, { body: {} }),
   resumeRun: (id) => request("POST", `/api/runs/${encodeURIComponent(id)}/resume`, { body: {} }),
   deleteRun: (id) => request("DELETE", `/api/runs/${encodeURIComponent(id)}`),
-  updateLanguage: (language) => request("PATCH", "/api/settings", { body: { language } }),
+  updateSettings: (settings) => request("PATCH", "/api/settings", { body: settings }),
 };
 
 function queryString(query) {

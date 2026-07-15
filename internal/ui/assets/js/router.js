@@ -106,11 +106,11 @@ function renderFatal(err) {
   console.error("conduct ui: page rendering failed", err);
 }
 
-// syncActiveTab 让顶栏两个导航项跟随当前路由高亮。
+// syncActiveTab 让顶栏主导航和设置入口跟随当前路由高亮。
 function syncActiveTab(path) {
-  const isRuns = path.startsWith("/runs");
+  const active = path.startsWith("/settings") ? "settings" : path.startsWith("/runs") ? "runs" : "workflows";
   document.querySelectorAll("[data-tab]").forEach((el) => {
-    const on = el.dataset.tab === (isRuns ? "runs" : "workflows");
+    const on = el.dataset.tab === active;
     el.classList.toggle("tab-on", on);
   });
 }
