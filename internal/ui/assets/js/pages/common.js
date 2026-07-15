@@ -1,4 +1,4 @@
-// 页面公共件：加载态、错误态、异步载入骨架。错误文案原样透传服务端原文（fail-loud 同源）。
+// 页面公共件：加载态、错误态、异步载入骨架。ApiError 已按稳定错误码本地化，技术详情保持原样。
 
 import { h, mount } from "../dom.js";
 import { i18n } from "../i18n.js";
@@ -8,7 +8,7 @@ export function loadingView() {
   return h("div", { class: "page" }, h("div", { class: "loading" }, i18n.loadingText));
 }
 
-// errorView 展示一处载入错误：ApiError 的 message 是 CLI / 内核原文，原样呈现、不改写。
+// errorView 展示一处载入错误：ApiError.message 是本地化概要与可选固定英文技术详情。
 export function errorView(err) {
   const box = h("div", { class: "loaderr" }, i18n.loadFail, h("span", { class: "mono" }, err && err.message ? err.message : String(err)));
   return h("div", { class: "page" }, box);

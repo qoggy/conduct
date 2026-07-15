@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qoggy/conduct/internal/apperror"
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/qoggy/conduct/internal/run"
 	"github.com/qoggy/conduct/internal/store"
 	"github.com/qoggy/conduct/internal/workflow"
@@ -97,6 +99,97 @@ func TestEnginesEndpoint(t *testing.T) {
 	}
 }
 
+func TestSettingsEndpoints(t *testing.T) {
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LC_MESSAGES", "")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	s := newTestServer(t)
+
+	get := do(t, s, http.MethodGet, "/api/settings", "", nil)
+	if get.Code != http.StatusOK {
+		t.Fatalf("GET settings = %d: %s", get.Code, get.Body.String())
+	}
+	var settings locale.Settings
+	decodeBody(t, get, &settings)
+	if settings.Language != nil || settings.ResolvedLanguage != locale.English {
+		t.Fatalf("initial settings = %+v", settings)
+	}
+
+	settingsPath := filepath.Join(s.store.Root(), "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(`{"theme":"dark"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name         string
+		body         string
+		wantLanguage *locale.Language
+		wantResolved locale.Language
+	}{
+		{name: "Chinese", body: `{"language":"zh-CN"}`, wantLanguage: testLanguagePointer(locale.Chinese), wantResolved: locale.Chinese},
+		{name: "English", body: `{"language":"en"}`, wantLanguage: testLanguagePointer(locale.English), wantResolved: locale.English},
+		{name: "follow environment", body: `{"language":null}`, wantResolved: locale.English},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rec := do(t, s, http.MethodPatch, "/api/settings", test.body, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("PATCH settings = %d: %s", rec.Code, rec.Body.String())
+			}
+			var got locale.Settings
+			decodeBody(t, rec, &got)
+			if !equalLanguagePointers(got.Language, test.wantLanguage) || got.ResolvedLanguage != test.wantResolved {
+				t.Errorf("settings = %+v, want language=%v resolved=%s", got, test.wantLanguage, test.wantResolved)
+			}
+			data, err := os.ReadFile(settingsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), `"theme": "dark"`) {
+				t.Errorf("unknown setting was not preserved: %s", data)
+			}
+		})
+	}
+}
+
+func TestPatchSettingsRejectsInvalidRequests(t *testing.T) {
+	s := newTestServer(t)
+	for _, body := range []string{
+		`[]`, `{}`, `{"language":"fr"}`, `{"language":1}`, `{"language":"en","theme":"dark"}`, `{"language":"en"} {}`,
+	} {
+		rec := do(t, s, http.MethodPatch, "/api/settings", body, nil)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("body %s: status = %d, want 400 (%s)", body, rec.Code, rec.Body.String())
+			continue
+		}
+		var response errorResponse
+		decodeBody(t, rec, &response)
+		if response.Error.Code != apperror.CodeInvalidSettingsRequest || response.Error.TechnicalDetail != "" {
+			t.Errorf("body %s: error = %+v", body, response.Error)
+		}
+	}
+}
+
+func TestGetSettingsReturnsFixedEnglishTechnicalFailure(t *testing.T) {
+	s := newTestServer(t)
+	if err := os.WriteFile(filepath.Join(s.store.Root(), "settings.json"), []byte(`{"language":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := do(t, s, http.MethodGet, "/api/settings", "", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET settings = %d: %s", rec.Code, rec.Body.String())
+	}
+	var response errorResponse
+	decodeBody(t, rec, &response)
+	if response.Error.Code != apperror.CodeTechnicalFailure || !strings.HasPrefix(response.Error.TechnicalDetail, "failed to parse ") {
+		t.Fatalf("technical error = %+v", response.Error)
+	}
+}
+
+func testLanguagePointer(language locale.Language) *locale.Language { return &language }
+
+func equalLanguagePointers(left, right *locale.Language) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
+}
+
 func TestCreateListWorkflow(t *testing.T) {
 	s := newTestServer(t)
 
@@ -148,13 +241,13 @@ func TestPutInvalidDefinitionReturnsStructuredProblems(t *testing.T) {
 	}
 	var resp errorResponse
 	decodeBody(t, rec, &resp)
-	if len(resp.Problems) == 0 {
+	if len(resp.Error.Problems) == 0 {
 		t.Fatalf("422 应带字段级 problems，得到空")
 	}
 	// Path 应指向具体字段（不含 ": " 前缀污染），且非空。
-	for _, p := range resp.Problems {
+	for _, p := range resp.Error.Problems {
 		if p.Path == "" {
-			t.Fatalf("problem.Path 不应为空: %+v", resp.Problems)
+			t.Fatalf("problem.Path 不应为空: %+v", resp.Error.Problems)
 		}
 		if strings.Contains(p.Path, ": ") {
 			t.Fatalf("problem.Path 不应含 ': ' 分隔符: %q", p.Path)
@@ -348,7 +441,7 @@ func seedRun(t *testing.T, s *Server, id, workflowName string, status run.Status
 	t.Helper()
 	record := &run.Record{
 		ID: id, Workflow: workflowName, Status: status, Pid: pid,
-		StartedAt: "2026-07-05T10:00:00+08:00", Artifacts: map[string]string{},
+		StartedAt: "2026-07-05T10:00:00+08:00", Artifacts: map[string]string{}, Language: locale.English,
 	}
 	if err := s.store.CreateRun(record); err != nil {
 		t.Fatalf("落运行记录失败: %v", err)

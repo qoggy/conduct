@@ -54,7 +54,7 @@ func TestRenameNodeIDRejects(t *testing.T) {
 		{"保留名 END", "a", "END", "保留名"},
 		{"非法 id", "a", "1x", "非法"},
 		{"重名", "a", "b", "已存在同名"},
-		{"改标记节点", "START", "s", "标记节点"},
+		{"改标记节点", "START", "s", "不能改名"},
 		{"节点不存在", "ghost", "x", "无节点"},
 	}
 	for _, c := range cases {
@@ -64,8 +64,8 @@ func TestRenameNodeIDRejects(t *testing.T) {
 			if err == nil {
 				t.Fatalf("应拒绝 %s→%s", c.oldID, c.newID)
 			}
-			if !strings.Contains(err.Error(), c.wantSub) {
-				t.Errorf("错误信息应含 %q，得到 %q", c.wantSub, err.Error())
+			if got := chineseError(err); !strings.Contains(got, c.wantSub) {
+				t.Errorf("错误信息应含 %q，得到 %q", c.wantSub, got)
 			}
 			if !reflect.DeepEqual(def, renameFixture()) {
 				t.Error("拒绝时定义不得被改动")

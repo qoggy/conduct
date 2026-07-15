@@ -83,12 +83,12 @@ run_error() {   # 用法：run_error <workflow 名前缀>   —— 打印该 run
 **qoder（`is_error=true` 分支，`qoderFailureMessage` 的三级优先级）**
 - **真实路径**：真实 `qodercli` 在超大低重复 payload 下返回 `is_error=true`，`result` 字段不存在，失败原因在 `errors` 数组；conduct 应取 `errors` 内容而非空 `result` / 兜底提示 → TC-001 💸。
 - **边界（次优先级）**：`errors` 为空、`result` 非空 → 回退用 `result`（`TrimSpace` 后）→ TC-002（假 qodercli；真实 qoder 无法稳定按需产出这个精确字段组合）。
-- **边界（兜底）**：`errors` 与 `result` 皆空 → 兜底提示「qodercli 未返回具体错误信息」，绝不吐空字符串 → TC-003（假 qodercli；真实 qoder 无法稳定按需产出空错误体）。
+- **边界（兜底）**：`errors` 与 `result` 皆空 → 固定英文兜底提示 `qodercli returned no specific error information`，绝不吐空字符串；引擎技术诊断不随 locale 国际化 → TC-003（假 qodercli；真实 qoder 无法稳定按需产出空错误体）。
 - **数据流转**：失败态的 `RunResult.DurationMilliseconds` 不再被空字面量 `RunResult{}` 丢弃，真实耗时如实进入 `trace.jsonl` 的 `durationMs` → TC-004（假 qodercli；用受控 `sleep` 锁定耗时边界）。
 
 **claude-code（`claudeStdoutFailureMessage` 的非零退出 stdout 兜底 + 既有 `is_error` 分支）**
 - **正常路径（is_error，退出码 0）**：`is_error=true` → 附 `result` 文本 → TC-005（假 claude；已调研但未找到稳定真实触发，详见用例前置）。
-- **真实路径（非零退出）**：真实 `claude -p` 收到 10 MB 以下但超过模型上下文的 payload 时，退出码非 0，stdout 是合法 JSON 且 `result` 非空，stderr 为空；conduct 应优先取 stdout 的 `result`（`claude 报错: <result>`），不落到退出码摘要路径 → TC-006 💸。
+- **真实路径（非零退出）**：真实 `claude -p` 收到 10 MB 以下但超过模型上下文的 payload 时，退出码非 0，stdout 是合法 JSON 且 `result` 非空，stderr 为空；conduct 应优先取 stdout 的 `result`（`claude error: <result>`），不落到退出码摘要路径 → TC-006 💸。
 - **边界（stdout 非法 JSON）**：退出码非 0，stdout 非空但不是合法 JSON → 回退退出码+stderr 摘要 → TC-007（假 claude；真实 claude 无法稳定输出非法 JSON）。
 - **边界（stdout 合法但 result 为空）**：退出码非 0，stdout 是合法 JSON 但 `result` 为空串 → 同样回退退出码+stderr 摘要，不用空字符串冒充报错原因 → TC-008（假 claude；真实 claude 无法稳定输出空 result）。
 - 退出码非 0、stdout **整个为空**的通用回退路径已由 [workflow-running.md](./workflow-running.md) TC-010 覆盖（引擎二进制整体故障、stderr 有内容），本文不重复。
@@ -123,7 +123,7 @@ run_error() {   # 用法：run_error <workflow 名前缀>   —— 打印该 run
      wc -c "$PROJ/large.txt"   # 约 11 MB
      ```
 - **步骤**：
-  1. `cat "$PROJ/large.txt" | "$CONDUCT" workflow run "$NAME" --cwd "$PROJ"; echo "exit=$?"`
+  1. `cat "$PROJ/large.txt" | LC_ALL=C "$CONDUCT" workflow run "$NAME" --cwd "$PROJ"; echo "exit=$?"`
   2. `run_error "$NAME"`
   3. ```bash
      python3 - "$NAME" <<'PY'
@@ -132,13 +132,14 @@ run_error() {   # 用法：run_error <workflow 名前缀>   —— 打印该 run
      err = json.load(open(p))["error"]
      uses_errors = any(s in err for s in ["PAYLOAD_TOO_LARGE", "prompt is too long", "Model context window exceeded"])
      print("uses_errors=", uses_errors)
-     print("not_empty_fallback=", "未返回具体错误信息" not in err)
+     fallbacks = ["未返回具体错误信息", "returned no specific error information"]
+     print("not_empty_fallback=", all(s not in err for s in fallbacks))
      PY
      ```
 - **预期**：
   - 步骤 1 退出码 `1`。
-  - 步骤 2 打印 `failed | qodercli 报错: ...`；错误文本含真实 qoder 的 `errors` 内容关键字（如 `PAYLOAD_TOO_LARGE` / `prompt is too long` / `Model context window exceeded`，具体 request_id、token 数和供应商措辞不逐字比对）。
-  - 步骤 3 打印 `uses_errors= True` 与 `not_empty_fallback= True`——证明没有把缺失的 `result` 当空报错，也没有落到「未返回具体错误信息」兜底。
+  - 步骤 2 打印 `failed | qodercli error: ...`；错误文本含真实 qoder 的 `errors` 内容关键字（如 `PAYLOAD_TOO_LARGE` / `prompt is too long` / `Model context window exceeded`，具体 request_id、token 数和供应商措辞不逐字比对）。
+  - 步骤 3 打印 `uses_errors= True` 与 `not_empty_fallback= True`——证明没有把缺失的 `result` 当空报错，也没有落到中英文任一空错误兜底。
 - **清理**：`cleanup_run "$NAME"; rm -rf "$PROJ"`。
 
 ### TC-002 errors 为空时回退用 result（trim 后）
@@ -162,12 +163,12 @@ run_error() {   # 用法：run_error <workflow 名前缀>   —— 打印该 run
   2. `run_error qe2`
 - **预期**：
   - 步骤 1 退出码 `1`。
-  - 步骤 2 打印 `failed | qodercli 报错: fallback result text`（`errors` 空时回退 `result`，且已去掉首尾空格）。
+  - 步骤 2 打印 `failed | qodercli error: fallback result text`（`errors` 空时回退 `result`，且已去掉首尾空格）。
 - **清理**：`cleanup_fake`。
 
 ### TC-003 errors 与 result 皆空时给兜底提示，不吐空字符串
 
-- **目的**：验证 `errors`、`result` 都为空时，报错落到兜底提示「qodercli 未返回具体错误信息」，而非拼出一句没有内容的 `qodercli 报错: `。
+- **目的**：验证 `errors`、`result` 都为空时，即使中文 locale 也使用固定英文非空兜底提示，而不是拼出一句没有内容的错误前缀。
 - **前置**：
   1. 使用假 `qodercli` 的具体理由：真实 qoder 的失败通常会给 `errors` 或 `result`，无法稳定按需产出「错误体为空」这个精确兜底边界。
   2. `fake_env`。
@@ -182,11 +183,11 @@ run_error() {   # 用法：run_error <workflow 名前缀>   —— 打印该 run
      ```
   4. `make_qoder_flow qe3`。
 - **步骤**：
-  1. `"$CONDUCT" workflow run qe3 "go" --cwd "$WORK"; echo "exit=$?"`
+  1. `LC_ALL=zh_CN.UTF-8 "$CONDUCT" workflow run qe3 "go" --cwd "$WORK"; echo "exit=$?"`
   2. `run_error qe3`
 - **预期**：
-  - 步骤 1 退出码 `1`。
-  - 步骤 2 打印 `failed | qodercli 报错: qodercli 未返回具体错误信息`（兜底提示生效，报错信息非空）。
+  - 步骤 1 退出码为 `1`。
+  - 步骤 2 打印 `failed | qodercli error: qodercli returned no specific error information`（中文 locale 不改变技术诊断，且兜底信息非空）。
 - **清理**：`cleanup_fake`。
 
 ### TC-004 失败态真实耗时如实落盘（不再被清零）
@@ -239,7 +240,7 @@ run_error() {   # 用法：run_error <workflow 名前缀>   —— 打印该 run
   2. `run_error ce1`
 - **预期**：
   - 步骤 1 退出码 `1`。
-  - 步骤 2 打印 `failed | claude 报错: model said no`。
+  - 步骤 2 打印 `failed | claude error: model said no`。
 - **清理**：`cleanup_fake`。
 
 ### TC-006 💸 真实非零退出 + stdout 含合法 result：优先于退出码摘要
@@ -266,13 +267,13 @@ run_error() {   # 用法：run_error <workflow 名前缀>   —— 打印该 run
      p = glob.glob(os.path.expanduser("~/.conduct/runs/"+sys.argv[1]+"-*/run.json"))[0]
      err = json.load(open(p))["error"]
      print("result_used=", "Prompt is too long" in err)
-     print("no_exit_summary=", "退出码" not in err)
+     print("no_exit_summary=", "exited with code" not in err)
      PY
      ```
 - **预期**：
   - 步骤 1 退出码 `1`。
-  - 步骤 2 打印 `failed | claude 报错: Prompt is too long` 或同义真实文案；不含 `退出码` 字样。
-  - 步骤 3 打印 `result_used= True` 与 `no_exit_summary= True`——证明 stdout JSON 的 `result` 被采用，没有回退到 `claude 退出码 1: ...`。
+  - 步骤 2 打印 `failed | claude error: Prompt is too long` 或同义真实文案；不含 `exited with code` 字样。
+  - 步骤 3 打印 `result_used= True` 与 `no_exit_summary= True`——证明 stdout JSON 的 `result` 被采用，没有回退到 `claude exited with code 1: ...`。
 - **清理**：`cleanup_run "$NAME"; rm -rf "$PROJ"`。
 
 ### TC-007 非零退出 + stdout 非法 JSON：回退退出码+stderr 摘要
@@ -298,7 +299,7 @@ run_error() {   # 用法：run_error <workflow 名前缀>   —— 打印该 run
   2. `run_error ce3`
 - **预期**：
   - 步骤 1 退出码 `1`。
-  - 步骤 2 打印 `failed | claude 退出码 1: real stderr message`（stdout 非法 JSON，回退到退出码+stderr 摘要；不含 `claude 报错:` 前缀）。
+  - 步骤 2 打印 `failed | claude exited with code 1: real stderr message`（stdout 非法 JSON，回退到退出码+stderr 摘要；不含 `claude error:` 前缀）。
 - **清理**：`cleanup_fake`。
 
 ### TC-008 非零退出 + stdout 合法 JSON 但 result 为空：同样回退，不冒充报错原因
@@ -324,7 +325,7 @@ run_error() {   # 用法：run_error <workflow 名前缀>   —— 打印该 run
   2. `run_error ce4`
 - **预期**：
   - 步骤 1 退出码 `1`。
-  - 步骤 2 打印 `failed | claude 退出码 1: stderr fallback message`（`result` 为空串不被采用，回退到退出码+stderr 摘要；不含 `claude 报错:` 前缀）。
+  - 步骤 2 打印 `failed | claude exited with code 1: stderr fallback message`（`result` 为空串不被采用，回退到退出码+stderr 摘要；不含 `claude error:` 前缀）。
 - **清理**：`cleanup_fake`。
 
 ---
@@ -364,7 +365,7 @@ run_error() {   # 用法：run_error <workflow 名前缀>   —— 打印该 run
      ```
 - **预期**：
   - 步骤 1 退出码 `1`。
-  - 步骤 2 打印 `failed | agy 状态 ERROR: Cannot list directory file:///this/path/definitely/does/not/exist/xyz999 which does not exist.`（路径与 `does not exist` 是关键结构；不逐字比对 response 长文）。
+  - 步骤 2 打印 `failed | agy status ERROR: Cannot list directory file:///this/path/definitely/does/not/exist/xyz999 which does not exist.`（路径与 `does not exist` 是关键结构；不逐字比对 response 长文）。
   - 步骤 3 打印 `error_field_used= True` 与 `response_not_used= True`——证明顶层 `error` 被采用，未把 `response` 的长篇分析当报错信息。
 - **清理**：`export PATH="$OLD_PATH"; cleanup_run "$NAME"; rm -rf "$PROJ"`。
 
@@ -388,7 +389,7 @@ run_error() {   # 用法：run_error <workflow 名前缀>   —— 打印该 run
   2. `run_error ae2`
 - **预期**：
   - 步骤 1 退出码 `1`。
-  - 步骤 2 打印 `failed | agy 状态 FAILED: quota exceeded for this session`（`error` 为空，回退用 `response`）。
+  - 步骤 2 打印 `failed | agy status FAILED: quota exceeded for this session`（`error` 为空，回退用 `response`）。
 - **清理**：`cleanup_fake`。
 
 ---
@@ -419,7 +420,7 @@ run_error() {   # 用法：run_error <workflow 名前缀>   —— 打印该 run
      import json, glob, os
      p = glob.glob(os.path.expanduser("~/.conduct/runs/ce5-*/run.json"))[0]
      d = json.load(open(p))
-     expected = "claude 退出码 1: " + ("A" * 500) + "…"
+     expected = "claude exited with code 1: " + ("A" * 500) + "…"
      print("match=", d["error"] == expected, "| len=", len(d["error"]))
      '
      ```
@@ -450,7 +451,7 @@ run_error() {   # 用法：run_error <workflow 名前缀>   —— 打印该 run
      import json, glob, os
      p = glob.glob(os.path.expanduser("~/.conduct/runs/ae3-*/run.json"))[0]
      d = json.load(open(p))
-     expected = "agy 状态 FAILED: " + ("B" * 500) + "…"
+     expected = "agy status FAILED: " + ("B" * 500) + "…"
      print("match=", d["error"] == expected, "| len=", len(d["error"]))
      '
      ```

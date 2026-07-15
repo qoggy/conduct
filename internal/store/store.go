@@ -15,14 +15,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/workflow"
 )
 
 var (
 	// ErrExists 表示目标工作流名已被占用。
-	ErrExists = errors.New("工作流已存在")
+	ErrExists = apperror.New(apperror.CodeWorkflowAlreadyExists, nil)
 	// ErrNotExist 表示目标工作流不存在。
-	ErrNotExist = errors.New("工作流不存在")
+	ErrNotExist = apperror.New(apperror.CodeWorkflowNotFound, nil)
 )
 
 // Store 指向一个工作流 store 根目录（生产为 ~/.conduct，测试可指向临时目录）。
@@ -35,7 +36,7 @@ type Store struct {
 func Default() (*Store, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("解析用户主目录失败: %w", err)
+		return nil, fmt.Errorf("failed to resolve user home directory: %w", err)
 	}
 	return New(filepath.Join(home, ".conduct")), nil
 }
@@ -44,6 +45,9 @@ func Default() (*Store, error) {
 func New(root string) *Store {
 	return &Store{root: root, now: time.Now}
 }
+
+// Root 返回 store 根目录，供同属 ~/.conduct 的共享设置基础设施复用。
+func (s *Store) Root() string { return s.root }
 
 func (s *Store) workflowsDir() string { return filepath.Join(s.root, "workflows") }
 
@@ -66,7 +70,7 @@ func (s *Store) Create(wf *workflow.Workflow) error {
 		return err
 	}
 	if s.Exists(wf.Name) {
-		return fmt.Errorf("%s: %w", wf.Name, ErrExists)
+		return apperror.New(apperror.CodeWorkflowAlreadyExists, apperror.Params{"name": wf.Name})
 	}
 	stamp := s.now().Format(time.RFC3339)
 	wf.CreatedAt = stamp
@@ -99,9 +103,9 @@ func (s *Store) ReplaceDefinition(wf *workflow.Workflow) error {
 	data, err := os.ReadFile(s.path(wf.Name))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%s: %w", wf.Name, ErrNotExist)
+			return apperror.New(apperror.CodeWorkflowNotFound, apperror.Params{"name": wf.Name})
 		}
-		return fmt.Errorf("读取待替换工作流 %s 失败: %w", wf.Name, err)
+		return fmt.Errorf("failed to read workflow %s for replacement: %w", wf.Name, err)
 	}
 
 	stamp := s.now().Format(time.RFC3339)
@@ -128,7 +132,7 @@ func decodeStrictJSON[T any](data []byte, dst *T) error {
 		return err
 	}
 	if decoder.More() {
-		return fmt.Errorf("检测到多余的尾随内容（应为单个 JSON 对象）")
+		return fmt.Errorf("unexpected trailing content (expected a single JSON object)")
 	}
 	return nil
 }
@@ -142,13 +146,13 @@ func (s *Store) Load(name string) (*workflow.Workflow, error) {
 	data, err := os.ReadFile(s.path(name))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%s: %w", name, ErrNotExist)
+			return nil, apperror.New(apperror.CodeWorkflowNotFound, apperror.Params{"name": name})
 		}
-		return nil, fmt.Errorf("读取工作流 %s 失败: %w", name, err)
+		return nil, fmt.Errorf("failed to read workflow %s: %w", name, err)
 	}
 	var wf workflow.Workflow
 	if err := decodeStrictJSON(data, &wf); err != nil {
-		return nil, fmt.Errorf("工作流 %s 内容损坏: %w", name, err)
+		return nil, fmt.Errorf("workflow %s is corrupted: %w", name, err)
 	}
 	return &wf, nil
 }
@@ -162,10 +166,10 @@ func (s *Store) Rename(oldName, newName string) error {
 		return err
 	}
 	if !s.Exists(oldName) {
-		return fmt.Errorf("%s: %w", oldName, ErrNotExist)
+		return apperror.New(apperror.CodeWorkflowNotFound, apperror.Params{"name": oldName})
 	}
 	if s.Exists(newName) {
-		return fmt.Errorf("%s: %w", newName, ErrExists)
+		return apperror.New(apperror.CodeWorkflowAlreadyExists, apperror.Params{"name": newName})
 	}
 	wf, err := s.Load(oldName)
 	if err != nil {
@@ -178,7 +182,7 @@ func (s *Store) Rename(oldName, newName string) error {
 		return err
 	}
 	if err := os.Remove(s.path(oldName)); err != nil {
-		return fmt.Errorf("删除旧文件 %s 失败: %w", oldName, err)
+		return fmt.Errorf("failed to remove old workflow file %s: %w", oldName, err)
 	}
 	return nil
 }
@@ -190,9 +194,9 @@ func (s *Store) Delete(name string) error {
 	}
 	if err := os.Remove(s.path(name)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%s: %w", name, ErrNotExist)
+			return apperror.New(apperror.CodeWorkflowNotFound, apperror.Params{"name": name})
 		}
-		return fmt.Errorf("删除工作流 %s 失败: %w", name, err)
+		return fmt.Errorf("failed to delete workflow %s: %w", name, err)
 	}
 	return nil
 }
@@ -210,7 +214,7 @@ func (s *Store) List() ([]*workflow.Workflow, []error, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil, nil
 		}
-		return nil, nil, fmt.Errorf("读取 store 失败: %w", err)
+		return nil, nil, fmt.Errorf("failed to read workflow store: %w", err)
 	}
 	workflows := make([]*workflow.Workflow, 0, len(entries))
 	var skipped []error
@@ -249,11 +253,11 @@ func updatedAfter(a, b string) bool {
 // write 把完整记录落盘（原子写：临时文件 + rename），首用自动建目录。
 func (s *Store) write(wf *workflow.Workflow) error {
 	if err := os.MkdirAll(s.workflowsDir(), 0o755); err != nil {
-		return fmt.Errorf("创建 store 目录失败: %w", err)
+		return fmt.Errorf("failed to create workflow store directory: %w", err)
 	}
 	data, err := json.MarshalIndent(wf, "", "  ")
 	if err != nil {
-		return fmt.Errorf("序列化工作流 %s 失败: %w", wf.Name, err)
+		return fmt.Errorf("failed to encode workflow %s: %w", wf.Name, err)
 	}
 	data = append(data, '\n')
 	return atomicWrite(s.path(wf.Name), data) // 原子写实现见 runs.go

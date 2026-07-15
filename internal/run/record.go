@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"syscall"
 
+	"github.com/qoggy/conduct/internal/apperror"
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/qoggy/conduct/internal/workflow"
 )
 
@@ -20,7 +22,7 @@ var runIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 // ValidateID 校验 run id 合法（防路径穿越）：只允许 [A-Za-z0-9._-]，且不为 . / ..。
 func ValidateID(id string) error {
 	if !runIDPattern.MatchString(id) || id == "." || id == ".." {
-		return fmt.Errorf("run id %q 非法：只允许字母、数字、点、下划线、连字符，且不能是 . 或 ..", id)
+		return apperror.New(apperror.CodeRunIDInvalid, apperror.Params{"id": id})
 	}
 	return nil
 }
@@ -52,6 +54,16 @@ type Record struct {
 	Artifacts        map[string]string  `json:"artifacts"`
 	Error            *string            `json:"error"`
 	FailedNodeID     *string            `json:"failedNodeId,omitempty"` // 失败时首个失败节点（根因）的 id；schedule 落定，summary / UI 直接读，不再从 trace 猜
+	Language         locale.Language    `json:"language"`               // 开跑时解析语言快照；必填，决定该 run 的持久化人读文案
+}
+
+// ValidateLanguage 校验 run 的语言快照。language 是 run.json 的必填数据；缺失或非法表示记录损坏，
+// 必须 fail-loud，不能根据当前环境或旧版默认值重新解释已经开始的运行。
+func (r *Record) ValidateLanguage() error {
+	if !r.Language.Valid() {
+		return fmt.Errorf("run %s has missing or invalid language %q", r.ID, r.Language)
+	}
+	return nil
 }
 
 // TraceEntry 是 trace.jsonl 的一行——单次 agent 节点执行尝试的完整记录（自解释，不依赖当时的定义）。

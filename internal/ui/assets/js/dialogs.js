@@ -1,7 +1,7 @@
 // 启动运行 / 改名 两个弹窗：工作流列表页与编辑器顶栏共用同一份实现，避免两处抄写各自漂移。
 // 二者交互完全一致，仅「成功后去哪」由调用方经回调注入（列表页留原页重载、编辑器跳到新名）。
 
-import { h } from "./dom.js";
+import { h, toast } from "./dom.js";
 import { api } from "./api.js";
 import { openModal } from "./modal.js";
 import { createPromptEditor } from "./prompt-editor.js";
@@ -30,10 +30,16 @@ export function openLaunchDialog(name) {
     try {
       const res = await api.launchRun(name, userPrompt, cwdInput.value.trim());
       ctl.close();
+      if (res.note && i18n[res.note]) toast(i18n[res.note]);
       navigate(res.runId ? `/runs/${encodeURIComponent(res.runId)}` : "/runs");
     } catch (e) {
-      // 目录不存在等就地报错（服务端原文）；cwd 相关归工作目录字段，其余归需求。
-      if (/工作目录|目录|cwd/.test(e.message)) {
+      // 工作目录错误按稳定错误码归到 cwd 字段；不依赖本地化后的 message。
+      const cwdCodes = new Set([
+        "working_directory_not_found",
+        "working_directory_not_directory",
+        "working_directory_must_be_absolute",
+      ]);
+      if (e.envelope && cwdCodes.has(e.envelope.code)) {
         cwdInput.classList.add("inp-red");
         cwdErr.textContent = e.message;
         cwdErr.style.display = "block";

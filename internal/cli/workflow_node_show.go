@@ -14,11 +14,16 @@ func newWorkflowNodeShowCommand() *cobra.Command {
 	var prompt, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "show <name> <id>",
-		Short: "查看单个 agent 节点详情",
-		Long: "查看单个 agent 节点的定义详情；--prompt 只取 promptTemplate 纯文本原文（补恰好一个尾随换行，供 > file），\n" +
-			"与 node set-prompt「剥恰好一个尾随换行」配对，round-trip 字节稳定；--json 输出规范化的单个对象。\n" +
-			"--prompt 与 --json 互斥。<id> 须是 agent 节点（START / END 标记节点无可展示的定义）。",
-		Args: requireArgs(cobra.ExactArgs(2)),
+		Short: localizedHelpText("查看单个 agent 节点详情", "Show details for one agent node"),
+		Long: localizedHelpText(
+			"查看单个 agent 节点的定义详情；--prompt 只取 promptTemplate 纯文本原文（补恰好一个尾随换行，供 > file），\n"+
+				"与 node set-prompt「剥恰好一个尾随换行」配对，round-trip 字节稳定；--json 输出规范化的单个对象。\n"+
+				"--prompt 与 --json 互斥。<id> 须是 agent 节点（START / END 标记节点无可展示的定义）。",
+			"Show definition details for one agent node; --prompt outputs only the original plain text of promptTemplate (adding exactly one trailing newline for > file),\n"+
+				"paired with node set-prompt removing exactly one trailing newline so round-trip bytes remain stable; --json outputs one normalized object.\n"+
+				"--prompt and --json are mutually exclusive. <id> must be an agent node (the START / END marker nodes have no displayable definition).",
+		),
+		Args: exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, id := args[0], args[1]
 			// 名字非法属用法错误退 2，与 node set / copy / workflow show 同族对齐（不落到 Load 抛普通 error 退 1）。
@@ -27,7 +32,7 @@ func newWorkflowNodeShowCommand() *cobra.Command {
 			}
 			// --prompt 已是纯文本、--json 是结构化对象，二者互斥，同给报用法错误退 2。
 			if prompt && asJSON {
-				return usageErrorf("--prompt 与 --json 互斥：--prompt 输出纯文本原文，--json 输出结构化对象，请只择其一")
+				return localizedUsageErrorf("--prompt 与 --json 互斥：--prompt 输出纯文本原文，--json 输出结构化对象，请只择其一", "--prompt and --json are mutually exclusive: --prompt outputs the original plain text and --json outputs a structured object; choose one")
 			}
 
 			st, err := openStore()
@@ -60,8 +65,11 @@ func newWorkflowNodeShowCommand() *cobra.Command {
 			}
 		},
 	}
-	cmd.Flags().BoolVar(&prompt, "prompt", false, "只输出该节点的 promptTemplate 纯文本原文（补恰好一个尾随换行，供重定向到文件）")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "输出该节点的规范化定义 JSON（单个对象）")
+	cmd.Flags().BoolVar(&prompt, "prompt", false, localizedHelpText(
+		"只输出该节点的 promptTemplate 纯文本原文（补恰好一个尾随换行，供重定向到文件）",
+		"Output only the node's original promptTemplate plain text (add exactly one trailing newline for redirection to a file)",
+	))
+	cmd.Flags().BoolVar(&asJSON, "json", false, localizedHelpText("输出该节点的规范化定义 JSON（单个对象）", "Output the node's normalized definition JSON (one object)"))
 	return cmd
 }
 

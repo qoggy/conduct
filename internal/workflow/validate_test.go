@@ -3,6 +3,10 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/qoggy/conduct/internal/apperror"
+	"github.com/qoggy/conduct/internal/locale"
+	"github.com/qoggy/conduct/internal/message"
 )
 
 // validDef 返回最小合法 DAG：START → a → END。各测试在其上做单点破坏。
@@ -142,11 +146,19 @@ func TestValidateRejections(t *testing.T) {
 			if err == nil {
 				t.Fatalf("期望校验失败（含 %q），却通过了", c.substr)
 			}
-			if !strings.Contains(err.Error(), c.substr) {
-				t.Errorf("错误信息应含 %q，实际:\n%v", c.substr, err)
+			if got := chineseError(err); !strings.Contains(got, c.substr) {
+				t.Errorf("错误信息应含 %q，实际:\n%s", c.substr, got)
 			}
 		})
 	}
+}
+
+func chineseError(err error) string {
+	applicationError, ok := apperror.As(err)
+	if !ok {
+		return err.Error()
+	}
+	return message.Error(locale.Chinese, applicationError)
 }
 
 // TestValidateAntigravityModelOnly 确认 antigravity 只接受 model（effort 编码在标签里）。
@@ -200,19 +212,19 @@ func TestValidateStructuredPaths(t *testing.T) {
 		return d
 	}
 	cases := []struct {
-		name        string
-		def         *Definition
-		wantPath    string
-		wantMsgPart string
+		name     string
+		def      *Definition
+		wantPath string
+		wantCode apperror.Code
 	}{
-		{"空 nodes 落在 nodes", &Definition{}, "nodes", "不能为空"},
-		{"缺 displayName 落在 nodes[1].displayName", mutate(func(d *Definition) { d.Nodes[1].DisplayName = "" }), "nodes[1].displayName", "必填"},
-		{"缺 engine 落在 nodes[1].engine", mutate(func(d *Definition) { d.Nodes[1].Engine = "" }), "nodes[1].engine", "必填"},
-		{"未知引擎落在 nodes[1].engine", mutate(func(d *Definition) { d.Nodes[1].Engine = "nope" }), "nodes[1].engine", "未知引擎"},
-		{"effort 非法落在 engineConfig.effort", withEngineConfig("claude-code", &EngineConfig{Effort: "insane"}), "nodes[1].engineConfig.effort", "允许集"},
-		{"START 带 engine 落在 nodes[0].engine", mutate(func(d *Definition) { d.Nodes[0].Engine = "claude-code" }), "nodes[0].engine", "必须为空"},
-		{"边指向 START 落在 edges[2]", mutate(func(d *Definition) { d.Edges = append(d.Edges, Edge{From: "a", To: "START"}) }), "edges[2]", "指向 START"},
-		{"模板引用落在 nodes[1].promptTemplate", mutate(func(d *Definition) { d.Nodes[1].PromptTemplate = "看 {{ghost}}" }), "nodes[1].promptTemplate", "不存在的节点"},
+		{"空 nodes 落在 nodes", &Definition{}, "nodes", apperror.CodeNodesRequired},
+		{"缺 displayName 落在 nodes[1].displayName", mutate(func(d *Definition) { d.Nodes[1].DisplayName = "" }), "nodes[1].displayName", apperror.CodeRequiredField},
+		{"缺 engine 落在 nodes[1].engine", mutate(func(d *Definition) { d.Nodes[1].Engine = "" }), "nodes[1].engine", apperror.CodeRequiredField},
+		{"未知引擎落在 nodes[1].engine", mutate(func(d *Definition) { d.Nodes[1].Engine = "nope" }), "nodes[1].engine", apperror.CodeUnknownEngine},
+		{"effort 非法落在 engineConfig.effort", withEngineConfig("claude-code", &EngineConfig{Effort: "insane"}), "nodes[1].engineConfig.effort", apperror.CodeEngineEffortValueNotAllowed},
+		{"START 带 engine 落在 nodes[0].engine", mutate(func(d *Definition) { d.Nodes[0].Engine = "claude-code" }), "nodes[0].engine", apperror.CodeMarkerFieldNotEmpty},
+		{"边指向 START 落在 edges[2]", mutate(func(d *Definition) { d.Edges = append(d.Edges, Edge{From: "a", To: "START"}) }), "edges[2]", apperror.CodeEdgeToStart},
+		{"模板引用落在 nodes[1].promptTemplate", mutate(func(d *Definition) { d.Nodes[1].PromptTemplate = "看 {{ghost}}" }), "nodes[1].promptTemplate", apperror.CodeNodeReferenceNotFound},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -221,8 +233,8 @@ func TestValidateStructuredPaths(t *testing.T) {
 			if !ok {
 				t.Fatalf("期望有 Path=%q 的错误，实际 problems=%+v", c.wantPath, problems)
 			}
-			if !strings.Contains(problem.Message, c.wantMsgPart) {
-				t.Errorf("Path=%q 的 Message 应含 %q，实际 %q", c.wantPath, c.wantMsgPart, problem.Message)
+			if problem.Code != c.wantCode {
+				t.Errorf("Path=%q 的 Code 应为 %q，实际 %q", c.wantPath, c.wantCode, problem.Code)
 			}
 			if strings.Contains(problem.Path, ": ") {
 				t.Errorf("Path 不应含 %q 分隔符（会破坏字符串化重建）：%q", ": ", problem.Path)

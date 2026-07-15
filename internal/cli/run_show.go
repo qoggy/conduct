@@ -17,10 +17,14 @@ func newRunShowCommand() *cobra.Command {
 	var withTrace, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "show <id>",
-		Short: "查看某次运行的状态与详情",
-		Long: "查看某次运行的详情。<id> 取自 conduct run list（形如 <workflow>-<YYYYMMDD-HHMMSS>）；不存在则报错退 1。\n" +
-			"默认打印 run-summary.md（运行总结）；未收尾（running / interrupted）时尚无总结，改打印状态与进度。--trace 展开每节点完整 input/output。",
-		Args: requireArgs(cobra.ExactArgs(1)),
+		Short: localizedHelpText("查看某次运行的状态与详情", "Show the status and details of a run"),
+		Long: localizedHelpText(
+			"查看某次运行的详情。<id> 取自 conduct run list（形如 <workflow>-<YYYYMMDD-HHMMSS>）；不存在则报错退 1。\n"+
+				"默认打印 run-summary.md（运行总结）；未收尾（running / interrupted）时尚无总结，改打印状态与进度。--trace 展开每节点完整 input/output。",
+			"Show details for a run. Get <id> from conduct run list (in the form <workflow>-<YYYYMMDD-HHMMSS>); if it does not exist, report an error and exit 1.\n"+
+				"By default, print run-summary.md (the run summary); an unfinished run (running / interrupted) has no summary yet, so print status and progress instead. --trace expands the complete input/output for each node.",
+		),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			if err := run.ValidateID(id); err != nil {
@@ -54,8 +58,8 @@ func newRunShowCommand() *cobra.Command {
 			return showRunSummary(cmd.OutOrStdout(), st, id, record)
 		},
 	}
-	cmd.Flags().BoolVar(&withTrace, "trace", false, "展开每节点完整 input/output（--json 时嵌入 trace 数组）")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "输出 run.json 的规范化内容")
+	cmd.Flags().BoolVar(&withTrace, "trace", false, localizedHelpText("展开每节点完整 input/output（--json 时嵌入 trace 数组）", "Expand the complete input/output for each node (embed a trace array with --json)"))
+	cmd.Flags().BoolVar(&asJSON, "json", false, localizedHelpText("输出 run.json 的规范化内容", "Output the normalized contents of run.json"))
 	return cmd
 }
 
@@ -100,7 +104,7 @@ func showRunSummaryFallback(out io.Writer, st *store.Store, id string, record *r
 		return terr
 	}
 	showRunStatus(out, record, trace)
-	fmt.Fprintf(out, "运行总结尚未生成（运行未收尾）；用 conduct run show %s --trace 查看已有节点记录。\n", id)
+	fmt.Fprintf(out, localizedHelpText("运行总结尚未生成（运行未收尾）；用 conduct run show %s --trace 查看已有节点记录。\n", "The run summary has not been generated (the run is not finalized); use conduct run show %s --trace to view existing node records.\n"), id)
 	return nil
 }
 
@@ -112,9 +116,9 @@ func showRunTrace(out io.Writer, record *run.Record, trace []run.TraceEntry) {
 	copy(sorted, trace)
 	sort.SliceStable(sorted, func(i, j int) bool { return run.TraceOrderLess(sorted[i], sorted[j]) })
 	for _, entry := range sorted {
-		result := "成功"
+		result := localizedHelpText("成功", "success")
 		if !entry.Success {
-			result = "失败"
+			result = localizedHelpText("失败", "failure")
 		}
 		printTraceEntryFull(out, entry, result)
 	}
@@ -124,19 +128,19 @@ func showRunTrace(out io.Writer, record *run.Record, trace []run.TraceEntry) {
 func showRunStatus(out io.Writer, record *run.Record, trace []run.TraceEntry) {
 	status := record.EffectiveStatus()
 	nodeCount := recordNodeCount(record)
-	fmt.Fprintf(out, "运行 %s · %s\n", record.ID, status)
-	fmt.Fprintf(out, "需求：%s\n", record.UserPrompt)
+	fmt.Fprintf(out, localizedHelpText("运行 %s · %s\n", "Run %s · %s\n"), record.ID, status)
+	fmt.Fprintf(out, localizedHelpText("需求：%s\n", "Request: %s\n"), record.UserPrompt)
 	// running 与 interrupted 都未正常收尾（无 endedAt），显示进度 节点 k/N 比「耗时 ?」更有意义。
 	if status == run.StatusRunning || status == run.StatusInterrupted {
 		// 进度分子按唯一 nodeId 且 success 去重（防 resume 后 k>N），审计全量走 --trace。
-		fmt.Fprintf(out, "节点 %d · 进度 节点 %d/%d · %s 起\n",
+		fmt.Fprintf(out, localizedHelpText("节点 %d · 进度 节点 %d/%d · %s 起\n", "%d nodes · progress %d/%d nodes · started %s\n"),
 			nodeCount, run.ProgressCount(trace), nodeCount, formatTimestamp(record.StartedAt))
 	} else {
-		fmt.Fprintf(out, "节点 %d · 耗时 %s · %s → %s\n",
+		fmt.Fprintf(out, localizedHelpText("节点 %d · 耗时 %s · %s → %s\n", "%d nodes · duration %s · %s → %s\n"),
 			nodeCount, elapsed(record), formatTimestamp(record.StartedAt), endedDisplay(record))
 	}
 	if status == run.StatusFailed && record.Error != nil {
-		fmt.Fprintf(out, "错误：%s\n", *record.Error)
+		fmt.Fprintf(out, localizedHelpText("错误：%s\n", "Error: %s\n"), *record.Error)
 	}
 }
 
@@ -153,13 +157,13 @@ func printTraceEntryFull(out io.Writer, entry run.TraceEntry, result string) {
 	fmt.Fprintf(out, "● %s [%s] %s  %s\n", entry.NodeID, entry.DisplayName, entry.Engine, result)
 	// 某节点若记有引擎会话/线程 id，先附一行会话信息 + 该引擎的回放命令，便于凭引擎自带工具回放本节点。
 	if entry.SessionID != "" {
-		fmt.Fprintf(out, "  ── 会话 ──\n%s\n", sessionReplayLine(entry.Engine, entry.SessionID))
+		fmt.Fprintf(out, localizedHelpText("  ── 会话 ──\n%s\n", "  ── session ──\n%s\n"), sessionReplayLine(entry.Engine, entry.SessionID))
 	}
-	fmt.Fprintf(out, "  ── input ──\n%s\n", entry.Input)
+	fmt.Fprintf(out, localizedHelpText("  ── 输入 ──\n%s\n", "  ── input ──\n%s\n"), entry.Input)
 	if entry.Success {
-		fmt.Fprintf(out, "  ── output ──\n%s\n", entry.Output)
+		fmt.Fprintf(out, localizedHelpText("  ── 输出 ──\n%s\n", "  ── output ──\n%s\n"), entry.Output)
 	} else if entry.Error != nil {
-		fmt.Fprintf(out, "  ── error ──\n%s\n", *entry.Error)
+		fmt.Fprintf(out, localizedHelpText("  ── 错误 ──\n%s\n", "  ── error ──\n%s\n"), *entry.Error)
 	}
 }
 
@@ -178,9 +182,9 @@ func sessionReplayLine(engineName, sessionID string) string {
 		replay = "agy --conversation " + sessionID
 	}
 	if replay == "" {
-		return "会话 " + sessionID
+		return localizedHelpText("会话 ", "session ") + sessionID
 	}
-	return "会话 " + sessionID + " · 回放：" + replay
+	return localizedHelpText("会话 ", "session ") + sessionID + localizedHelpText(" · 回放：", " · replay: ") + replay
 }
 
 // elapsed / endedDisplay 处理终态时间展示；endedAt 缺失（异常）时给占位而非崩溃。

@@ -1,8 +1,7 @@
 package cli
 
 import (
-	"fmt"
-
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/workflow"
 	"github.com/spf13/cobra"
 )
@@ -11,14 +10,17 @@ import (
 func newWorkflowNodeCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "node",
-		Short: "增删 / 编辑 / 查询工作流的单个节点",
-		Long:  "conduct workflow node —— 建 / 删一个节点并连边，或只改一个节点的一处结构化字段 / 提示词，或导出单节点定义。",
+		Short: localizedHelpText("增删 / 编辑 / 查询工作流的单个节点", "Add, remove, edit, or query individual workflow nodes"),
+		Long: localizedHelpText(
+			"conduct workflow node —— 建 / 删一个节点并连边，或只改一个节点的一处结构化字段 / 提示词，或导出单节点定义。",
+			"conduct workflow node — add or remove a node and connect edges, change only one structured field / prompt on one node, or export a single-node definition.",
+		),
 		// 无参裸命令打印帮助；拼错的子命令 fail-loud 报用法错误（退出码 2），不静默当成功。
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return usageErrorf("未知子命令 %q（可用：add / rm / set / set-prompt / show）", args[0])
+			return localizedUsageErrorf("未知子命令 %q（可用：add / rm / set / set-prompt / show）", "unknown subcommand %q (available: add / rm / set / set-prompt / show)", args[0])
 		},
 	}
 	cmd.AddCommand(
@@ -37,12 +39,12 @@ func requireAgentNode(def *workflow.Definition, id string) (*workflow.Node, erro
 	for i := range def.Nodes {
 		if def.Nodes[i].ID == id {
 			if def.Nodes[i].IsMarker() {
-				return nil, fmt.Errorf("%s 为保留标记节点，无可查看 / 编辑的定义", id)
+				return nil, apperror.New(apperror.CodeReservedNodeID, apperror.Params{"id": id})
 			}
 			return &def.Nodes[i], nil
 		}
 	}
-	return nil, fmt.Errorf("工作流无节点 %s", id)
+	return nil, apperror.New(apperror.CodeNodeNotFound, apperror.Params{"id": id})
 }
 
 // stripOneTrailingNewline 剥掉恰好一个尾随 \n（仅当存在），返回字符串。

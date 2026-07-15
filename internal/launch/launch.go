@@ -20,9 +20,11 @@ import (
 )
 
 const (
-	matchTimeout = 10 * time.Second       // run id 组合匹配的轮询上限
-	pollInterval = 100 * time.Millisecond // 轮询间隔（run.json 开跑即写，通常亚秒命中）
-	clockMargin  = 2 * time.Second        // startedAt 与 spawn 时刻的时钟余量（秒精度 + 时钟抖动）
+	matchTimeout          = 10 * time.Second       // run id 组合匹配的轮询上限
+	pollInterval          = 100 * time.Millisecond // 轮询间隔（run.json 开跑即写，通常亚秒命中）
+	clockMargin           = 2 * time.Second        // startedAt 与 spawn 时刻的时钟余量（秒精度 + 时钟抖动）
+	NoteRunUnconfirmed    = "run_launch_unconfirmed"
+	NoteResumeUnconfirmed = "resume_launch_unconfirmed"
 )
 
 // RunStore 是发射器确认子进程落定所需的最小 store 能力：workflow run 靠 ListRuns 组合匹配刚发射的
@@ -92,9 +94,9 @@ func (l *Launcher) Launch(name, userPrompt, absCwd string) (runID, note string, 
 	}
 	// 超时未命中：子进程仍在跑 → 不误报失败，引导去运行列表核对；已退出 → 读 stderr 回传原因。
 	if run.ProcessAlive(childPid) {
-		return "", "已发射运行，但未能在超时内确认 run id（子进程仍在运行）。请到运行列表核对。", nil
+		return "", NoteRunUnconfirmed, nil
 	}
-	return "", "", fmt.Errorf("运行启动失败：%s", readLaunchStderr(launched.stderrPath))
+	return "", "", fmt.Errorf("run launch failed: %s", readLaunchStderr(launched.stderrPath))
 }
 
 // LaunchResume 后台恢复一次 failed / interrupted 运行：spawn 一个前台 `conduct run resume <id>` 子进程（不递归 -d），
@@ -124,9 +126,9 @@ func (l *Launcher) LaunchResume(id string) (runID, note string, err error) {
 		time.Sleep(pollInterval)
 	}
 	if run.ProcessAlive(childPid) {
-		return "", "已发射恢复，但未能在超时内确认子进程接管（子进程仍在运行）。请到运行列表核对。", nil
+		return "", NoteResumeUnconfirmed, nil
 	}
-	return "", "", fmt.Errorf("恢复启动失败：%s", readLaunchStderr(launched.stderrPath))
+	return "", "", fmt.Errorf("resume launch failed: %s", readLaunchStderr(launched.stderrPath))
 }
 
 // spawn 起一个分离的 conduct 子进程执行 args（跟在 exe 之后）。stdinData 非 nil 时经 stdin 管道写入后
@@ -142,7 +144,7 @@ func (l *Launcher) spawn(args []string, stdinData *string) (*launchedProcess, er
 	if stdinData != nil {
 		pipe, err := cmd.StdinPipe()
 		if err != nil {
-			return nil, fmt.Errorf("创建 stdin 管道失败: %w", err)
+			return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
 		}
 		stdin = pipe
 	}
@@ -156,7 +158,7 @@ func (l *Launcher) spawn(args []string, stdinData *string) (*launchedProcess, er
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		closeStdin()
-		return nil, fmt.Errorf("打开 /dev/null 失败: %w", err)
+		return nil, fmt.Errorf("failed to open /dev/null: %w", err)
 	}
 	defer devNull.Close() // Start 后子进程已继承 dup，父侧 fd 可关
 	cmd.Stdout = devNull
@@ -164,7 +166,7 @@ func (l *Launcher) spawn(args []string, stdinData *string) (*launchedProcess, er
 	stderrFile, err := os.CreateTemp(l.stderrDir, "run-*.stderr")
 	if err != nil {
 		closeStdin()
-		return nil, fmt.Errorf("创建 stderr 临时文件失败: %w", err)
+		return nil, fmt.Errorf("failed to create stderr temporary file: %w", err)
 	}
 	defer stderrFile.Close() // 同上；保留 path 供超时读取
 	cmd.Stderr = stderrFile
@@ -172,17 +174,17 @@ func (l *Launcher) spawn(args []string, stdinData *string) (*launchedProcess, er
 
 	if err := cmd.Start(); err != nil {
 		closeStdin()
-		return nil, fmt.Errorf("启动子进程失败: %w", err)
+		return nil, fmt.Errorf("failed to start child process: %w", err)
 	}
 	if stdinData != nil {
 		// 写入需求并立即 close stdin：子进程 resolveUserPrompt 会 ReadAll 到 EOF，不 close 则它永远读不完
 		// → 卡在 CreateRun 之前 → run.json 不写 → 匹配永远失败。stdout 已 /dev/null，写入不会死锁。
 		if _, err := io.WriteString(stdin, *stdinData); err != nil {
 			closeStdin()
-			return nil, fmt.Errorf("向子进程写入需求失败: %w", err)
+			return nil, fmt.Errorf("failed to write request to child process: %w", err)
 		}
 		if err := stdin.Close(); err != nil {
-			return nil, fmt.Errorf("关闭子进程 stdin 失败: %w", err)
+			return nil, fmt.Errorf("failed to close child process stdin: %w", err)
 		}
 	}
 	return &launchedProcess{cmd: cmd, stderrPath: stderrPath}, nil
@@ -219,11 +221,11 @@ func resumeTaken(record *run.Record, childPid int) bool {
 func readLaunchStderr(stderrPath string) string {
 	data, err := os.ReadFile(stderrPath)
 	if err != nil {
-		return fmt.Sprintf("（无法读取启动日志: %v）", err)
+		return fmt.Sprintf("(failed to read launch log: %v)", err)
 	}
 	message := strings.TrimSpace(string(data))
 	if message == "" {
-		return "（子进程未输出错误信息）"
+		return "(child process produced no error output)"
 	}
 	return message
 }

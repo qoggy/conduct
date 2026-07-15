@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/qoggy/conduct/internal/locale"
 )
 
 // RenderSummary 把一次运行渲染成 run-summary.md（给人 / AI 阅读的报告，机器读 run.json）。
@@ -12,6 +14,7 @@ import (
 // XML 包裹的逐 agent 节点产物。trace 提供逐节点结果，record.Artifacts 提供各节点最终产物。
 func RenderSummary(record *Record, trace []TraceEntry) string {
 	var b strings.Builder
+	language := record.Language
 
 	fmt.Fprintf(&b, "# %s\n\n", record.ID)
 
@@ -19,31 +22,31 @@ func RenderSummary(record *Record, trace []TraceEntry) string {
 	if record.WorkflowSnapshot != nil {
 		nodeCount = record.WorkflowSnapshot.Definition.AgentNodeCount()
 	}
-	fmt.Fprintf(&b, "**工作流** %s · %d 节点\n", record.Workflow, nodeCount)
-	fmt.Fprintf(&b, "**需求** %s\n", summarizePrompt(record.UserPrompt))
-	fmt.Fprintf(&b, "**状态** %s\n", statusLine(record))
-	fmt.Fprintf(&b, "**工作目录** %s\n", record.Cwd)
+	fmt.Fprintf(&b, language.Select("**工作流** %s · %d 节点\n", "**Workflow** %s · %d nodes\n"), record.Workflow, nodeCount)
+	fmt.Fprintf(&b, language.Select("**需求** %s\n", "**Request** %s\n"), summarizePrompt(record.UserPrompt, language))
+	fmt.Fprintf(&b, language.Select("**状态** %s\n", "**Status** %s\n"), statusLine(record, language))
+	fmt.Fprintf(&b, language.Select("**工作目录** %s\n", "**Working directory** %s\n"), record.Cwd)
 	if record.Status == StatusFailed {
 		if record.FailedNodeID != nil {
-			fmt.Fprintf(&b, "**失败节点** %s\n", *record.FailedNodeID)
+			fmt.Fprintf(&b, language.Select("**失败节点** %s\n", "**Failed node** %s\n"), *record.FailedNodeID)
 		}
 		if record.Error != nil {
-			fmt.Fprintf(&b, "**错误** %s\n", *record.Error)
+			fmt.Fprintf(&b, language.Select("**错误** %s\n", "**Error** %s\n"), *record.Error)
 		}
 	}
 
 	// 节点表：按 NodeID 去重取末条（resume 保留旧失败行 + 补跑行时收敛为每节点一行），再按 startedAt 排序
 	// 还原时间线（并行下 trace 追加序 = 完成序、不定）。
 	nodes := lastPerNode(trace)
-	b.WriteString("\n## 节点\n\n")
-	b.WriteString("| 节点 | 引擎 | 起 → 止 | 耗时 |\n")
+	b.WriteString(language.Select("\n## 节点\n\n", "\n## Nodes\n\n"))
+	b.WriteString(language.Select("| 节点 | 引擎 | 起 → 止 | 耗时 |\n", "| Node | Engine | Start → End | Duration |\n"))
 	b.WriteString("| --- | --- | --- | --- |\n")
 	for _, entry := range nodes {
 		fmt.Fprintf(&b, "| %s | %s | %s → %s | %s |\n",
 			entry.DisplayName, entry.Engine, formatSecond(entry.StartedAt), formatSecond(entry.EndedAt),
 			formatDurationMs(entry.DurationMs))
 	}
-	b.WriteString("\n## 产物\n\n")
+	b.WriteString(language.Select("\n## 产物\n\n", "\n## Artifacts\n\n"))
 	// 按快照节点顺序输出，稳定且与定义一致；仅输出有产物的 agent 节点。
 	if record.WorkflowSnapshot != nil {
 		for _, node := range record.WorkflowSnapshot.Definition.Nodes {
@@ -99,7 +102,7 @@ func parseRFC3339(s string) time.Time {
 // summarizePrompt 把用户需求压成头部一行摘要：取首行、按字数截断，超出 / 多行则以 … 收尾并注明全文在 run.json。
 // run-summary.md 是「给人读的那副面孔」，需求可能是整份 PRD（数十 KB），整段塞进头部会淹掉步骤表与产物；
 // 故此处只留一行摘要，全文由 run.json 的 userPrompt 保留——与 run list 人读截断、机读留全文的同一分工。
-func summarizePrompt(prompt string) string {
+func summarizePrompt(prompt string, language locale.Language) string {
 	const maxRunes = 80
 	full := strings.TrimSpace(prompt)
 	line := full
@@ -112,18 +115,19 @@ func summarizePrompt(prompt string) string {
 	if line == full {
 		return line // 需求本就是未超长的单行，原样呈现
 	}
-	return line + "…（完整需求见 run.json）"
+	return line + language.Select("…（完整需求见 run.json）", "… (see run.json for the complete request)")
 }
 
 // statusLine 渲染「状态」行：图标 + 状态词 +（终结时）耗时与起止时刻。
-func statusLine(record *Record) string {
+func statusLine(record *Record, language locale.Language) string {
 	icon := map[Status]string{
 		StatusRunning: "⏳", StatusCompleted: "✅", StatusFailed: "❌", StatusInterrupted: "⚠️",
 	}[record.Status]
 	if record.EndedAt == nil || *record.EndedAt == "" {
 		return fmt.Sprintf("%s %s", icon, record.Status)
 	}
-	return fmt.Sprintf("%s %s · %s（%s → %s）", icon, record.Status,
+	format := language.Select("%s %s · %s（%s → %s）", "%s %s · %s (%s → %s)")
+	return fmt.Sprintf(format, icon, record.Status,
 		formatElapsed(record.StartedAt, *record.EndedAt),
 		formatSecond(record.StartedAt), formatSecond(*record.EndedAt))
 }

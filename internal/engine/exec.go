@@ -54,9 +54,9 @@ func runCommand(ctx context.Context, spec commandSpec) (commandOutput, error) {
 func commandError(engineName string, out commandOutput, err error) error {
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return fmt.Errorf("%s 退出码 %d: %s", engineName, exitErr.ExitCode(), truncate(strings.TrimSpace(out.stderr), 500))
+		return fmt.Errorf("%s exited with code %d: %s", engineName, exitErr.ExitCode(), truncate(strings.TrimSpace(out.stderr), 500))
 	}
-	return fmt.Errorf("%s 调用失败: %w", engineName, err)
+	return fmt.Errorf("failed to invoke %s: %w", engineName, err)
 }
 
 // truncate 把字符串按 rune 截断到至多 n 个字符（超出以 … 收尾），用于错误 / 预览摘要。

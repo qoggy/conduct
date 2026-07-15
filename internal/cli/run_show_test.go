@@ -6,11 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/qoggy/conduct/internal/run"
 	"github.com/qoggy/conduct/internal/store"
 )
 
 func TestSessionReplayLine(t *testing.T) {
+	useTestLanguage(t, locale.Chinese)
 	cases := []struct {
 		engine string
 		want   string
@@ -30,6 +32,7 @@ func TestSessionReplayLine(t *testing.T) {
 
 // TestShowRunTraceSessionLine 验证 --trace 视图：记有 sessionId 的步在 input 前附会话/回放行；无则不附。
 func TestShowRunTraceSessionLine(t *testing.T) {
+	useTestLanguage(t, locale.Chinese)
 	record := &run.Record{ID: "flow-20260703-150000", Workflow: "flow", UserPrompt: "需求",
 		Status: run.StatusCompleted, StartedAt: "2026-07-03T15:00:00+08:00"}
 	trace := []run.TraceEntry{
@@ -51,6 +54,7 @@ func TestShowRunTraceSessionLine(t *testing.T) {
 }
 
 func TestShowRunSummaryIgnoresStaleSummaryForUnfinishedRun(t *testing.T) {
+	useTestLanguage(t, locale.Chinese)
 	st := store.New(t.TempDir())
 	record := seedRun(t, st, "flow-20260703-150000", run.StatusRunning, os.Getpid())
 	if err := st.WriteSummary(record.ID, "# 旧失败总结\n"); err != nil {

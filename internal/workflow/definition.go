@@ -77,7 +77,7 @@ func ParseDefinition(data []byte) (*Definition, error) {
 	// 先探测有无 definition 外壳键：有则按整条记录解析取其 definition，无则整体按主体解析。
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(data, &probe); err != nil {
-		return nil, fmt.Errorf("解析定义 JSON 失败: %w", err)
+		return nil, fmt.Errorf("failed to parse workflow definition JSON: %w", err)
 	}
 	if _, hasDefinition := probe["definition"]; hasDefinition {
 		record, err := decodeStrict[Workflow](data)
@@ -95,10 +95,10 @@ func decodeStrict[T any](data []byte) (*T, error) {
 	decoder.DisallowUnknownFields()
 	var value T
 	if err := decoder.Decode(&value); err != nil {
-		return nil, fmt.Errorf("解析定义 JSON 失败: %w", err)
+		return nil, fmt.Errorf("failed to parse workflow definition JSON: %w", err)
 	}
 	if decoder.More() {
-		return nil, fmt.Errorf("解析定义 JSON 失败: 检测到多余的尾随内容（应为单个 JSON 对象）")
+		return nil, fmt.Errorf("failed to parse workflow definition JSON: unexpected trailing content (expected a single JSON object)")
 	}
 	return &value, nil
 }

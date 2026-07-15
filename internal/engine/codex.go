@@ -72,7 +72,7 @@ func parseCodexStream(stdout string) (RunResult, error) {
 		if len(line) > 0 {
 			var event codexEvent
 			if err := json.Unmarshal(line, &event); err != nil {
-				return RunResult{}, fmt.Errorf("codex 输出非预期 JSON: 第 %d 行无法解析: %w（该行前 200 字: %s）",
+				return RunResult{}, fmt.Errorf("codex returned unexpected JSON: failed to parse line %d: %w (first 200 characters of line: %s)",
 					lineNumber, err, truncate(string(line), 200))
 			}
 			switch event.Type {
@@ -86,7 +86,7 @@ func parseCodexStream(stdout string) (RunResult, error) {
 			case "turn.completed":
 				result.Tokens = event.Usage.InputTokens + event.Usage.OutputTokens // 取最后一个 turn
 			case "turn.failed", "error":
-				return RunResult{}, fmt.Errorf("codex 报错: %s", codexFailureMessage(event))
+				return RunResult{}, fmt.Errorf("codex error: %s", codexFailureMessage(event))
 			default:
 				// turn.started / item.started / 其它 item.* 等事件忽略。
 			}
@@ -95,11 +95,11 @@ func parseCodexStream(stdout string) (RunResult, error) {
 			if errors.Is(readErr, io.EOF) {
 				break
 			}
-			return RunResult{}, fmt.Errorf("读取 codex 输出失败: %w", readErr)
+			return RunResult{}, fmt.Errorf("failed to read codex output: %w", readErr)
 		}
 	}
 	if !sawMessage {
-		return RunResult{}, fmt.Errorf("codex 未产出最终 agent_message")
+		return RunResult{}, fmt.Errorf("codex did not produce a final agent_message")
 	}
 	return result, nil
 }

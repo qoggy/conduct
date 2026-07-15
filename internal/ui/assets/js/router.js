@@ -1,6 +1,8 @@
 // 极简 hash 路由。路由表用 :param 占位；hash 可带 ?query（如 #/runs?workflow=autopilot）。
 // 单 index.html + 内嵌静态服务，hash 路由使浏览器只请求 / 与资源本身，无需 history fallback。
 
+import { i18n } from "./i18n.js";
+
 const routes = [];
 let outlet = null;
 let notFound = null;
@@ -39,6 +41,10 @@ export function navigate(path) {
 // currentPath 返回当前 hash 的路径部分（不含 # 与 ?query）。
 export function currentPath() {
   return parseHash().path;
+}
+
+export function rerender() {
+  render();
 }
 
 function parseHash() {
@@ -92,11 +98,12 @@ function renderFatal(err) {
   outlet.innerHTML = "";
   const box = document.createElement("div");
   box.className = "page";
-  box.innerHTML = `<div class="loaderr">页面渲染失败：<span class="mono"></span></div>`;
+  box.innerHTML = `<div class="loaderr"><span class="render-fail"></span><span class="mono"></span></div>`;
+  box.querySelector(".render-fail").textContent = i18n.renderFail;
   box.querySelector(".mono").textContent = err && err.message ? err.message : String(err);
   outlet.appendChild(box);
   // 同时打到控制台，便于排查。
-  console.error("conduct ui 页面渲染失败:", err);
+  console.error("conduct ui: page rendering failed", err);
 }
 
 // syncActiveTab 让顶栏两个导航项跟随当前路由高亮。

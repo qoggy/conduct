@@ -55,6 +55,8 @@ conduct 有两个模型，像数据库的两张表；本文详述 **run** 表，
 | `-h, --help` | 打印该命令的用法与选项后退出 `0` |
 | `--version` | 仅根命令 `conduct --version`：打印版本号后退出 `0`（等价 `conduct version`；子命令不挂此旗标，与 gh / kubectl 惯例一致） |
 
+**界面语言**：CLI 面向人的产品文案（包括 help、用法/领域错误、校验、确认、成功/警告、空态和人读输出）统一按 `~/.conduct/settings.json` 的 `language` > `LC_ALL` > `LC_MESSAGES` > `LANG` > 英文解析。设置文件或属性缺失时才继续读取环境变量；设置无法读取、JSON 损坏或值非法时以固定英文技术诊断报错退出。高优先级环境变量非空但无法识别时直接使用英文，不再读取低优先级变量。不提供应用专属语言环境变量或 `--lang` 参数。底层技术诊断固定英文，机器协议与用户/引擎原文不翻译。每次 run 在开始时快照解析后的语言，`run-summary.md` 与 resume 沿用该快照；完整规则见 [i18n.md](./i18n.md)。
+
 **通用选项**（涉及结构化输出的命令支持）：
 
 | 选项 | 类型 | 默认 | 说明 |
@@ -457,7 +459,7 @@ conduct run wait "$id" && conduct run show "$id"
 
 **边界**：`resume` 恢复 `failed`（引擎报错中止）与 `interrupted`（进程被杀 / 崩溃）两类未完成的 run；续跑前沿统一由 trace 推断，二者无差别对待。`interrupted` 的中断节点可能在进程被杀前已产生**半途副作用**（引擎实际改了文件但没记进 trace），整节点重跑会重复执行该节点——与 `failed` 重跑同属「prompt 未必幂等」的已知取舍，绝大多数节点无副作用故可接受。另一叠加场景：`run stop` 对**非组长** run 的降级路径会遗留一个仍在写 `cwd` 的引擎子进程（见〈run stop〉诚实边界），此刻立即 `resume` 会对同一节点再起一个引擎、与遗留进程同写一份工作树——建议等遗留引擎自然结束再 `resume`。resume 不改变 run 记录三件套结构、`status` 语义，也不影响 `run list` / `run show` / `run stop` / `run wait`。
 
-> **`error` 字段的定位（已定）**：trace 失败条目的 `error` 保存该次引擎调用的原始错误；`run.json.error` 是 run 级快速排查摘要，会在原始错误前补上 `节点 <id>：` 上下文，两者不保证字符串相同。**定案保留 run 级 `error`**——`run list` / `run show` / `run-summary.md` 免解析 trace 即可显示带节点上下文的头条；trace 仍是单次尝试的权威事实源。
+> **`error` 字段的定位（已定）**：trace 失败条目的 `error` 保存该次引擎调用的原始错误；`run.json.error` 是 run 级快速排查摘要，会在原始错误前补上固定英文 `node <id>:` 技术上下文，两者不保证字符串相同。**定案保留 run 级 `error`**——`run list` / `run show` / `run-summary.md` 免解析 trace 即可显示带节点上下文的头条；trace 仍是单次尝试的权威事实源。
 
 ---
 
@@ -535,6 +537,7 @@ conduct run rm demo-20260703-160140 --yes
   "userPrompt": "给购物车加一个清空按钮",  // 本次用户需求（{{sys.userPrompt}}）
   "cwd": "/Users/me/proj",          // 引擎工作目录（--cwd）
   "status": "failed",               // running | completed | failed（interrupted 为派生态：status 仍 running 但 pid 已死）
+  "language": "zh-CN",              // 必填：en | zh-CN；开跑时的语言快照，summary / resume 固定沿用
   "pid": 48213,                     // 运行进程 PID；据此判活——status=running 但进程已死 → interrupted
   "pidStartTime": "1783263565.442591",  // 进程启动时刻令牌，与 pid 联合校验以免 pid 被无关新进程复用时误判/误杀（旧记录或不支持的平台为空，omitempty）
   "startedAt": "2026-07-03T15:22:33+08:00",  // RFC3339，开跑即写
@@ -542,12 +545,14 @@ conduct run rm demo-20260703-160140 --yes
   "artifacts": {                    // 各 agent 节点最终产物：nodeId → 该 node 最后一次成功的 output（随运行推进增量写）
     "a": "…", "b": "…", "c": "…", "d": "…"
   },
-  "error": "节点 c：codex turn failed", // status=failed 时的 run 级失败摘要（含“节点 <id>：”上下文），否则 null
+  "error": "node c: codex turn failed", // status=failed 时的 run 级失败摘要；conduct 技术上下文固定英文，否则 null
   "failedNodeId": "c"              // status=failed 且根因是节点失败时，首个失败节点 id；无节点级根因时省略
 }
 ```
 
 > **无 `steps` 字段**：进度分母 `N` = agent 节点数，读时由 `workflowSnapshot` 算（`len(definition.nodes) - 2`，排除 `START` / `END`），不落盘冗余；分子 = trace 中唯一 nodeId 且 `success` 的条目数（见〈run resume〉进度去重说明）。`failedNodeId` 仅供 summary / UI 快速定位首个失败节点，**不是**重入指针；恢复前沿仍一律由 trace 推断（见〈run resume〉恢复来源）。
+
+> **`language` 不做旧数据兼容**：字段缺失或取值不是 `en` / `zh-CN` 时，`run.json` 视为损坏。读取、resume 与后续写回均固定英文 fail-loud，不使用旧版中文、当前全局设置或环境变量补值。
 
 **`runs/<id>/run-summary.md`** —— 运行总结，给人 / AI 阅读的 Markdown 报告，由 `run.json` 与 `trace.jsonl` 渲染而来（人类读这份、机器读 `run.json`——同一份运行记录的两副面孔）。至少含：所属工作流、用户需求、状态、开始 / 结束时间与耗时、逐节点结果（每节点 / 引擎 / 起止 / 耗时，**按 `startedAt` 排序**）、各 agent 节点最终产物（Markdown 原文、XML 标签包裹，见下例）。`run` 结束时 stdout 指向的就是这份文件。**用户需求只渲染为一行摘要**（取首行、超长截断并以 `…` 收尾）：需求可能是整份 PRD（数十 KB），整段塞进头部会淹掉节点表与产物；被截断时附「（完整需求见 run.json）」，全文由 `run.json` 的 `userPrompt` 保留——与 `run list` 人读截断、机读留全文的同一分工。示例（`completed` 运行；`failed` 会额外渲染失败节点与 `error`）：
 
@@ -644,7 +649,7 @@ conduct run rm demo-20260703-160140 --yes
 | `workflow run` 事件流输出 | **已实现**（节点生命周期事件流：`▶ 开跑` / `✓ 完成` / `✗ 失败`，无 iteration；`--json` 每节点落定吐一行 `TraceEntry`） |
 | `workflow run` 无 `--max-parallel` | **已实现**（不引入并发上限，就绪节点一律开跑，受 DAG 结构自然约束） |
 | trace.jsonl schema | **已实现**（`run.TraceEntry` 已删除 `Type` / `Iteration`，新增 `StartedAt` / `EndedAt`，主键为 `NodeID`） |
-| run.json schema | **已实现**（`run.Record` 无 `Steps int`；进度分母由 `WorkflowSnapshot` 读时算 agent 节点数；`workflowSnapshot` 嵌套 `definition{nodes, edges}`；`failedNodeId` 直接记录首个失败节点） |
+| run.json schema | **已实现**（`run.Record` 无 `Steps int`；进度分母由 `WorkflowSnapshot` 读时算 agent 节点数；`workflowSnapshot` 嵌套 `definition{nodes, edges}`；`failedNodeId` 直接记录首个失败节点；`language` 必填且严格校验） |
 | `run resume` DAG 语义 | **已实现**（`internal/cli/run_resume.go` 按 nodeId 推断 `done` 集 + 前驱解锁续跑，不再经过 evaluator，复用同一并行调度循环） |
 | `run list` 进度列 | **已实现**（`NODES` 列 = agent 节点数，JSON 字段 `nodeCount`） |
 | `run-summary.md` 渲染 | **已实现**（节点表按 `startedAt` 排序，无 evaluator 行） |

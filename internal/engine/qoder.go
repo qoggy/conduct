@@ -41,7 +41,7 @@ func qoderFailureMessage(parsed qoderResult) string {
 	if result := strings.TrimSpace(parsed.Result); result != "" {
 		return result
 	}
-	return "qodercli 未返回具体错误信息"
+	return "qodercli returned no specific error information"
 }
 
 func (qoderEngine) Run(ctx context.Context, request RunRequest) (RunResult, error) {
@@ -60,10 +60,10 @@ func (qoderEngine) Run(ctx context.Context, request RunRequest) (RunResult, erro
 	}
 	var parsed qoderResult
 	if err := json.Unmarshal([]byte(out.stdout), &parsed); err != nil {
-		return RunResult{}, fmt.Errorf("qodercli 输出非预期 JSON: %w（stdout 前 200 字: %s）", err, truncate(out.stdout, 200))
+		return RunResult{}, fmt.Errorf("qodercli returned unexpected JSON: %w (first 200 characters of stdout: %s)", err, truncate(out.stdout, 200))
 	}
 	if parsed.IsError {
-		return RunResult{DurationMilliseconds: out.durationMs}, fmt.Errorf("qodercli 报错: %s", qoderFailureMessage(parsed))
+		return RunResult{DurationMilliseconds: out.durationMs}, fmt.Errorf("qodercli error: %s", qoderFailureMessage(parsed))
 	}
 	return RunResult{
 		Text:                 parsed.Result,

@@ -16,13 +16,13 @@ import (
 // 属可接受降级。进程停写后由 pid 判活派生 interrupted，不引入新落盘状态。
 func StopProcess(pid int) error {
 	if pid <= 0 {
-		return fmt.Errorf("非法 pid %d：无法发送终止信号", pid)
+		return fmt.Errorf("invalid pid %d: cannot send termination signal", pid)
 	}
 	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
 		if err == syscall.ESRCH {
 			return syscall.Kill(pid, syscall.SIGTERM) // 非组长 → 回退单进程
 		}
-		return fmt.Errorf("向进程组 %d 发送 SIGTERM 失败: %w", pid, err)
+		return fmt.Errorf("failed to send SIGTERM to process group %d: %w", pid, err)
 	}
 	return nil
 }

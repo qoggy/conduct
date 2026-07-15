@@ -263,7 +263,7 @@ JSON
 - **预期**：
   - 步骤 1 退出码 `1`；stdout/stderr 含 `✗ a 失败 ...` 与 `✓ b 完成 ...`（drain：failed 置位后仍等 b 跑完才收尾，故两行都出现，`b` 的完成事件在 `a` 的失败事件之后打印）。
   - 步骤 3 打印 `node_ids_seen= ['a', 'b']`（`c` 从未被派发——其前驱之一 `a` 失败，永远等不到齐）、`a_success= False`、`b_success= True`（drain 期间跑完的产物照记）。
-  - 步骤 4 打印 `failed claude 退出码 1: claude: 节点A故意失败`。
+  - 步骤 4 打印 `failed claude exited with code 1: claude: 节点A故意失败`。
 - **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
 ---
@@ -387,8 +387,8 @@ JSON
   5. `"$CONDUCT" run show "$RID"; echo "exit=$?"`
 - **预期**：
   - 步骤 1 退出码 `1`；stdout/stderr 报该节点失败。
-  - 步骤 3 打印 `failed | claude 退出码 1: claude: 引擎不可用（模拟故障） | say False`（`status:"failed"`、`error` 以引擎二进制名 `claude` 打头；失败节点由 trace 的 `nodeId=say success=false` 记录体现）。
-  - 步骤 4 打印 `False | claude 退出码 1: claude: 引擎不可用（模拟故障）`。
+  - 步骤 3 打印 `failed | claude exited with code 1: claude: 引擎不可用（模拟故障） | say False`（`status:"failed"`、`error` 以引擎二进制名 `claude` 打头；失败节点由 trace 的 `nodeId=say success=false` 记录体现）。
+  - 步骤 4 打印 `False | claude exited with code 1: claude: 引擎不可用（模拟故障）`。
   - 步骤 5 退出码 `0`；`run show` 呈现状态 `failed`、失败节点 `say`、错误摘要。
 - **清理**：`export PATH="$OLD_PATH"; export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 

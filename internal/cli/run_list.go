@@ -13,10 +13,14 @@ func newRunListCommand() *cobra.Command {
 	var statusFilter string
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "列出历史运行记录",
-		Long: "列出历史运行记录，按时间倒序。默认列全部（含已完成 / 失败 / 中断）。\n" +
-			"--status 按派生态过滤：running（pid 真存活）/ completed / failed / interrupted（已崩溃）；非法取值退 2。",
-		Args: requireArgs(cobra.NoArgs),
+		Short: localizedHelpText("列出历史运行记录", "List historical run records"),
+		Long: localizedHelpText(
+			"列出历史运行记录，按时间倒序。默认列全部（含已完成 / 失败 / 中断）。\n"+
+				"--status 按派生态过滤：running（pid 真存活）/ completed / failed / interrupted（已崩溃）；非法取值退 2。",
+			"List historical run records in reverse chronological order. By default, list all records (including completed / failed / interrupted).\n"+
+				"--status filters by derived status: running (pid is actually alive) / completed / failed / interrupted (process has crashed); an invalid value exits 2.",
+		),
+		Args: noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wantStatus, err := parseStatusFilter(statusFilter)
 			if err != nil {
@@ -31,18 +35,18 @@ func newRunListCommand() *cobra.Command {
 				return err
 			}
 			for _, skipErr := range skipped {
-				fmt.Fprintln(cmd.ErrOrStderr(), "警告: 跳过无法解析的运行记录: "+skipErr.Error())
+				fmt.Fprintln(cmd.ErrOrStderr(), localizedHelpText("警告: 跳过无法解析的运行记录: ", "warning: skipped an unreadable run record: ")+skipErr.Error())
 			}
 			records = filterRunsByStatus(records, wantStatus)
 			if asJSON {
 				return printJSON(cmd, runListItems(records))
 			}
 			if len(records) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "（暂无运行记录）")
+				fmt.Fprintln(cmd.OutOrStdout(), localizedHelpText("（暂无运行记录）", "(no run records)"))
 				return nil
 			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(writer, "RUN ID\tWORKFLOW\tSTATUS\tNODES\tSTARTED\tPROMPT")
+			fmt.Fprintln(writer, localizedHelpText("RUN ID\t工作流\t状态\t节点\t开始时间\t需求", "RUN ID\tWORKFLOW\tSTATUS\tNODES\tSTARTED\tPROMPT"))
 			for _, record := range records {
 				fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\t%s\n",
 					record.ID, record.Workflow, record.EffectiveStatus(), recordNodeCount(record),
@@ -51,8 +55,11 @@ func newRunListCommand() *cobra.Command {
 			return writer.Flush()
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "以机器可读 JSON 输出（userPrompt 全文不截断）")
-	cmd.Flags().StringVar(&statusFilter, "status", "", "只列指定派生态的运行：running / completed / failed / interrupted")
+	cmd.Flags().BoolVar(&asJSON, "json", false, localizedHelpText("以机器可读 JSON 输出（userPrompt 全文不截断）", "Output machine-readable JSON (without truncating userPrompt)"))
+	cmd.Flags().StringVar(&statusFilter, "status", "", localizedHelpText(
+		"只列指定派生态的运行：running / completed / failed / interrupted",
+		"List only runs with the specified derived status: running / completed / failed / interrupted",
+	))
 	return cmd
 }
 
@@ -65,7 +72,7 @@ func parseStatusFilter(value string) (run.Status, error) {
 	case string(run.StatusRunning), string(run.StatusCompleted), string(run.StatusFailed), string(run.StatusInterrupted):
 		return run.Status(value), nil
 	default:
-		return "", usageErrorf("非法的 --status 取值 %q（可用：running / completed / failed / interrupted）", value)
+		return "", localizedUsageErrorf("非法的 --status 取值 %q（可用：running / completed / failed / interrupted）", "invalid --status value %q (available: running / completed / failed / interrupted)", value)
 	}
 }
 

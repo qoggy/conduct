@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/engine"
 	"github.com/qoggy/conduct/internal/run"
 	"github.com/qoggy/conduct/internal/workflow"
@@ -20,23 +21,20 @@ import (
 // errorResponse 是所有非 2xx 的统一响应体。Problems 仅在 422 校验失败时出现，
 // 逐条对应 workflow.ValidateStructured 的字段级错误（供编辑器点错误定位到字段）。
 type errorResponse struct {
-	Error    string    `json:"error"`
-	Problems []problem `json:"problems,omitempty"`
+	Error errorEnvelope `json:"error"`
 }
 
-// problem 是一条字段级校验错误，镜像 workflow.Problem（不复用内核类型是为了独立控制 JSON 标签）。
-type problem struct {
-	Path    string `json:"path"`
-	Message string `json:"message"`
+type errorEnvelope struct {
+	Code            apperror.Code      `json:"code"`
+	Params          apperror.Params    `json:"params,omitempty"`
+	Problems        []apperror.Problem `json:"problems,omitempty"`
+	TechnicalDetail string             `json:"technicalDetail,omitempty"`
 }
 
-func problemsFrom(structured []workflow.Problem) []problem {
-	out := make([]problem, len(structured))
-	for i, p := range structured {
-		out[i] = problem{Path: p.Path, Message: p.Message}
-	}
-	return out
-}
+// problem 是共享字段级校验错误的别名，HTTP envelope 直接沿用其稳定 JSON schema。
+type problem = apperror.Problem
+
+func problemsFrom(structured []workflow.Problem) []problem { return structured }
 
 // ---- 请求体 ----
 
@@ -147,7 +145,7 @@ type launchResponse struct {
 
 // conflictResponse 是乐观并发 409 的响应：带回当前完整记录，供前端弹「覆盖 / 重载」。
 type conflictResponse struct {
-	Error   string             `json:"error"`
+	Error   errorEnvelope      `json:"error"`
 	Current *workflow.Workflow `json:"current"`
 }
 
@@ -180,22 +178,43 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		// 响应体已开始写、状态码无法再改，只能记录不静默（承「错误不吞」）。
-		fmt.Fprintf(os.Stderr, "conduct ui: 序列化响应失败: %v\n", err)
+		fmt.Fprintf(os.Stderr, "conduct ui: failed to encode response: %v\n", err)
 	}
 }
 
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, errorResponse{Error: message})
+func writeApplicationError(w http.ResponseWriter, status int, err *apperror.Error) {
+	writeJSON(w, status, errorResponse{Error: envelopeFrom(err)})
 }
 
-func writeProblems(w http.ResponseWriter, message string, problems []problem) {
-	writeJSON(w, http.StatusUnprocessableEntity, errorResponse{Error: message, Problems: problems})
+func writeProblems(w http.ResponseWriter, problems []problem) {
+	writeApplicationError(w, http.StatusUnprocessableEntity, apperror.Validation(problems))
+}
+
+func writeTechnicalError(w http.ResponseWriter, status int, err error) {
+	writeApplicationError(w, status, apperror.Technical(err.Error(), err))
+}
+
+func writeErrorValue(w http.ResponseWriter, status int, err error) {
+	if applicationError, ok := apperror.As(err); ok {
+		writeApplicationError(w, status, applicationError)
+		return
+	}
+	writeTechnicalError(w, status, err)
+}
+
+func envelopeFrom(err *apperror.Error) errorEnvelope {
+	return errorEnvelope{
+		Code:            err.Code,
+		Params:          err.Params,
+		Problems:        err.Problems,
+		TechnicalDetail: err.TechnicalDetail,
+	}
 }
 
 func writeText(w http.ResponseWriter, status int, contentType, body string) {
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(status)
 	if _, err := io.WriteString(w, body); err != nil {
-		fmt.Fprintf(os.Stderr, "conduct ui: 写响应失败: %v\n", err)
+		fmt.Fprintf(os.Stderr, "conduct ui: failed to write response: %v\n", err)
 	}
 }

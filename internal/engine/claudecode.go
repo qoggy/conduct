@@ -39,16 +39,16 @@ func (claudeCodeEngine) Run(ctx context.Context, request RunRequest) (RunResult,
 		// claude -p 应用层失败（如 prompt 过长）时退出码非 0 但 stderr 为空，真正原因在
 		// stdout 的 JSON 里；能解析出具体原因就优先用它，否则回退退出码+stderr 摘要。
 		if msg, ok := claudeStdoutFailureMessage(out.stdout); ok {
-			return RunResult{}, fmt.Errorf("claude 报错: %s", msg)
+			return RunResult{}, fmt.Errorf("claude error: %s", msg)
 		}
 		return RunResult{}, commandError("claude", out, err)
 	}
 	var parsed claudeResult
 	if err := json.Unmarshal([]byte(out.stdout), &parsed); err != nil {
-		return RunResult{}, fmt.Errorf("claude 输出非预期 JSON: %w（stdout 前 200 字: %s）", err, truncate(out.stdout, 200))
+		return RunResult{}, fmt.Errorf("claude returned unexpected JSON: %w (first 200 characters of stdout: %s)", err, truncate(out.stdout, 200))
 	}
 	if parsed.IsError {
-		return RunResult{}, fmt.Errorf("claude 报错: %s", parsed.Result)
+		return RunResult{}, fmt.Errorf("claude error: %s", parsed.Result)
 	}
 	return RunResult{
 		Text:                 parsed.Result,

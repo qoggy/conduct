@@ -72,7 +72,7 @@ func TestClaudeCodeRunNonZeroExit(t *testing.T) {
 	fakeBinary(t, "claude", `echo "边界爆炸" >&2
 exit 1`)
 	_, err := claudeCodeEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
-	if err == nil || !strings.Contains(err.Error(), "claude 退出码 1") || !strings.Contains(err.Error(), "边界爆炸") {
+	if err == nil || !strings.Contains(err.Error(), "claude exited with code 1") || !strings.Contains(err.Error(), "边界爆炸") {
 		t.Errorf("应转译退出码+stderr，得到 %v", err)
 	}
 }
@@ -82,10 +82,10 @@ func TestClaudeCodeRunNonZeroExitStdoutResult(t *testing.T) {
 	fakeBinary(t, "claude", `echo '{"type":"result","subtype":"success","is_error":true,"result":"Prompt is too long","session_id":"s1"}'
 exit 1`)
 	_, err := claudeCodeEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
-	if err == nil || !strings.Contains(err.Error(), "claude 报错: Prompt is too long") {
+	if err == nil || !strings.Contains(err.Error(), "claude error: Prompt is too long") {
 		t.Errorf("应从 stdout JSON 取出 result 作为错误信息，得到 %v", err)
 	}
-	if strings.Contains(err.Error(), "退出码") {
+	if strings.Contains(err.Error(), "exited with code") {
 		t.Errorf("stdout 有有效 result 时不应回退到退出码摘要路径，得到 %v", err)
 	}
 }
@@ -95,7 +95,7 @@ func TestClaudeCodeRunNonZeroExitStdoutNotJSON(t *testing.T) {
 echo "边界爆炸" >&2
 exit 1`)
 	_, err := claudeCodeEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
-	if err == nil || !strings.Contains(err.Error(), "claude 退出码 1") || !strings.Contains(err.Error(), "边界爆炸") {
+	if err == nil || !strings.Contains(err.Error(), "claude exited with code 1") || !strings.Contains(err.Error(), "边界爆炸") {
 		t.Errorf("stdout 非合法 JSON 时应回退到退出码+stderr 报错路径，得到 %v", err)
 	}
 }
@@ -103,7 +103,7 @@ exit 1`)
 func TestClaudeCodeRunIsError(t *testing.T) {
 	fakeBinary(t, "claude", `echo '{"result":"model said no","is_error":true}'`)
 	_, err := claudeCodeEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
-	if err == nil || !strings.Contains(err.Error(), "claude 报错: model said no") {
+	if err == nil || !strings.Contains(err.Error(), "claude error: model said no") {
 		t.Errorf("is_error 应转译，得到 %v", err)
 	}
 }
@@ -157,8 +157,17 @@ echo '{"status":"SUCCESS","response":"hey","usage":{"total_tokens":42}}'`)
 func TestAntigravityRunNonSuccessStatus(t *testing.T) {
 	fakeBinary(t, "agy", `echo '{"status":"ERROR","response":"quota exceeded"}'`)
 	_, err := antigravityEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
-	if err == nil || !strings.Contains(err.Error(), "agy 状态 ERROR") || !strings.Contains(err.Error(), "quota exceeded") {
+	if err == nil || !strings.Contains(err.Error(), "agy status ERROR") || !strings.Contains(err.Error(), "quota exceeded") {
 		t.Errorf("非 SUCCESS 应转译，得到 %v", err)
+	}
+}
+
+func TestAntigravityPromptTooLongDiagnosticIsEnglish(t *testing.T) {
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	_, err := antigravityEngine{}.Run(context.Background(), RunRequest{Prompt: strings.Repeat("x", agyPromptLimitBytes+1)})
+	want := "agy passes prompts as command-line arguments; prompt too long (262145 bytes > 262144-byte limit); use a stdin-based engine or reduce upstream output"
+	if err == nil || err.Error() != want {
+		t.Fatalf("agy prompt 超限技术诊断得到 %v，期望固定英文 %q", err, want)
 	}
 }
 
@@ -198,15 +207,25 @@ echo '{"result":"OK","is_error":false,"usage":{"input_tokens":5,"output_tokens":
 
 // TestQoderRunIsErrorEmptyResultUsesErrorsArray 用真实复现的 qodercli 失败态 JSON（payload 超限：
 // is_error=true，result 字段整个不存在故反序列化为空串，真正原因在 errors 数组里）验证报错信息
-// 取自 errors，而不是把空 result 拼成一句没有内容的 "qodercli 报错: "。
+// 取自 errors，而不是把空 result 拼成一句没有内容的 "qodercli error: "。
 func TestQoderRunIsErrorEmptyResultUsesErrorsArray(t *testing.T) {
 	fakeBinary(t, "qodercli", `echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Qoder API error: PAYLOAD_TOO_LARGE - provider_error: prompt is too long: 1396788 tokens > 1000000 maximum"],"error_code":80411,"session_id":"s1"}'`)
 	_, err := qoderEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
 	if err == nil || !strings.Contains(err.Error(), "PAYLOAD_TOO_LARGE") {
 		t.Errorf("result 为空时应从 errors 数组取报错信息，得到 %v", err)
 	}
-	if err != nil && strings.TrimSpace(err.Error()) == "qodercli 报错:" {
+	if err != nil && strings.TrimSpace(err.Error()) == "qodercli error:" {
 		t.Errorf("报错信息不应为空，得到 %v", err)
+	}
+}
+
+func TestQoderEmptyFailureIsAlwaysEnglish(t *testing.T) {
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	fakeBinary(t, "qodercli", `echo '{"is_error":true}'`)
+	_, err := qoderEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
+	want := "qodercli error: qodercli returned no specific error information"
+	if err == nil || err.Error() != want {
+		t.Fatalf("qoder 技术诊断得到 %v，期望固定英文 %q", err, want)
 	}
 }
 

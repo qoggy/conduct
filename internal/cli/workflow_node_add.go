@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/workflow"
 	"github.com/spf13/cobra"
 )
@@ -16,13 +17,18 @@ func newWorkflowNodeAddCommand() *cobra.Command {
 	var modelFlag, effortFlag, reasoningEffortFlag string
 	cmd := &cobra.Command{
 		Use:   "add <name> <id>",
-		Short: "建一个 agent 节点并连边（缺省自动接 START→<id>→END）",
-		Long: "建一个 agent 节点并连边。不给 --from / --to 时自动接成 START → <id> → END；\n" +
-			"--from a,b 让入边来自 a、b，--to c 让出边到 c。\n" +
-			"<id> 不得为保留名 START / END；下列任一约束不满足即整条拒绝、原文件不变。\n" +
-			graphConstraintsHelp + "\n" +
-			templateVariablesHelp,
-		Args: requireArgs(cobra.ExactArgs(2)),
+		Short: localizedHelpText("建一个 agent 节点并连边（缺省自动接 START→<id>→END）", "Create an agent node and connect edges (defaults to START→<id>→END)"),
+		Long: localizedHelpText(
+			"建一个 agent 节点并连边。不给 --from / --to 时自动接成 START → <id> → END；\n"+
+				"--from a,b 让入边来自 a、b，--to c 让出边到 c。\n"+
+				"<id> 不得为保留名 START / END；下列任一约束不满足即整条拒绝、原文件不变。\n",
+			"Create an agent node and connect edges. Without --from / --to, connect it automatically as START → <id> → END;\n"+
+				"--from a,b makes incoming edges come from a and b, while --to c makes an outgoing edge go to c.\n"+
+				"<id> must not be the reserved name START / END; if any constraint below is unsatisfied, reject the entire operation and leave the original file unchanged.\n",
+		) +
+			graphConstraintsHelp() + "\n" +
+			templateVariablesHelp(),
+		Args: exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, id := args[0], args[1]
 			if err := workflow.ValidateName(name); err != nil {
@@ -30,14 +36,14 @@ func newWorkflowNodeAddCommand() *cobra.Command {
 			}
 			flags := cmd.Flags()
 			if !flags.Changed("engine") || !flags.Changed("display-name") {
-				return usageErrorf("--engine 与 --display-name 必填")
+				return localizedUsageErrorf("--engine 与 --display-name 必填", "--engine and --display-name are required")
 			}
 			// id：保留名退 1、格式非法退 2（与 spec〈node add〉退出码约定一致）。
 			if id == workflow.NodeIDStart || id == workflow.NodeIDEnd {
-				return fmt.Errorf("节点 id 不得为保留名 %s / %s", workflow.NodeIDStart, workflow.NodeIDEnd)
+				return apperror.New(apperror.CodeReservedNodeID, apperror.Params{"id": id})
 			}
 			if !workflow.IsValidNodeID(id) {
-				return usageErrorf("节点 id %q 非法（须匹配 ^[A-Za-z_][A-Za-z0-9_-]{0,63}$）", id)
+				return &usageError{err: apperror.New(apperror.CodeInvalidNodeID, apperror.Params{"id": id})}
 			}
 
 			st, err := openStore()
@@ -50,7 +56,7 @@ func newWorkflowNodeAddCommand() *cobra.Command {
 			}
 			for _, node := range wf.Definition.Nodes {
 				if node.ID == id {
-					return fmt.Errorf("节点 %s 已存在", id)
+					return apperror.New(apperror.CodeNodeAlreadyExists, apperror.Params{"id": id})
 				}
 			}
 
@@ -81,19 +87,31 @@ func newWorkflowNodeAddCommand() *cobra.Command {
 			if err := st.Save(wf); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ 已加节点 %s·%s\n", name, id)
+			fmt.Fprintf(cmd.OutOrStdout(), localizedHelpText("✓ 已加节点 %s·%s\n", "✓ Added node %s·%s\n"), name, id)
 			return nil
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&engineFlag, "engine", "", "引擎（claude-code / antigravity / qoder / codex），必填")
-	f.StringVar(&displayNameFlag, "display-name", "", "节点显示名，必填、须非空")
-	f.StringVar(&fromFlag, "from", "", "入边来源，逗号分隔的一个或多个已存在节点 id（可含 START）；给了就不再自动接 START")
-	f.StringVar(&toFlag, "to", "", "出边去向，逗号分隔的一个或多个已存在节点 id（可含 END）；给了就不再自动接 END")
-	f.StringVar(&promptFlag, "prompt", "", "提示词（默认 {{sys.userPrompt}}）；复杂 / 多行改用 node set-prompt 读 stdin")
-	f.StringVar(&modelFlag, "model", "", "模型（受 engine 约束）")
-	f.StringVar(&effortFlag, "effort", "", fmt.Sprintf("claude-code 档位（%s）", effortEnum("claude-code")))
-	f.StringVar(&reasoningEffortFlag, "reasoning-effort", "", fmt.Sprintf("qoder / codex 推理档位（qoder：%s；codex：%s）", effortEnum("qoder"), effortEnum("codex")))
+	f.StringVar(&engineFlag, "engine", "", localizedHelpText("引擎（claude-code / antigravity / qoder / codex），必填", "Engine (claude-code / antigravity / qoder / codex), required"))
+	f.StringVar(&displayNameFlag, "display-name", "", localizedHelpText("节点显示名，必填、须非空", "Node display name, required and nonempty"))
+	f.StringVar(&fromFlag, "from", "", localizedHelpText(
+		"入边来源，逗号分隔的一个或多个已存在节点 id（可含 START）；给了就不再自动接 START",
+		"Incoming-edge sources: one or more existing node ids separated by commas (may include START); when supplied, do not connect START automatically",
+	))
+	f.StringVar(&toFlag, "to", "", localizedHelpText(
+		"出边去向，逗号分隔的一个或多个已存在节点 id（可含 END）；给了就不再自动接 END",
+		"Outgoing-edge destinations: one or more existing node ids separated by commas (may include END); when supplied, do not connect END automatically",
+	))
+	f.StringVar(&promptFlag, "prompt", "", localizedHelpText(
+		"提示词（默认 {{sys.userPrompt}}）；复杂 / 多行改用 node set-prompt 读 stdin",
+		"Prompt (default {{sys.userPrompt}}); for complex / multiline content, use node set-prompt to read stdin",
+	))
+	f.StringVar(&modelFlag, "model", "", localizedHelpText("模型（受 engine 约束）", "Model (constrained by engine)"))
+	f.StringVar(&effortFlag, "effort", "", fmt.Sprintf(localizedHelpText("claude-code 档位（%s）", "claude-code effort level (%s)"), effortEnum("claude-code")))
+	f.StringVar(&reasoningEffortFlag, "reasoning-effort", "", fmt.Sprintf(
+		localizedHelpText("qoder / codex 推理档位（qoder：%s；codex：%s）", "qoder / codex reasoning effort level (qoder: %s; codex: %s)"),
+		effortEnum("qoder"), effortEnum("codex"),
+	))
 	return cmd
 }
 

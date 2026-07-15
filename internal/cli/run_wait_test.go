@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/qoggy/conduct/internal/run"
 	"github.com/qoggy/conduct/internal/store"
 	"github.com/qoggy/conduct/internal/workflow"
@@ -28,6 +29,7 @@ func seedRun(t *testing.T, st *store.Store, id string, status run.Status, pid in
 		UserPrompt: "需求",
 		Cwd:        "/proj",
 		Status:     status,
+		Language:   locale.English,
 		Pid:        pid,
 		StartedAt:  "2026-07-03T15:00:00+08:00",
 		Artifacts:  map[string]string{},

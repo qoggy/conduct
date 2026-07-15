@@ -71,7 +71,7 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 - **提示词**：走 stdin；工作目录用 `cmd.Dir`。
 - **默认参数**：`-p --output-format json --permission-mode bypassPermissions`。
 - **可变参数**：`Model` 非空 → `--model <m>`；`Effort` 非空**且非 `"auto"`** → `--effort <v>`（`"auto"` / 空让 CLI 自决，不传）。
-- **输出解析**：`claude -p --output-format json` 的 stdout 是单个 JSON 对象，取 `result`（→ `Text`）、`is_error`、`usage.input_tokens` + `usage.output_tokens`（→ `Tokens`）。`is_error` 为真（进程仍以退出码 0 收尾）→ 返回错误（附 `result` 文本）。**退出码非 0**（如 prompt 过长等应用层失败，此时 stderr 常为空）→ 先尝试把 stdout 解析成同一 JSON 结构，`result` 非空则优先用它报错（`claude 报错: <result>`）；stdout 非法 JSON 或 `result` 为空才回退到退出码 + stderr 摘要（见〈错误与退出行为〉、`claudeStdoutFailureMessage`）。
+- **输出解析**：`claude -p --output-format json` 的 stdout 是单个 JSON 对象，取 `result`（→ `Text`）、`is_error`、`usage.input_tokens` + `usage.output_tokens`（→ `Tokens`）。`is_error` 为真（进程仍以退出码 0 收尾）→ 返回错误（附 `result` 文本）。**退出码非 0**（如 prompt 过长等应用层失败，此时 stderr 常为空）→ 先尝试把 stdout 解析成同一 JSON 结构，`result` 非空则优先用它报错（`claude error: <result>`）；stdout 非法 JSON 或 `result` 为空才回退到退出码 + stderr 摘要（见〈错误与退出行为〉、`claudeStdoutFailureMessage`）。
 - 实现见 `internal/engine/claudecode.go`；CLI 参考 `docs/references/claudecode.md`。
 
 ### antigravity（`agy`）
@@ -89,7 +89,7 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 - **提示词**：走 stdin；工作目录用 `cmd.Dir`。与 claude-code 同族。
 - **默认参数**：`-p --output-format json --permission-mode bypass_permissions`（注意 qoder 是下划线 `bypass_permissions`，claude 是驼峰 `bypassPermissions`）。
 - **可变参数**：`Model` 非空 → `--model <m>`（模型名或档位名，如 `Auto` / `Performance`，见 `--list-models`）；`Effort` 非空 → `--reasoning-effort <v>`（与模型解耦的独立标志）。
-- **输出解析**：stdout 单 JSON 对象，取 `result`（→ `Text`）、`is_error`、`errors`、`usage.input_tokens` + `usage.output_tokens`（→ `Tokens`）。`is_error` 为真 → 返回错误：优先用 `errors` 数组拼接的报错信息（`is_error` 为真时 `result` 可能整个不存在，反序列化为空串）；`errors` 为空才回退 `result`；两者皆空则给兜底提示「qodercli 未返回具体错误信息」。
+- **输出解析**：stdout 单 JSON 对象，取 `result`（→ `Text`）、`is_error`、`errors`、`usage.input_tokens` + `usage.output_tokens`（→ `Tokens`）。`is_error` 为真 → 返回错误：优先用 `errors` 数组拼接的报错信息（`is_error` 为真时 `result` 可能整个不存在，反序列化为空串）；`errors` 为空才回退 `result`；两者皆空则给固定英文兜底提示 `qodercli returned no specific error information`。引擎适配器错误属于技术诊断，不随 language 设置或 locale 国际化；外层固定为 `qodercli error: ...`，非预期 JSON 固定为 `qodercli returned unexpected JSON: ...`，原始引擎错误内容保持不变。
 - 实现见 `internal/engine/qoder.go`；CLI 参考 `docs/references/qodercli-print.md`。
 
 ### codex（`codex exec`）
@@ -102,7 +102,7 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
   - `item.completed` 且 `item.type == "agent_message"` → `item.text`（→ `RunResult.Text`，取**最后一条**）
   - `turn.completed` → `usage.input_tokens` + `usage.output_tokens`（→ `RunResult.Tokens`，取最后一个 turn）
   - `turn.failed` / `error` → 返回错误（失败优先，即使进程退 0）
-  - 其余事件（`turn.started` / `item.started` / 其它 `item.*`）忽略；无法解析的行显式报错（附该行前 200 字），不静默跳过；既无失败事件也无 `agent_message` → 报错「codex 未产出最终 agent_message」（不假装成功）。
+  - 其余事件（`turn.started` / `item.started` / 其它 `item.*`）忽略；无法解析的行显式报错（附该行前 200 字），不静默跳过；既无失败事件也无 `agent_message` → 报错 `codex did not produce a final agent_message`（不假装成功）。
 - **样例 stdout**（每行一个对象，见 `docs/references/codex.md`）：
   ```jsonl
   {"type":"thread.started","thread_id":"0199a213-…"}
@@ -169,17 +169,17 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 
 ## 错误与退出行为
 
-引擎层的错误一律**显式上抛、绝不静默**（承项目「错误不吞」）。子进程失败经 `commandError`（`internal/engine/exec.go`）转译为带引擎名的可读错误。下列 `<engine>` 占位是错误前缀里的引擎名，取**CLI 二进制名**（`claude` / `agy` / `qodercli`），非注册名（`claude-code` / `qoder`）：
+引擎层的错误一律**显式上抛、绝不静默**（承项目「错误不吞」）。这些适配器错误与底层技术诊断固定使用英文，不随 language 设置或 locale 切换；引擎原始返回的 stderr / `result` / `error` / `message` 内容原样保留。子进程失败经 `commandError`（`internal/engine/exec.go`）转译为带引擎名的可读错误。下列 `<engine>` 占位是错误前缀里的引擎名，取**CLI 二进制名**（`claude` / `agy` / `qodercli`），非注册名（`claude-code` / `qoder`）：
 
-- **非零退出码**：`<engine> 退出码 <code>: <stderr 摘要>`（stderr 截断至 500 字）。**claude-code 例外**：非零退出时先尝试把 stdout 解析成 JSON 取 `result`，非空则优先返回 `claude 报错: <result>`；只有 stdout 非法 JSON 或 `result` 为空才落到这条退出码+stderr 摘要（见〈claude-code〉小节）。
-- **找不到可执行文件等**：`<engine> 调用失败: <原始错误>`。
-- **输出非预期 JSON**：`<engine> 输出非预期 JSON: <err>（stdout 前 200 字: …）`。
+- **非零退出码**：`<engine> exited with code <code>: <stderr summary>`（stderr 截断至 500 字）。**claude-code 例外**：非零退出时先尝试把 stdout 解析成 JSON 取 `result`，非空则优先返回 `claude error: <result>`；只有 stdout 非法 JSON 或 `result` 为空才落到这条退出码+stderr 摘要（见〈claude-code〉小节）。
+- **找不到可执行文件等**：`failed to invoke <engine>: <original error>`。
+- **输出非预期 JSON**：claude-code / antigravity 使用 `<engine> returned unexpected JSON: <err> (first 200 characters of stdout: …)`；qoder 使用 `qodercli returned unexpected JSON: …`；codex 使用 `codex returned unexpected JSON: failed to parse line <line>: …`。
 - **引擎自报失败**（进程退出码为 0、但引擎自身报告业务失败）：
   - claude-code：`is_error` 为真 → 附 `result` 文本。
   - qoder：`is_error` 为真 → 优先附 `errors` 数组拼接的报错信息（`result` 此时可能整个不存在）；`errors` 为空才回退 `result`；两者皆空给兜底提示。
   - antigravity：`status != "SUCCESS"` → 优先附 `error` 字段；为空才回退截断至 500 字的 `response` 摘要。
   - codex：JSONL 中出现 `turn.failed` 或 `error` 事件 → 返回该事件携带的错误信息；若事件没有可用消息则返回明确的 codex 失败兜底文案。
-- **prompt 超限**（仅 antigravity）：超 256 KiB 时**在调用前**返回错误，提示改用 stdin 型引擎或精简上游产物。
+- **prompt 超限**（仅 antigravity）：超 256 KiB 时**在调用前**返回 `agy passes prompts as command-line arguments; prompt too long (…); use a stdin-based engine or reduce upstream output`。
 
 这些错误如何冒泡到 `workflow run` 的退出码见 [cli-runtime.md](./cli-runtime.md)。
 

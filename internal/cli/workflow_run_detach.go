@@ -36,12 +36,12 @@ type detachLauncher interface {
 func runDetached(cmd *cobra.Command, st *store.Store, name, userPrompt, workingDir string, asJSON bool) error {
 	exePath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("解析自身可执行文件路径失败: %w", err)
+		return fmt.Errorf("failed to resolve current executable path: %w", err)
 	}
 	// 会话私有 stderr 临时目录：兜底「子进程写 run.json 之前就失败」的罕见路径，读后即弃、整目录清掉。
 	stderrDir, err := os.MkdirTemp("", "conduct-detach-")
 	if err != nil {
-		return fmt.Errorf("创建启动日志临时目录失败: %w", err)
+		return fmt.Errorf("failed to create launch log temporary directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(stderrDir) }()
 
@@ -54,7 +54,7 @@ func runDetached(cmd *cobra.Command, st *store.Store, name, userPrompt, workingD
 func runDetachedWith(cmd *cobra.Command, launcher detachLauncher, name, userPrompt, workingDir string, asJSON bool) error {
 	runID, note, err := launcher.Launch(name, userPrompt, workingDir)
 	return emitDetach(cmd, runID, note, err, name, asJSON, func(id string) string {
-		return fmt.Sprintf("已在后台启动 %s；conduct run show %s 查看进度、conduct run stop %s 终止。", id, id, id)
+		return fmt.Sprintf(localizedHelpText("已在后台启动 %s；conduct run show %s 查看进度、conduct run stop %s 终止。", "Started %s in the background; use conduct run show %s to inspect progress and conduct run stop %s to stop it."), id, id, id)
 	})
 }
 
@@ -70,17 +70,34 @@ func emitDetach(cmd *cobra.Command, runID, note string, err error, workflowName 
 	}
 	if runID == "" {
 		// 有界等待内未确认 run id：子进程可能仍在跑——不退 0（给不出句柄就不算发射成功），引导核对。
-		return fmt.Errorf("%s", note)
+		return fmt.Errorf("%s", localizedLaunchNote(note))
 	}
 	if asJSON {
 		// 单行句柄（机读 handle），非前台 --json 的逐节点事件流——故 compact 而非缩进。
 		line, err := json.Marshal(detachHandle{ID: runID, Workflow: workflowName})
 		if err != nil {
-			return fmt.Errorf("序列化句柄 JSON 失败: %w", err)
+			return fmt.Errorf("failed to encode run handle JSON: %w", err)
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), string(line))
 		return nil
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), humanLine(runID))
 	return nil
+}
+
+func localizedLaunchNote(note string) string {
+	switch note {
+	case launch.NoteRunUnconfirmed:
+		return localizedHelpText(
+			"已发射运行，但未能在超时内确认 run id（子进程仍在运行）。请到运行列表核对。",
+			"The run was launched, but its run id could not be confirmed before timeout (the child process is still running). Check the run list.",
+		)
+	case launch.NoteResumeUnconfirmed:
+		return localizedHelpText(
+			"已发射恢复，但未能在超时内确认子进程接管（子进程仍在运行）。请到运行列表核对。",
+			"Resume was launched, but child-process takeover could not be confirmed before timeout (the child process is still running). Check the run list.",
+		)
+	default:
+		return note
+	}
 }

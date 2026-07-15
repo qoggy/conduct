@@ -13,8 +13,8 @@ var version = "dev"
 func newVersionCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "打印 conduct 版本",
-		Args:  requireArgs(cobra.NoArgs),
+		Short: localizedHelpText("打印 conduct 版本", "Print the conduct version"),
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), "conduct "+version)
 			return err

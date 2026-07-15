@@ -1,8 +1,9 @@
 package workflow
 
 import (
-	"fmt"
 	"strings"
+
+	"github.com/qoggy/conduct/internal/apperror"
 )
 
 // RenameNodeID 把 def 中 oldID 的 agent 节点改名为 newID，并级联同步所有边端点与各节点模板里的
@@ -17,25 +18,25 @@ func RenameNodeID(def *Definition, oldID, newID string) error {
 		return nil
 	}
 	if newID == NodeIDStart || newID == NodeIDEnd {
-		return fmt.Errorf("节点 id 不得为保留名 %s / %s", NodeIDStart, NodeIDEnd)
+		return apperror.New(apperror.CodeReservedNodeID, apperror.Params{"id": newID})
 	}
 	if !IsValidNodeID(newID) {
-		return fmt.Errorf("节点 id %q 非法（须匹配 ^[A-Za-z_][A-Za-z0-9_-]{0,63}$）", newID)
+		return apperror.New(apperror.CodeInvalidNodeID, apperror.Params{"id": newID})
 	}
 	found := false
 	for i := range def.Nodes {
 		switch def.Nodes[i].ID {
 		case newID:
-			return fmt.Errorf("已存在同名节点 %q", newID)
+			return apperror.New(apperror.CodeNodeAlreadyExists, apperror.Params{"id": newID})
 		case oldID:
 			if def.Nodes[i].IsMarker() {
-				return fmt.Errorf("%s 为保留标记节点，不能改 id", oldID)
+				return apperror.New(apperror.CodeReservedNodeID, apperror.Params{"id": oldID, "action": "rename"})
 			}
 			found = true
 		}
 	}
 	if !found {
-		return fmt.Errorf("工作流无节点 %s", oldID)
+		return apperror.New(apperror.CodeNodeNotFound, apperror.Params{"id": oldID})
 	}
 
 	for i := range def.Nodes {

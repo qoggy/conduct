@@ -47,7 +47,7 @@ func TestPreflightInvalidDefinition(t *testing.T) {
 	if le.status != http.StatusUnprocessableEntity {
 		t.Fatalf("损坏定义应 422，得到 %d", le.status)
 	}
-	if len(le.problems) == 0 {
+	if len(le.applicationError.Problems) == 0 {
 		t.Fatalf("422 应带字段级 problems")
 	}
 }

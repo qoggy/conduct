@@ -1,12 +1,20 @@
-// 界面文案字典（zh-CN）。所有人写的界面文字收敛于此，未来中英切换即换字典（见 ui.md〈前端技术栈〉）。
-//
-// 诚实边界：服务端下发的校验错误、store 错误是 CLI 语义**原文**（与 CLI stderr 逐字一致是本设计的
-// 卖点），显式**不进本字典**——它们由 api.js 原样透传、页面原样展示，绝不在此二次翻译。
+// conduct ui 的中英文字典。机器字段、状态枚举、engine/id 与外部原文不翻译。
 
-const dict = {
+const zhCN = {
   // 顶栏 / 导航
   navWorkflows: "工作流",
   navRuns: "运行",
+  followEnvironment: "跟随环境",
+  language: "语言",
+  chinese: "中文",
+  english: "English",
+  page: "页面",
+  backToWorkflows: "回到工作流列表",
+  renderFail: "页面渲染失败：",
+  technicalFailure: "技术操作失败",
+  networkFailTpl: (detail) => `请求失败（服务可能已停止）：${detail}`,
+  requestFailTpl: (status) => `请求失败（${status}）`,
+  settingsSaveFail: "语言设置保存失败：",
 
   // 通用
   cancel: "取消",
@@ -55,6 +63,8 @@ const dict = {
   fsFilter: "过滤当前目录…",
   launchBtn: "▶ 运行",
   launchNeedPrompt: "缺少用户需求：不能为空",
+  run_launch_unconfirmed: "运行子进程仍在执行，但暂未确认运行记录；请到运行列表核对。",
+  resume_launch_unconfirmed: "恢复子进程仍在执行，但暂未确认接管；请到运行列表核对。",
 
   // 改名弹窗
   dlgRenameTitleTpl: (name) => `重命名 ${name}`,
@@ -122,6 +132,7 @@ const dict = {
   filterWorkflow: "工作流",
   filterStatus: "状态",
   filterAll: "全部",
+  filterSeparator: "：",
   groupRunningTpl: (n) => `运行中（${n}）`,
   groupHistoryTpl: (n) => `历史（${n}）`,
   runEmptyTitle: "（暂无运行记录）",
@@ -171,7 +182,280 @@ const dict = {
   resumeConfirm: "恢复",
   loadingText: "加载中…",
   notFoundTpl: (what) => `${what}不存在或已被删除。`,
+
+  errorMessages: errorMessagesZhCN(),
 };
 
-// t 取一条文案；模板函数直接从 dict 取用（如 i18n.wfSubtitleTpl(3)）。
-export const i18n = dict;
+const en = {
+  navWorkflows: "Workflows",
+  navRuns: "Runs",
+  followEnvironment: "Follow environment",
+  language: "Language",
+  chinese: "中文",
+  english: "English",
+  page: "Page",
+  backToWorkflows: "Back to workflows",
+  renderFail: "Page rendering failed: ",
+  technicalFailure: "Technical operation failed",
+  networkFailTpl: (detail) => `Request failed (the service may have stopped): ${detail}`,
+  requestFailTpl: (status) => `Request failed (${status})`,
+  settingsSaveFail: "Failed to save language setting: ",
+  cancel: "Cancel",
+  create: "Create",
+  save: "Save",
+  rename: "Rename",
+  copy: "Copy",
+  delete: "Delete",
+  refresh: "↻ Refresh",
+  copied: "Copied",
+  copyAll: "Copy all",
+  copyJSON: "Copy JSON",
+  loadFail: "Failed to load: ",
+  copyFailRejected: "Copy failed (the browser rejected the copy command)",
+  copyFailPrefix: "Copy failed: ",
+  wfTitle: "Workflows",
+  wfSubtitleTpl: (n) => `${n} · Select a row to open the editor`,
+  wfNewBtn: "＋ New workflow",
+  wfEmptyTitle: "No workflows yet",
+  wfEmptyHint: "Create a minimal skeleton to begin.",
+  colName: "Name",
+  colNodes: "Node flow",
+  colUpdated: "Last updated",
+  colRunning: "Running",
+  runningCountTpl: (n) => `${n} running`,
+  actRun: "▶ Run",
+  dlgCreateTitle: "New workflow",
+  fName: "Name",
+  nameRule: "Letters / digits / . _ - are allowed.",
+  nameInvalidHint: "Invalid name: only letters, digits, dots, underscores, and hyphens are allowed",
+  dlgLaunchTitleTpl: (name) => `Run ${name}`,
+  fPrompt: "Request",
+  fCwd: "Working directory",
+  cwdPlaceholder: "Absolute path (starting with /); leave empty to use the directory where conduct ui started",
+  browseBtn: "Browse…",
+  pickFolderTitle: "Choose working directory",
+  selectThisDir: "Choose this directory",
+  upLevel: "‹ Up",
+  fsEmptyDir: "(no subdirectories)",
+  fsFilter: "Filter this directory…",
+  launchBtn: "▶ Run",
+  launchNeedPrompt: "User request is required and cannot be empty",
+  run_launch_unconfirmed: "The run subprocess is still running, but its record has not been confirmed yet. Check the runs list.",
+  resume_launch_unconfirmed: "The resume subprocess is still running, but takeover has not been confirmed yet. Check the runs list.",
+  dlgRenameTitleTpl: (name) => `Rename ${name}`,
+  fNewName: "New name",
+  renameNote: "Existing run records keep the old name.",
+  dlgCopyTitleTpl: (name) => `Copy ${name}`,
+  copyNote: "Copy the definition body (nodes + edges) into a new workflow name; the original workflow and its run records are unaffected.",
+  dlgDeleteTitleTpl: (name) => `Delete workflow ${name}?`,
+  deleteBodyTpl: (name) => `The definition for ${name} will be deleted. This cannot be undone.`,
+  deleteNote: "Existing run records are unaffected: each run keeps the definition snapshot from when it started, so its history remains viewable.",
+  edNodesTpl: (n) => `${n} nodes`,
+  edUpdatedTpl: (t) => `Updated ${t}`,
+  edSaved: "● Saved",
+  edUnsaved: "● Unsaved changes",
+  edRunHistory: "Run history",
+  edViewForm: "Form",
+  edViewJSON: "JSON",
+  edErrTitle: "Validation failed; not saved:",
+  fNodeId: "Node id",
+  idRuleHint: "Invalid id: first character must be a letter or underscore; remaining characters may be letters, digits, hyphens, or underscores; length 1–64",
+  idReserved: "id cannot use the reserved names START / END",
+  idDuplicateTpl: (id) => `A node named "${id}" already exists`,
+  fDisplayName: "Name",
+  fEngine: "Engine",
+  fModel: "Model",
+  modelPlaceholder: "Leave empty to use the engine default model",
+  fEffortNotSet: "Not set",
+  idNoteTpl: (id) => `Unique node identifier; reference this node's artifact as {{${id}}} in templates. Changing the id updates every edge and template reference automatically.`,
+  ghostAppend: "Appended automatically at runtime",
+  phMenuLabel: "{{ }} Placeholder ▾",
+  phMenuHead: "Select to copy",
+  maximize: "Maximize ⤢",
+  collapse: "Collapse ⤡",
+  peMetaTpl: (lines, chars) => `${lines} lines · ${chars} characters`,
+  delNode: "Delete node",
+  noEditableNodes: "(Select a node on the canvas to edit it, or use “＋ Node” above the canvas to add one)",
+  jsonSyntaxErr: "JSON syntax error: ",
+  addNode: "＋ Node",
+  edgeOpt: "Optimize edges",
+  edgeOptNone: "No redundant edges can be removed",
+  edgeOptDoneTpl: (n) => `Removed ${n} redundant edges`,
+  edRunnable: "● Runnable",
+  edNotRunnable: "● Invalid definition",
+  connectRejected: "Cannot connect (duplicate edge or disallowed structure)",
+  cycleRejected: "Rejected because it would form a cycle",
+  edgeClickDelete: "Select to delete edge",
+  lastAgentKeep: "Keep at least one agent node",
+  jsonBarTitle: "definition.json",
+  jsonMetaNote:
+    "name / createdAt / updatedAt are system metadata: saving always uses the workflow name from the URL and ignores name in the body (use Rename at the top to rename); createdAt / updatedAt are also ignored by the server. Switching views rebuilds the editor and clears browser undo (⌘Z) history; JSON syntax errors prevent switching and are marked in place, while unknown fields are rejected by the server when saving.",
+  frozenNote: "Definition snapshot from when the run started; it may differ from the current definition.",
+  saveConflictTitle: "Definition modified externally",
+  saveConflictBody: "Another location (CLI edit or another tab) changed this definition, so your save baseline is stale.",
+  overwrite: "Overwrite",
+  reload: "Discard and reload",
+  runTitle: "Runs",
+  runSubtitleTpl: (n) => `${n} records · Select a row for details`,
+  filterWorkflow: "Workflow",
+  filterStatus: "Status",
+  filterAll: "All",
+  filterSeparator: ": ",
+  groupRunningTpl: (n) => `Running (${n})`,
+  groupHistoryTpl: (n) => `History (${n})`,
+  runEmptyTitle: "(no run records)",
+  runEmptyHint: "Select Run in the workflow list, or start a run with the CLI and return here.",
+  colRunID: "RUN ID",
+  colWorkflow: "Workflow",
+  colStatus: "Status",
+  colProgress: "Progress",
+  colStartedAt: "Started",
+  colUserPrompt: "Request",
+  dlgRunDeleteTitleTpl: (rid) => `Delete run ${rid}?`,
+  runDeleteBodyTpl: (rid) => `The run record ${rid} will be deleted. This cannot be undone.`,
+  nodesCountTpl: (n) => `${n} nodes`,
+  detailWorkflow: "Workflow",
+  detailPrompt: "Request",
+  detailCwd: "Working directory",
+  detailTime: "Time",
+  detailProgress: "Progress",
+  progressNodesTpl: (k, n) => `Nodes ${k}/${n}`,
+  stopBtn: "Stop run",
+  failedAtNodeTpl: (name) => `Failed at node ${name}:`,
+  failedPrefix: "Failed: ",
+  durationLabel: "Duration",
+  elapsedLabel: "Elapsed",
+  sinceLabel: "since",
+  nodeNoTrace: "This node has no execution record yet.",
+  engineDefaultModel: "(engine default model)",
+  summaryTitle: "Run summary",
+  summaryPending: "The run summary will be generated after the run finishes.",
+  frozenDef: "Frozen definition",
+  detailInput: "Input",
+  detailOutput: "Artifact",
+  detailError: "Error",
+  detailSession: "Session",
+  detailReplay: "Replay",
+  dlgStopTitleTpl: (rid) => `Stop run ${rid}?`,
+  stopBodyTpl: (pid, rid) => `SIGTERM will be sent (pid ${pid}, = conduct run stop ${rid}).`,
+  stopNote: "Records for completed nodes are retained; after stopping, the status is shown as interrupted.",
+  stopConfirm: "Stop",
+  interruptedNote: "The process is gone; available trace is shown on a best-effort basis.",
+  resumeBtn: "Resume",
+  dlgResumeTitleTpl: (rid) => `Resume run ${rid}?`,
+  resumeBodyTpl: (rid) => `Successful nodes will be skipped and execution will continue from the interruption point (= conduct run resume ${rid}); the same run is appended and its id is unchanged.`,
+  resumeNote: "Old failure records are retained for audit, followed by resumed records.",
+  resumeConfirm: "Resume",
+  loadingText: "Loading…",
+  notFoundTpl: (what) => `${what} does not exist or was deleted.`,
+  errorMessages: errorMessagesEn(),
+};
+
+export const dictionaries = { "zh-CN": zhCN, en };
+export const i18n = {};
+
+const zhKeys = Object.keys(zhCN).sort();
+const enKeys = Object.keys(en).sort();
+if (zhKeys.length !== enKeys.length || zhKeys.some((key, index) => key !== enKeys[index])) {
+  throw new Error("conduct ui: translation dictionaries do not have matching keys");
+}
+
+export function setLanguage(language) {
+  const selected = dictionaries[language] || dictionaries.en;
+  for (const key of Object.keys(i18n)) delete i18n[key];
+  Object.assign(i18n, selected);
+}
+
+export function formatProblem(problem) {
+  const renderer = i18n.errorMessages[problem && problem.code];
+  return renderer ? renderer((problem && problem.params) || {}) : (problem && problem.code) || i18n.technicalFailure;
+}
+
+export function formatErrorEnvelope(envelope) {
+  if (!envelope) return i18n.technicalFailure;
+  const renderer = i18n.errorMessages[envelope.code];
+  const summary = renderer ? renderer(envelope.params || {}) : envelope.code || i18n.technicalFailure;
+  return envelope.technicalDetail ? `${summary}: ${envelope.technicalDetail}` : summary;
+}
+
+function errorMessagesZhCN() {
+  return sharedErrorMessages("zh-CN");
+}
+
+function errorMessagesEn() {
+  return sharedErrorMessages("en");
+}
+
+function sharedErrorMessages(language) {
+  const zh = language === "zh-CN";
+  const choose = (chinese, english) => (zh ? chinese : english);
+  return {
+    technical_failure: () => choose("技术操作失败", "Technical operation failed"),
+    workflow_not_found: (p) => choose(`工作流 ${p.name} 不存在`, `workflow ${p.name} does not exist`),
+    workflow_already_exists: (p) => choose(`工作流 ${p.name} 已存在`, `workflow ${p.name} already exists`),
+    run_not_found: (p) => choose(`运行 ${p.id} 不存在`, `run ${p.id} does not exist`),
+    run_already_exists: (p) => choose(`运行 ${p.id} 已存在`, `run ${p.id} already exists`),
+    run_summary_not_found: () => choose("运行总结尚未生成", "run summary has not been generated"),
+    working_directory_not_found: (p) => choose(`工作目录不存在：${p.path}`, `working directory does not exist: ${p.path}`),
+    working_directory_not_directory: (p) => choose(`工作目录不是目录：${p.path}`, `working directory is not a directory: ${p.path}`),
+    working_directory_must_be_absolute: (p) => choose(`工作目录必须是绝对路径（以 / 开头）：${p.path || ""}`, `working directory must be an absolute path (starting with /): ${p.path || ""}`),
+    workflow_validation_failed: () => choose("工作流定义校验未通过", "workflow definition validation failed"),
+    workflow_name_invalid_characters: (p) => choose(`工作流名 "${p.name}" 非法：只允许字母、数字、点、下划线、连字符（[A-Za-z0-9._-]+）`, `invalid workflow name "${p.name}": only letters, digits, dots, underscores, and hyphens are allowed ([A-Za-z0-9._-]+)`),
+    workflow_name_reserved: (p) => choose(`工作流名 "${p.name}" 非法：不能是 . 或 ..`, `invalid workflow name "${p.name}": it cannot be . or ..`),
+    run_id_invalid: (p) => choose(`run id "${p.id}" 非法：只允许字母、数字、点、下划线、连字符，且不能是 . 或 ..`, `invalid run id "${p.id}": only letters, digits, dots, underscores, and hyphens are allowed, and it cannot be . or ..`),
+    run_not_stoppable: (p) => choose(`运行 ${p.id} 当前状态为 ${p.status}，无可终止（仅 running 可终止）`, `run ${p.id} is ${p.status} and cannot be stopped (only running runs can be stopped)`),
+    run_not_resumable: (p) => choose(`运行 ${p.id} 当前状态为 ${p.status}，无法恢复（仅 failed / interrupted 可恢复）`, `run ${p.id} is ${p.status} and cannot be resumed (only failed / interrupted runs can be resumed)`),
+    run_not_deletable: (p) => choose(`运行 ${p.id} 仍在进行中，无法删除；请先终止再删`, `run ${p.id} is still in progress and cannot be deleted; stop it first`),
+    workflow_save_conflict: () => choose("定义已被外部修改，保存基线过期", "the definition was modified externally and the save baseline is stale"),
+    user_prompt_required: () => choose("缺少用户需求：不能为空", "user request is required and cannot be empty"),
+    node_not_found: (p) => choose(`工作流无节点 ${p.id}`, `workflow has no node ${p.id}`),
+    node_already_exists: (p) => choose(`已存在同名节点 "${p.id}"`, `a node named "${p.id}" already exists`),
+    reserved_node_id: (p) => {
+      if (p.action === "remove") return choose(`保留标记节点 ${p.id} 不能删除`, `reserved marker node ${p.id} cannot be removed`);
+      if (p.action === "rename") return choose(`保留标记节点 ${p.id} 不能改名`, `reserved marker node ${p.id} cannot be renamed`);
+      return choose(`节点 id 不得为保留名 ${p.id}`, `node id must not use reserved name ${p.id}`);
+    },
+    invalid_node_id: (p) => choose(`节点 id "${p.id}" 非法（须匹配 ^[A-Za-z_][A-Za-z0-9_-]{0,63}$）`, `invalid node id "${p.id}" (must match ^[A-Za-z_][A-Za-z0-9_-]{0,63}$)`),
+    node_display_name_required: (p) => choose(`节点 ${p.id} 的 displayName 不能为空`, `node ${p.id} displayName cannot be empty`),
+    invalid_request: () => choose("请求体 JSON 解析失败", "failed to parse request body JSON"),
+    invalid_settings_request: () => choose("设置请求无效", "invalid settings request"),
+    unsupported_media_type: () => choose("变更类请求必须为 application/json", "mutating requests must use application/json"),
+    forbidden_origin: (p) => choose(`拒绝：${p.kind} "${p.value}" 不在白名单（仅限本机访问）`, `rejected: ${p.kind} "${p.value}" is not allowlisted (local access only)`),
+    directory_not_found: (p) => choose(`目录不存在：${p.path}`, `directory does not exist: ${p.path}`),
+    path_not_directory: (p) => choose(`不是目录：${p.path}`, `path is not a directory: ${p.path}`),
+    edge_not_found: (p) => choose(`删不存在的边 ${p.from}→${p.to}`, `cannot remove nonexistent edge ${p.from}→${p.to}`),
+    edge_already_exists: (p) => choose(`加已存在的边 ${p.from}→${p.to}`, `cannot add existing edge ${p.from}→${p.to}`),
+    nodes_required: () => choose("不能为空，至少需要一个节点", "cannot be empty; at least one node is required"),
+    duplicate_node_id: (p) => choose(`与前面的节点重复 "${p.id}"`, `duplicates an earlier node "${p.id}"`),
+    start_node_count: (p) => choose(`须恰好含一个 START 标记节点，得到 ${p.count} 个`, `must contain exactly one START marker node; got ${p.count}`),
+    end_node_count: (p) => choose(`须恰好含一个 END 标记节点，得到 ${p.count} 个`, `must contain exactly one END marker node; got ${p.count}`),
+    agent_node_required: () => choose("至少需要一个 agent 节点（START / END 之外）", "at least one agent node besides START / END is required"),
+    marker_field_not_empty: (p) => choose(`标记节点 ${p.id} 的 ${p.field} 必须为空`, `${p.field} must be empty on marker node ${p.id}`),
+    required_field: () => choose("必填", "required"),
+    edge_endpoints_required: () => choose("from / to 不能为空", "from / to cannot be empty"),
+    edge_from_node_not_found: (p) => choose(`from 指向不存在的节点 "${p.id}"`, `from points to nonexistent node "${p.id}"`),
+    edge_to_node_not_found: (p) => choose(`to 指向不存在的节点 "${p.id}"`, `to points to nonexistent node "${p.id}"`),
+    self_edge: (p) => choose(`禁止自环 ${p.from}→${p.to}`, `self-edge ${p.from}→${p.to} is forbidden`),
+    start_end_direct_edge: () => choose("禁止 START→END 直连（须过 ≥1 个 agent 节点）", "a direct START→END edge is forbidden (must pass through at least one agent node)"),
+    edge_to_start: () => choose("禁止边指向 START（START 无入边）", "an edge to START is forbidden (START has no incoming edges)"),
+    edge_from_end: () => choose("禁止边源自 END（END 无出边）", "an edge from END is forbidden (END has no outgoing edges)"),
+    duplicate_edge: (p) => choose(`重复边 ${p.from}→${p.to}`, `duplicate edge ${p.from}→${p.to}`),
+    cycle_detected: (p) => choose(`检测到环 ${p.cycle}`, `cycle detected: ${p.cycle}`),
+    node_missing_incoming_edge: (p) => choose(`agent 节点 "${p.id}" 无入边（须 ≥1 条，可来自 START）`, `agent node "${p.id}" has no incoming edge (at least one is required and may come from START)`),
+    node_missing_outgoing_edge: (p) => choose(`agent 节点 "${p.id}" 无出边（须 ≥1 条，可到 END）`, `agent node "${p.id}" has no outgoing edge (at least one is required and may go to END)`),
+    unknown_system_variable: (p) => choose(`引用未知系统变量 {{${p.key}}}（仅支持 sys.userPrompt / sys.cwd / sys.runId）`, `references unknown system variable {{${p.key}}} (only sys.userPrompt / sys.cwd / sys.runId are supported)`),
+    marker_node_reference: (p) => choose(`禁止引用标记节点 {{${p.id}}}（无产物）`, `referencing marker node {{${p.id}}} is forbidden (it has no artifact)`),
+    non_ancestor_node_reference: (p) => choose(`引用非上游祖先节点 {{${p.id}}}（数据流须来自沿边可达的前驱）`, `references non-upstream-ancestor node {{${p.id}}} (data must come from a predecessor reachable along edges)`),
+    node_reference_not_found: (p) => choose(`引用不存在的节点 {{${p.id}}}`, `references nonexistent node {{${p.id}}}`),
+    unknown_engine: (p) => choose(`未知引擎 "${p.engine}"（可用：${p.available}）`, `unknown engine "${p.engine}" (available: ${p.available})`),
+    engine_capability_unavailable: (p) => choose(`engine="${p.engine}" 的能力表待实装，暂不接受配置字段`, `the capability table for engine="${p.engine}" is not implemented; configuration fields are not currently accepted`),
+    engine_model_not_allowed: (p) => choose(`engine="${p.engine}" 不接受 model`, `engine="${p.engine}" does not accept model`),
+    engine_effort_field_not_allowed: (p) => choose(
+      `engine="${p.engine}" 不认 ${p.field}${p.expectedField ? `（该引擎用 ${p.expectedField}）` : ""}`,
+      `engine="${p.engine}" does not accept ${p.field}${p.expectedField ? ` (this engine uses ${p.expectedField})` : ""}`,
+    ),
+    engine_effort_value_not_allowed: (p) => choose(`"${p.value}" 不在 engine="${p.engine}" 允许集 [${p.allowed}] 内`, `"${p.value}" is not in the allowed set [${p.allowed}] for engine="${p.engine}"`),
+  };
+}
+
+setLanguage("en");

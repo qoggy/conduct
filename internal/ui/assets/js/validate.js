@@ -2,10 +2,11 @@
 // 反馈（画布红点 / 顶栏「可运行」状态 / 拖拽连边即时拒环）。这不是终裁——服务端 ValidateStructured
 // 才是终裁（保存 422 逐字段标错）；本文件须与 Go 版规则同步维护（见 ui.md〈已知限制〉）。
 //
-// 返回的 Problem 形状与服务端一致：{path, message}，path 为 "nodes[i].xxx" / "edges[i]" /
-// "nodes" / "edges"，故本地问题与服务端 422 问题能共用同一套「点击定位到字段」的渲染逻辑。
+// 返回的 Problem 形状与服务端一致：{path, code, params, message}。code/params 是稳定身份，message
+// 由当前 UI 字典渲染；path 用于定位字段，故本地问题与服务端 422 问题能共用同一套渲染逻辑。
 
 import { NODE_ID_START, NODE_ID_END, isAgent, isMarker, detectCycle, ancestors } from "./graph.js";
+import { formatProblem } from "./i18n.js";
 
 export const NODE_ID_RE = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const TEMPLATE_VAR_RE = /\\?\{\{([a-zA-Z_][\w.-]*)\}\}/g;
@@ -16,7 +17,7 @@ export function localProblems(def) {
   const nodes = def.nodes || [];
   const edges = def.edges || [];
   if (nodes.length === 0) {
-    return [{ path: "nodes", message: "不能为空，至少需要一个节点" }];
+    return [problem("nodes", "nodes_required")];
   }
 
   const problems = [];
@@ -30,31 +31,31 @@ export function localProblems(def) {
     else agentCount++;
     if (!node.id) return; // 空 id 的必填错误在下方 agent 校验里报出
     if (indexByID.has(node.id)) {
-      problems.push({ path: `nodes[${i}].id`, message: `与前面的节点重复 "${node.id}"` });
+      problems.push(problem(`nodes[${i}].id`, "duplicate_node_id", { id: node.id }));
       return;
     }
     indexByID.set(node.id, i);
   });
   const validNodeID = (id) => indexByID.has(id);
 
-  if (startCount !== 1) problems.push({ path: "nodes", message: `须恰好含一个 START 标记节点，得到 ${startCount} 个` });
-  if (endCount !== 1) problems.push({ path: "nodes", message: `须恰好含一个 END 标记节点，得到 ${endCount} 个` });
-  if (agentCount === 0) problems.push({ path: "nodes", message: "至少需要一个 agent 节点（START / END 之外）" });
+  if (startCount !== 1) problems.push(problem("nodes", "start_node_count", { count: startCount }));
+  if (endCount !== 1) problems.push(problem("nodes", "end_node_count", { count: endCount }));
+  if (agentCount === 0) problems.push(problem("nodes", "agent_node_required"));
 
   nodes.forEach((node, i) => {
     const path = `nodes[${i}]`;
     if (isMarker(node.id)) {
-      if (node.displayName) problems.push({ path: path + ".displayName", message: `标记节点 ${node.id} 的 displayName 必须为空` });
-      if (node.engine) problems.push({ path: path + ".engine", message: `标记节点 ${node.id} 的 engine 必须为空` });
-      if (node.promptTemplate) problems.push({ path: path + ".promptTemplate", message: `标记节点 ${node.id} 的 promptTemplate 必须为空` });
-      if (node.engineConfig) problems.push({ path: path + ".engineConfig", message: `标记节点 ${node.id} 的 engineConfig 必须为空` });
+      if (node.displayName) problems.push(problem(path + ".displayName", "marker_field_not_empty", { id: node.id, field: "displayName" }));
+      if (node.engine) problems.push(problem(path + ".engine", "marker_field_not_empty", { id: node.id, field: "engine" }));
+      if (node.promptTemplate) problems.push(problem(path + ".promptTemplate", "marker_field_not_empty", { id: node.id, field: "promptTemplate" }));
+      if (node.engineConfig) problems.push(problem(path + ".engineConfig", "marker_field_not_empty", { id: node.id, field: "engineConfig" }));
       return;
     }
-    if (!node.id) problems.push({ path: path + ".id", message: "必填" });
-    else if (!NODE_ID_RE.test(node.id)) problems.push({ path: path + ".id", message: `"${node.id}" 非法（须匹配 ^[A-Za-z_][A-Za-z0-9_-]{0,63}$）` });
-    if (!node.displayName) problems.push({ path: path + ".displayName", message: "必填" });
-    if (!node.engine) problems.push({ path: path + ".engine", message: "必填" });
-    if (!node.promptTemplate) problems.push({ path: path + ".promptTemplate", message: "必填" });
+    if (!node.id) problems.push(problem(path + ".id", "required_field", { field: "id" }));
+    else if (!NODE_ID_RE.test(node.id)) problems.push(problem(path + ".id", "invalid_node_id", { id: node.id }));
+    if (!node.displayName) problems.push(problem(path + ".displayName", "required_field", { field: "displayName" }));
+    if (!node.engine) problems.push(problem(path + ".engine", "required_field", { field: "engine" }));
+    if (!node.promptTemplate) problems.push(problem(path + ".promptTemplate", "required_field", { field: "promptTemplate" }));
     // engineConfig 的能力表校验（该引擎是否接受 model / effort 等）交服务端终裁：编辑器已按能力表
     // 条件渲染字段，正常操作路径不该产出非法组合，本地不重复这套判别联合。
   });
@@ -63,20 +64,20 @@ export function localProblems(def) {
   edges.forEach((edge, i) => {
     const path = `edges[${i}]`;
     if (!edge.from || !edge.to) {
-      problems.push({ path, message: "from / to 不能为空" });
+      problems.push(problem(path, "edge_endpoints_required"));
       return;
     }
-    if (!validNodeID(edge.from)) problems.push({ path, message: `from 指向不存在的节点 "${edge.from}"` });
-    if (!validNodeID(edge.to)) problems.push({ path, message: `to 指向不存在的节点 "${edge.to}"` });
-    if (edge.from === edge.to) problems.push({ path, message: `禁止自环 ${edge.from}→${edge.to}` });
+    if (!validNodeID(edge.from)) problems.push(problem(path, "edge_from_node_not_found", { id: edge.from }));
+    if (!validNodeID(edge.to)) problems.push(problem(path, "edge_to_node_not_found", { id: edge.to }));
+    if (edge.from === edge.to) problems.push(problem(path, "self_edge", { from: edge.from, to: edge.to }));
     if (edge.from === NODE_ID_START && edge.to === NODE_ID_END) {
-      problems.push({ path, message: "禁止 START→END 直连（须过 ≥1 个 agent 节点）" });
+      problems.push(problem(path, "start_end_direct_edge"));
     } else {
-      if (edge.to === NODE_ID_START) problems.push({ path, message: "禁止边指向 START（START 无入边）" });
-      if (edge.from === NODE_ID_END) problems.push({ path, message: "禁止边源自 END（END 无出边）" });
+      if (edge.to === NODE_ID_START) problems.push(problem(path, "edge_to_start"));
+      if (edge.from === NODE_ID_END) problems.push(problem(path, "edge_from_end"));
     }
     const key = edge.from + "\u0000" + edge.to;
-    if (seen.has(key)) problems.push({ path, message: `重复边 ${edge.from}→${edge.to}` });
+    if (seen.has(key)) problems.push(problem(path, "duplicate_edge", { from: edge.from, to: edge.to }));
     seen.add(key);
   });
 
@@ -89,12 +90,12 @@ export function localProblems(def) {
   nodes.forEach((node, i) => {
     if (!isAgent(node.id)) return;
     const path = `nodes[${i}]`;
-    if (!inDeg.get(node.id)) problems.push({ path, message: `agent 节点 "${node.id}" 无入边（须 ≥1 条，可来自 START）` });
-    if (!outDeg.get(node.id)) problems.push({ path, message: `agent 节点 "${node.id}" 无出边（须 ≥1 条，可到 END）` });
+    if (!inDeg.get(node.id)) problems.push(problem(path, "node_missing_incoming_edge", { id: node.id }));
+    if (!outDeg.get(node.id)) problems.push(problem(path, "node_missing_outgoing_edge", { id: node.id }));
   });
 
   const cycle = detectCycle(def);
-  if (cycle) problems.push({ path: "edges", message: "检测到环 " + cycle.join("→") });
+  if (cycle) problems.push(problem("edges", "cycle_detected", { cycle: cycle.join("→") }));
 
   if (!cycle) {
     nodes.forEach((node, i) => {
@@ -108,21 +109,28 @@ export function localProblems(def) {
         const [full, key] = m;
         if (full.startsWith("\\")) continue; // 转义 \{{x}} → 字面量，不校验
         if (key.startsWith("sys.")) {
-          if (!KNOWN_SYS_VARS.has(key)) problems.push({ path, message: `引用未知系统变量 {{${key}}}（仅支持 sys.userPrompt / sys.cwd / sys.runId）` });
+          if (!KNOWN_SYS_VARS.has(key)) problems.push(problem(path, "unknown_system_variable", { key }));
           continue;
         }
         if (key === NODE_ID_START || key === NODE_ID_END) {
-          problems.push({ path, message: `禁止引用标记节点 {{${key}}}（无产物）` });
+          problems.push(problem(path, "marker_node_reference", { id: key }));
           continue;
         }
         if (anc.has(key)) continue;
-        if (validNodeID(key)) problems.push({ path, message: `引用非上游祖先节点 {{${key}}}（数据流须来自沿边可达的前驱）` });
-        else problems.push({ path, message: `引用不存在的节点 {{${key}}}` });
+        if (validNodeID(key)) problems.push(problem(path, "non_ancestor_node_reference", { id: key }));
+        else problems.push(problem(path, "node_reference_not_found", { id: key }));
       }
     });
   }
 
   return problems;
+}
+
+function problem(path, code, params) {
+  const item = { path, code };
+  if (params) item.params = params;
+  item.message = formatProblem(item);
+  return item;
 }
 
 // renameTemplateRef 把模板里的活引用 {{oldKey}} 改名为 {{newKey}}；转义的 \{{oldKey}} 是字面量、不动。

@@ -33,6 +33,8 @@
 | `-h, --help` | 打印该命令的用法与选项后退出 `0` |
 | `--version` | 仅根命令 `conduct --version`：打印版本号后退出 `0`（等价 `conduct version`；子命令不挂此旗标，与 gh / kubectl 惯例一致） |
 
+**界面语言**：CLI 面向人的产品文案（包括 help、用法/领域错误、校验、确认、成功/警告、空态和人读输出）统一按 `~/.conduct/settings.json` 的 `language` > `LC_ALL` > `LC_MESSAGES` > `LANG` > 英文解析。设置文件或属性缺失时才继续读取环境变量；设置无法读取、JSON 损坏或值非法时以固定英文技术诊断报错退出。高优先级环境变量非空但无法识别时直接使用英文，不再读取低优先级变量。不提供应用专属语言环境变量或 `--lang` 参数。底层技术诊断固定英文，机器协议与用户/引擎原文不翻译；完整规则见 [i18n.md](./i18n.md)。
+
 **fail-loud 基线**：错误一律显式报出并以非 0 退出，绝不静默吞掉、绝不用空动作冒充成功（承自项目编码规范「错误不吞 / 不假装成功」）。
 
 统一退出码见文末〈退出码约定〉。
@@ -213,6 +215,6 @@ conduct help workflow node set  # 查看多级命令用法
 | `version` | **已实现**（构建期 `ldflags` 注入版本；根命令 `--version` 等价） |
 | `ui` | **已实现**（`conduct ui --port/--open`、服务端已注册 API、self-exec 发射器与内嵌 SPA 均已落地；只绑 127.0.0.1、启动探测 store、Host/Origin 白名单、变更类强制 JSON。`ui.md` 明确延后的 node / edge 粒度端点不在当前已实现面，编辑器通过整体 `PUT` 保存；浏览器交互按 `docs/test-cases/ui-frontend.md` 验收） |
 | `update` | **已实现**（`internal/cli/update.go`：经 `creativeprojects/go-selfupdate` 从 GitHub Releases 下载匹配架构资产、`checksums.txt` 校验、原地替换；`--check` / `--pre` / 显式版本；Homebrew 前缀拒绝自替换；非规范当前版本跳过比较。资产命名与 `.goreleaser.yaml` 对齐，改一处须同步另一处） |
-| `help` | **部分实现**（命令 + `internal/help` 内嵌 `go:embed` 落地；当前仅 `prompts` 一个主题，按概念继续扩充） |
+| `help` | **部分实现**（命令 + `internal/help` 内嵌 `go:embed` 落地；`--help`、命令路径帮助与内嵌主题已按 `settings.json` > `LC_ALL` > `LC_MESSAGES` > `LANG` > 英文的统一规则支持中英文；当前仅 `prompts` 一个主题，按概念继续扩充） |
 
 `ui` 的实现边界与延后端点以 [ui.md](./ui.md)〈配套实现状态〉为准；浏览器验收步骤维护在 [ui-frontend.md](../test-cases/ui-frontend.md)，不在规格中记录某次测试执行状态。

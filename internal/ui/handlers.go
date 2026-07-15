@@ -9,8 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/engine"
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/qoggy/conduct/internal/run"
 	"github.com/qoggy/conduct/internal/store"
 	"github.com/qoggy/conduct/internal/workflow"
@@ -34,15 +37,87 @@ func (s *Server) handleEngines(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, infos)
 }
 
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	settings, err := locale.Read(s.store.Root())
+	if err != nil {
+		writeTechnicalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeTechnicalError(w, http.StatusInternalServerError, fmt.Errorf("failed to read settings request body: %w", err))
+		return
+	}
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed[0] != '{' {
+		writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("body_object", ""))
+		return
+	}
+	var body map[string]json.RawMessage
+	decoder := json.NewDecoder(strings.NewReader(trimmed))
+	if err := decoder.Decode(&body); err != nil {
+		writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("body_object", ""))
+		return
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("body_object", ""))
+		return
+	}
+	for field := range body {
+		if field != "language" {
+			writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("unknown_field", field))
+			return
+		}
+	}
+	encoded, ok := body["language"]
+	if !ok {
+		writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("language_required", ""))
+		return
+	}
+	var language *locale.Language
+	if string(encoded) != "null" {
+		var value string
+		if err := json.Unmarshal(encoded, &value); err != nil {
+			writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("language_type", ""))
+			return
+		}
+		parsed := locale.Language(value)
+		if !parsed.Valid() {
+			writeApplicationError(w, http.StatusBadRequest, invalidSettingsRequest("language_type", ""))
+			return
+		}
+		language = &parsed
+	}
+	settings, err := locale.UpdateLanguage(s.store.Root(), language)
+	if err != nil {
+		writeTechnicalError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+func invalidSettingsRequest(reason, field string) *apperror.Error {
+	params := apperror.Params{"reason": reason}
+	if field != "" {
+		params["field"] = field
+	}
+	return apperror.New(apperror.CodeInvalidSettingsRequest, params)
+}
+
 func (s *Server) handleListWorkflows(w http.ResponseWriter, r *http.Request) {
 	workflows, skipped, err := s.store.List()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeErrorValue(w, http.StatusInternalServerError, err)
 		return
 	}
 	runningByWorkflow, err := s.runningCounts()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeErrorValue(w, http.StatusInternalServerError, err)
 		return
 	}
 	summaries := make([]workflowSummary, 0, len(workflows))
@@ -63,12 +138,12 @@ func (s *Server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := workflow.ValidateName(req.Name); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	wf := &workflow.Workflow{Name: req.Name, Definition: workflow.Scaffold()}
 	if err := s.store.Create(wf); err != nil { // Create 内部戳时间戳 + 落盘
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, wf)
@@ -77,12 +152,12 @@ func (s *Server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetWorkflow(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := workflow.ValidateName(name); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	wf, err := s.store.Load(name)
 	if err != nil {
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	// 刻意不做语义 Validate：编辑器须能载入语义非法的定义去修复（校验在保存时把关，见 handlePutWorkflow）。
@@ -92,21 +167,21 @@ func (s *Server) handleGetWorkflow(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePutWorkflow(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := workflow.ValidateName(name); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "读取请求体失败: "+err.Error())
+		writeTechnicalError(w, http.StatusBadRequest, fmt.Errorf("failed to read request body: %w", err))
 		return
 	}
 	body2, err := workflow.ParseDefinition(body) // 主体或整条记录皆容忍（解包 definition、忽略元数据）；DisallowUnknownFields 拒拼写错误
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	if problems := workflow.ValidateStructured(body2); len(problems) > 0 {
-		writeProblems(w, "定义校验未通过", problemsFrom(problems))
+		writeProblems(w, problemsFrom(problems))
 		return
 	}
 	// 乐观并发：客户端带载入时 updatedAt 基线；若已被外部（CLI edit / 另一标签页）改过 → 409 + 现记录，
@@ -114,12 +189,12 @@ func (s *Server) handlePutWorkflow(w http.ResponseWriter, r *http.Request) {
 	if baseline := r.Header.Get("X-Conduct-Base-UpdatedAt"); baseline != "" {
 		current, err := s.store.Load(name)
 		if err != nil {
-			writeError(w, statusForStoreError(err), err.Error())
+			writeErrorValue(w, statusForStoreError(err), err)
 			return
 		}
 		if current.UpdatedAt != baseline {
 			writeJSON(w, http.StatusConflict, conflictResponse{
-				Error:   "定义已被外部修改，保存基线过期",
+				Error:   envelopeFrom(apperror.New(apperror.CodeWorkflowSaveConflict, nil)),
 				Current: current,
 			})
 			return
@@ -127,7 +202,7 @@ func (s *Server) handlePutWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 	wf := &workflow.Workflow{Name: name, Definition: *body2}
 	if err := s.store.ReplaceDefinition(wf); err != nil { // 整体替换兼作坏文件恢复通道；可读时保留 createdAt
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wf)
@@ -136,7 +211,7 @@ func (s *Server) handlePutWorkflow(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRenameWorkflow(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := workflow.ValidateName(name); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	var req renameRequest
@@ -144,16 +219,16 @@ func (s *Server) handleRenameWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := workflow.ValidateName(req.NewName); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	if err := s.store.Rename(name, req.NewName); err != nil {
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	wf, err := s.store.Load(req.NewName)
 	if err != nil {
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wf)
@@ -164,7 +239,7 @@ func (s *Server) handleRenameWorkflow(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCopyWorkflow(w http.ResponseWriter, r *http.Request) {
 	src := r.PathValue("name")
 	if err := workflow.ValidateName(src); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	var req copyRequest
@@ -172,22 +247,26 @@ func (s *Server) handleCopyWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := workflow.ValidateName(req.NewName); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	srcWorkflow, err := s.store.Load(src) // 源不存在 → ErrNotExist → 404
 	if err != nil {
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	copied := srcWorkflow.CopyAs(req.NewName)
 	// 防御式校验：源已在库应已合法，仍校验一遍；不过即拒、不写盘（与 CLI copy 同）。
 	if err := workflow.Validate(&copied.Definition); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		if validationError, ok := apperror.As(err); ok {
+			writeApplicationError(w, http.StatusUnprocessableEntity, validationError)
+		} else {
+			writeTechnicalError(w, http.StatusUnprocessableEntity, err)
+		}
 		return
 	}
 	if err := s.store.Create(copied); err != nil { // 目标已存在 → ErrExists → 409；内部戳时间戳 + Normalize + 落盘
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, copied)
@@ -196,11 +275,11 @@ func (s *Server) handleCopyWorkflow(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := workflow.ValidateName(name); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	if err := s.store.Delete(name); err != nil {
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -209,7 +288,7 @@ func (s *Server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLaunchRun(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := workflow.ValidateName(name); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	var req launchRequest
@@ -220,14 +299,10 @@ func (s *Server) handleLaunchRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var launchErr *launchError
 		if errors.As(err, &launchErr) {
-			if len(launchErr.problems) > 0 {
-				writeProblems(w, launchErr.Error(), launchErr.problems)
-				return
-			}
-			writeError(w, launchErr.status, launchErr.Error())
+			writeApplicationError(w, launchErr.status, launchErr.applicationError)
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeTechnicalError(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, launchResponse{RunID: runID, Note: note})
@@ -236,7 +311,7 @@ func (s *Server) handleLaunchRun(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	records, skipped, err := s.store.ListRuns()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeTechnicalError(w, http.StatusInternalServerError, err)
 		return
 	}
 	workflowFilter := r.URL.Query().Get("workflow")
@@ -253,7 +328,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 		// 进度分子按唯一 nodeId 且 success 去重（防 resume 后 k>N，见 cli-runtime.md〈run resume〉）。
 		progress, err := s.store.CountProgress(record.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeTechnicalError(w, http.StatusInternalServerError, err)
 			return
 		}
 		summaries = append(summaries, runSummary{
@@ -273,12 +348,12 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := run.ValidateID(id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	record, err := s.store.LoadRun(id)
 	if err != nil {
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	record.Status = record.EffectiveStatus() // 对外一律展示派生态（running 但 pid 已死 → interrupted）
@@ -286,7 +361,7 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("trace") == "1" {
 		trace, err := s.store.LoadTrace(id)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeTechnicalError(w, http.StatusInternalServerError, err)
 			return
 		}
 		detail.Trace = &trace // 恒非 nil（LoadTrace 空时返回 []），故 ?trace=1 恒有 trace 字段（空则为 []）
@@ -295,7 +370,7 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	} else {
 		progress, err := s.store.CountProgress(id)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeTechnicalError(w, http.StatusInternalServerError, err)
 			return
 		}
 		detail.Progress = progress
@@ -306,25 +381,25 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetSummary(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := run.ValidateID(id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	record, err := s.store.LoadRun(id)
 	if err != nil {
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	if status := record.EffectiveStatus(); status == run.StatusRunning || status == run.StatusInterrupted {
-		writeError(w, http.StatusNotFound, store.ErrSummaryNotExist.Error())
+		writeApplicationError(w, http.StatusNotFound, apperror.New(apperror.CodeRunSummaryNotFound, apperror.Params{"id": id}))
 		return
 	}
 	markdown, err := s.store.ReadSummary(id)
 	if err != nil {
 		if errors.Is(err, store.ErrSummaryNotExist) {
-			writeError(w, http.StatusNotFound, err.Error()) // running 期尚未生成，如实 404
+			writeErrorValue(w, http.StatusNotFound, err) // running 期尚未生成，如实 404
 			return
 		}
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	writeText(w, http.StatusOK, "text/markdown; charset=utf-8", markdown)
@@ -333,23 +408,23 @@ func (s *Server) handleGetSummary(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := run.ValidateID(id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	record, err := s.store.LoadRun(id)
 	if err != nil {
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	// 用派生态判断：running 且 pid 已死会被折算为 interrupted，天然拦下「进程早没了」的重复终止。
 	if status := record.EffectiveStatus(); status != run.StatusRunning {
-		writeError(w, http.StatusConflict,
-			fmt.Sprintf("运行 %s 当前状态为 %s，无可终止（仅 running 可终止）", id, status))
+		writeApplicationError(w, http.StatusConflict, apperror.New(apperror.CodeRunNotStoppable,
+			apperror.Params{"id": id, "status": status}))
 		return
 	}
 	if err := run.StopProcess(record.Pid); err != nil {
-		writeError(w, http.StatusInternalServerError,
-			fmt.Sprintf("终止运行 %s（pid %d）失败: %v", id, record.Pid, err))
+		writeTechnicalError(w, http.StatusInternalServerError,
+			fmt.Errorf("failed to stop run %s (pid %d): %w", id, record.Pid, err))
 		return
 	}
 	writeJSON(w, http.StatusOK, stopResponse{ID: id, Pid: record.Pid, Signal: "SIGTERM"})
@@ -361,27 +436,27 @@ func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := run.ValidateID(id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	record, err := s.store.LoadRun(id)
 	if err != nil {
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	if status := record.EffectiveStatus(); status != run.StatusFailed && status != run.StatusInterrupted {
-		writeError(w, http.StatusConflict,
-			fmt.Sprintf("运行 %s 当前状态为 %s，无法恢复（仅 failed / interrupted 可恢复）", id, status))
+		writeApplicationError(w, http.StatusConflict, apperror.New(apperror.CodeRunNotResumable,
+			apperror.Params{"id": id, "status": status}))
 		return
 	}
 	runID, note, err := s.resumeRun(id)
 	if err != nil {
 		var launchErr *launchError
 		if errors.As(err, &launchErr) {
-			writeError(w, launchErr.status, launchErr.Error())
+			writeApplicationError(w, launchErr.status, launchErr.applicationError)
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeTechnicalError(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, launchResponse{RunID: runID, Note: note})
@@ -392,22 +467,21 @@ func (s *Server) handleResumeRun(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := run.ValidateID(id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorValue(w, http.StatusBadRequest, err)
 		return
 	}
 	record, err := s.store.LoadRun(id)
 	if err != nil {
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	// 派生态判断：running 但 pid 已死会折算为 interrupted（可删），与 run rm / run stop 同源。
 	if status := record.EffectiveStatus(); status == run.StatusRunning {
-		writeError(w, http.StatusConflict,
-			fmt.Sprintf("运行 %s 仍在进行中，无法删除；请先终止再删", id))
+		writeApplicationError(w, http.StatusConflict, apperror.New(apperror.CodeRunNotDeletable, apperror.Params{"id": id}))
 		return
 	}
 	if err := s.store.RemoveRun(id); err != nil {
-		writeError(w, statusForStoreError(err), err.Error())
+		writeErrorValue(w, statusForStoreError(err), err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -422,32 +496,32 @@ func (s *Server) handleFS(w http.ResponseWriter, r *http.Request) {
 		// 未指定则从用户主目录起步（选择器一打开就在 home，符合直觉）。
 		home, err := os.UserHomeDir()
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "无法解析主目录: "+err.Error())
+			writeTechnicalError(w, http.StatusInternalServerError, fmt.Errorf("failed to resolve user home directory: %w", err))
 			return
 		}
 		dir = home
 	}
 	if !filepath.IsAbs(dir) {
-		writeError(w, http.StatusBadRequest, "path 必须是绝对路径（以 / 开头）")
+		writeApplicationError(w, http.StatusBadRequest, apperror.New(apperror.CodeWorkingDirectoryMustBeAbs, apperror.Params{"path": dir}))
 		return
 	}
 	dir = filepath.Clean(dir)
 	info, err := os.Stat(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			writeError(w, http.StatusNotFound, "目录不存在: "+dir)
+			writeApplicationError(w, http.StatusNotFound, apperror.New(apperror.CodeDirectoryNotFound, apperror.Params{"path": dir}))
 			return
 		}
-		writeError(w, http.StatusBadRequest, "无法访问目录: "+err.Error())
+		writeTechnicalError(w, http.StatusBadRequest, fmt.Errorf("failed to access directory %s: %w", dir, err))
 		return
 	}
 	if !info.IsDir() {
-		writeError(w, http.StatusBadRequest, "不是目录: "+dir)
+		writeApplicationError(w, http.StatusBadRequest, apperror.New(apperror.CodePathNotDirectory, apperror.Params{"path": dir}))
 		return
 	}
 	items, err := os.ReadDir(dir)
 	if err != nil {
-		writeError(w, http.StatusForbidden, "无法读取目录: "+err.Error())
+		writeTechnicalError(w, http.StatusForbidden, fmt.Errorf("failed to read directory %s: %w", dir, err))
 		return
 	}
 	entries := make([]fsEntry, 0, len(items))
@@ -478,7 +552,7 @@ func (s *Server) handleFS(w http.ResponseWriter, r *http.Request) {
 // decodeJSON 解析请求体 JSON；失败即 400 并返回 false（调用方据此提前 return）。
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("请求体 JSON 解析失败: %v", err))
+		writeApplicationError(w, http.StatusBadRequest, apperror.New(apperror.CodeInvalidRequest, apperror.Params{"reason": "invalid_json"}))
 		return false
 	}
 	return true

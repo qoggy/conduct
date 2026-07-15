@@ -3,6 +3,7 @@ package cli
 import (
 	"testing"
 
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/qoggy/conduct/internal/workflow"
 )
 
@@ -27,6 +28,7 @@ func TestNodeShowPromptRoundTripByteStable(t *testing.T) {
 // —— modelDisplay：无 config / 空 model 回落「(引擎默认)」，否则原样 ——
 
 func TestModelDisplay(t *testing.T) {
+	useTestLanguage(t, locale.Chinese)
 	if got := modelDisplay(nil); got != "(引擎默认)" {
 		t.Fatalf("nil config 应回落 (引擎默认)，得到 %q", got)
 	}

@@ -1,15 +1,14 @@
 package ui
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
 
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/launch"
 	"github.com/qoggy/conduct/internal/run"
-	"github.com/qoggy/conduct/internal/store"
 	"github.com/qoggy/conduct/internal/workflow"
 )
 
@@ -20,15 +19,14 @@ import (
 
 // launchError 是发射失败的分类错误：status 决定 HTTP 码，problems 非空时走 422 字段级错误。
 type launchError struct {
-	status   int
-	message  string
-	problems []problem
+	status           int
+	applicationError *apperror.Error
 }
 
-func (e *launchError) Error() string { return e.message }
+func (e *launchError) Error() string { return e.applicationError.Error() }
 
-func newLaunchError(status int, format string, a ...any) *launchError {
-	return &launchError{status: status, message: fmt.Sprintf(format, a...)}
+func newLaunchError(status int, applicationError *apperror.Error) *launchError {
+	return &launchError{status: status, applicationError: applicationError}
 }
 
 // launchRun 发射一次运行并返回其 run id：先做 UI 的只读 preflight（毫秒级 400/404/422），
@@ -42,7 +40,7 @@ func (s *Server) launchRun(name, userPrompt, cwd string) (runID, note string, er
 	runID, note, err = launcher.Launch(name, userPrompt, absCwd)
 	if err != nil {
 		// 发射器的失败（spawn 失败 / 子进程写 run.json 前就死）对 UI 一律是 500。
-		return "", "", newLaunchError(http.StatusInternalServerError, "%s", err.Error())
+		return "", "", newLaunchError(http.StatusInternalServerError, apperror.Technical(err.Error(), err))
 	}
 	return runID, note, nil
 }
@@ -55,7 +53,7 @@ func (s *Server) resumeRun(id string) (runID, note string, err error) {
 	launcher := launch.NewLauncher(s.exePath, s.store, s.stderrDir, s.now)
 	runID, note, err = launcher.LaunchResume(id)
 	if err != nil {
-		return "", "", newLaunchError(http.StatusInternalServerError, "%s", err.Error())
+		return "", "", newLaunchError(http.StatusInternalServerError, apperror.Technical(err.Error(), err))
 	}
 	return runID, note, nil
 }
@@ -66,32 +64,31 @@ func (s *Server) resumeRun(id string) (runID, note string, err error) {
 func (s *Server) preflight(name, userPrompt, cwd string) (string, error) {
 	wf, err := s.store.Load(name)
 	if err != nil {
-		if errors.Is(err, store.ErrNotExist) {
-			return "", newLaunchError(http.StatusNotFound, "%s", err.Error())
+		if applicationError, ok := apperror.As(err); ok {
+			return "", newLaunchError(statusForStoreError(err), applicationError)
 		}
-		return "", newLaunchError(http.StatusBadRequest, "%s", err.Error())
+		return "", newLaunchError(http.StatusBadRequest, apperror.Technical(err.Error(), err))
 	}
 	if problems := workflow.ValidateStructured(&wf.Definition); len(problems) > 0 {
-		return "", &launchError{
-			status:   http.StatusUnprocessableEntity,
-			message:  "工作流定义校验未通过，无法运行",
-			problems: problemsFrom(problems),
-		}
+		return "", newLaunchError(http.StatusUnprocessableEntity, apperror.Validation(problemsFrom(problems)))
 	}
 	if strings.TrimSpace(userPrompt) == "" {
-		return "", newLaunchError(http.StatusBadRequest, "缺少用户需求：不能为空")
+		return "", newLaunchError(http.StatusBadRequest, apperror.New(apperror.CodeUserPromptRequired, nil))
 	}
 	// UI 无 shell，不做 ~ 展开、也不把相对路径拼到进程启动目录（那是用户看不见的隐藏基准）。
 	// 显式要求绝对路径：非空却不以 / 开头 → 就地报错。留空则用进程启动目录（默认）。
 	if cwd != "" && !filepath.IsAbs(cwd) {
-		return "", newLaunchError(http.StatusBadRequest, "工作目录必须是绝对路径（以 / 开头）：%s", cwd)
+		return "", newLaunchError(http.StatusBadRequest, apperror.New(apperror.CodeWorkingDirectoryMustBeAbs, apperror.Params{"path": cwd}))
 	}
 	abs, err := filepath.Abs(cwd)
 	if err != nil {
-		return "", newLaunchError(http.StatusBadRequest, "解析工作目录失败: %v", err)
+		return "", newLaunchError(http.StatusBadRequest, apperror.Technical(fmt.Sprintf("failed to resolve working directory: %v", err), err))
 	}
 	if err := run.ValidateWorkingDir(abs); err != nil {
-		return "", newLaunchError(http.StatusBadRequest, "%s", err.Error())
+		if applicationError, ok := apperror.As(err); ok {
+			return "", newLaunchError(http.StatusBadRequest, applicationError)
+		}
+		return "", newLaunchError(http.StatusBadRequest, apperror.Technical(err.Error(), err))
 	}
 	return abs, nil
 }

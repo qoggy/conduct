@@ -14,8 +14,8 @@ func newWorkflowListCommand() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "列出全部工作流",
-		Args:  requireArgs(cobra.NoArgs),
+		Short: localizedHelpText("列出全部工作流", "List all workflows"),
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := openStore()
 			if err != nil {
@@ -26,17 +26,17 @@ func newWorkflowListCommand() *cobra.Command {
 				return err
 			}
 			for _, skipErr := range skipped {
-				fmt.Fprintln(cmd.ErrOrStderr(), "警告: 跳过无法解析的工作流: "+skipErr.Error())
+				fmt.Fprintln(cmd.ErrOrStderr(), localizedHelpText("警告: 跳过无法解析的工作流: ", "warning: skipped an unreadable workflow: ")+skipErr.Error())
 			}
 			if asJSON {
 				return printJSON(cmd, listItems(workflows))
 			}
 			if len(workflows) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "（store 为空）")
+				fmt.Fprintln(cmd.OutOrStdout(), localizedHelpText("（store 为空）", "(workflow store is empty)"))
 				return nil
 			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(writer, "NAME\tNODES\tUPDATED")
+			fmt.Fprintln(writer, localizedHelpText("名称\t节点\t更新时间", "NAME\tNODES\tUPDATED"))
 			for _, wf := range workflows {
 				fmt.Fprintf(writer, "%s\t%s\t%s\n",
 					wf.Name, nodeIDStream(wf), formatTimestamp(wf.UpdatedAt))
@@ -44,7 +44,7 @@ func newWorkflowListCommand() *cobra.Command {
 			return writer.Flush()
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "以机器可读 JSON 输出")
+	cmd.Flags().BoolVar(&asJSON, "json", false, localizedHelpText("以机器可读 JSON 输出", "Output machine-readable JSON"))
 	return cmd
 }
 

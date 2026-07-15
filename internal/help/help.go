@@ -9,6 +9,8 @@ package help
 import (
 	"embed"
 	"fmt"
+
+	"github.com/qoggy/conduct/internal/locale"
 )
 
 //go:embed *.md
@@ -18,32 +20,51 @@ var topicFiles embed.FS
 type Topic struct {
 	Name  string // 调用名，如 "prompts"（→ conduct help prompts）
 	Short string // 一行简介，列在主题清单里
-	file  string // 内嵌的 markdown 文件名
 }
 
-// topics 是全部已注册主题。新增主题：往本包放一个 .md，并在此登记一行。
-var topics = []Topic{
-	{Name: "prompts", Short: "怎么写好节点 promptTemplate：模板变量、节点隔离、最佳实践", file: "prompts.md"},
+type topicDefinition struct {
+	name         string
+	chineseShort string
+	englishShort string
+	chineseFile  string
+	englishFile  string
+}
+
+// topicDefinitions 是全部已注册主题。新增主题：往本包放中英文 .md，并在此登记一行。
+var topicDefinitions = []topicDefinition{
+	{
+		name:         "prompts",
+		chineseShort: "怎么写好节点 promptTemplate：模板变量、节点隔离、最佳实践",
+		englishShort: "How to write a good node promptTemplate: template variables, node isolation, and best practices",
+		chineseFile:  "prompts.md",
+		englishFile:  "prompts.en.md",
+	},
 }
 
 // Topics 返回全部已注册主题的只读快照（按登记顺序）。
-func Topics() []Topic {
-	out := make([]Topic, len(topics))
-	copy(out, topics)
+func Topics(language locale.Language) []Topic {
+	out := make([]Topic, 0, len(topicDefinitions))
+	for _, definition := range topicDefinitions {
+		out = append(out, Topic{
+			Name:  definition.name,
+			Short: language.Select(definition.chineseShort, definition.englishShort),
+		})
+	}
 	return out
 }
 
 // Content 返回指定主题的 markdown 正文；主题未登记时 ok=false（供调用方报「未知主题」）。
 // 主题已登记却读不到内嵌文件属构建期不变量被破坏（.md 缺失或改名未同步登记），
 // go:embed 会在编译期先行拦截；此处仍显式转译该错误上抛，不静默返回空串。
-func Content(name string) (string, bool, error) {
-	for _, topic := range topics {
-		if topic.Name != name {
+func Content(name string, language locale.Language) (string, bool, error) {
+	for _, definition := range topicDefinitions {
+		if definition.name != name {
 			continue
 		}
-		data, err := topicFiles.ReadFile(topic.file)
+		file := language.Select(definition.chineseFile, definition.englishFile)
+		data, err := topicFiles.ReadFile(file)
 		if err != nil {
-			return "", true, fmt.Errorf("help 主题 %q 的内嵌文件 %q 读取失败: %w", name, topic.file, err)
+			return "", true, fmt.Errorf("failed to read embedded file %q for help topic %q: %w", file, name, err)
 		}
 		return string(data), true, nil
 	}

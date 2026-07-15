@@ -19,21 +19,21 @@ type humanObserver struct {
 func (h humanObserver) OnSchedule(info orchestrator.ScheduleInfo) {
 	if info.ResumeDoneCount > 0 {
 		// resume：先报已完成几个、待续几个，再列 t0 就绪节点。
-		fmt.Fprintf(h.out, "▶ 从中断恢复：共 %d 个节点、已完成 %d 个，续跑 %s\n",
+		fmt.Fprintf(h.out, localizedHelpText("▶ 从中断恢复：共 %d 个节点、已完成 %d 个，续跑 %s\n", "▶ Resuming after interruption: %d nodes total, %d completed; continuing with %s\n"),
 			info.AgentNodeCount, info.ResumeDoneCount, briefList(info.InitialReady))
 		return
 	}
-	fmt.Fprintf(h.out, "▶ 调度 %d 个节点（START 扇出：%s 同刻开跑）\n",
+	fmt.Fprintf(h.out, localizedHelpText("▶ 调度 %d 个节点（START 扇出：%s 同刻开跑）\n", "▶ Scheduling %d nodes (START fan-out: %s start together)\n"),
 		info.AgentNodeCount, briefList(info.InitialReady))
 }
 
 func (h humanObserver) OnNodeStart(info orchestrator.NodeInfo) {
-	fmt.Fprintf(h.out, "▶ %s [%s] 开跑 · engine=%s\n", info.NodeID, info.DisplayName, info.Engine)
+	fmt.Fprintf(h.out, localizedHelpText("▶ %s [%s] 开跑 · engine=%s\n", "▶ %s [%s] started · engine=%s\n"), info.NodeID, info.DisplayName, info.Engine)
 }
 
 func (h humanObserver) OnNodeDone(entry run.TraceEntry) {
 	if entry.Success {
-		fmt.Fprintf(h.out, "✓ %s 完成 · %s · tokens=%d · 产物 %d 字符：%s\n",
+		fmt.Fprintf(h.out, localizedHelpText("✓ %s 完成 · %s · tokens=%d · 产物 %d 字符：%s\n", "✓ %s completed · %s · tokens=%d · artifact %d characters: %s\n"),
 			entry.NodeID, formatDurationMs(entry.DurationMs), entry.Tokens,
 			len([]rune(entry.Output)), preview(entry.Output, 80))
 		return
@@ -42,13 +42,13 @@ func (h humanObserver) OnNodeDone(entry run.TraceEntry) {
 	if entry.Error != nil {
 		errText = *entry.Error
 	}
-	fmt.Fprintf(h.out, "✗ %s 失败 · %s · %s\n", entry.NodeID, formatDurationMs(entry.DurationMs), preview(errText, 200))
+	fmt.Fprintf(h.out, localizedHelpText("✗ %s 失败 · %s · %s\n", "✗ %s failed · %s · %s\n"), entry.NodeID, formatDurationMs(entry.DurationMs), preview(errText, 200))
 }
 
 // briefList 把初始就绪节点渲染为「id、id」串（无就绪节点时给占位）。
 func briefList(briefs []orchestrator.NodeBrief) string {
 	if len(briefs) == 0 {
-		return "（无）"
+		return localizedHelpText("（无）", "(none)")
 	}
 	ids := make([]string, len(briefs))
 	for i, brief := range briefs {
@@ -72,7 +72,7 @@ func (j *jsonObserver) OnNodeDone(entry run.TraceEntry) {
 	}
 	line, err := json.Marshal(entry)
 	if err != nil {
-		j.err = fmt.Errorf("序列化 trace 事件失败: %w", err)
+		j.err = fmt.Errorf("failed to encode trace event: %w", err)
 		return
 	}
 	fmt.Fprintln(j.out, string(line))

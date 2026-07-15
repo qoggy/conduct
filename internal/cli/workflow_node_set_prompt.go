@@ -14,11 +14,16 @@ import (
 func newWorkflowNodeSetPromptCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-prompt <name> <id>",
-		Short: "从 stdin 读原始文本设某节点的提示词",
-		Long: "把提示词正文以原始文本从 stdin 整段读入，由 conduct 负责 JSON 编码——含 {{变量}} / 中文 / markdown / 多行都无需转义。\n" +
-			"读入后剥掉恰好一个尾随换行（若存在），与 node show --prompt「补恰好一个」配对，使 round-trip 字节稳定。\n" +
-			"落盘前复用整份定义的同一套校验（含空模板、模板变量引用须皆祖先）；stdin 是终端（无管道）时报错退出，不挂起等待输入。",
-		Args: requireArgs(cobra.ExactArgs(2)),
+		Short: localizedHelpText("从 stdin 读原始文本设某节点的提示词", "Read raw text from stdin to set a node's prompt"),
+		Long: localizedHelpText(
+			"把提示词正文以原始文本从 stdin 整段读入，由 conduct 负责 JSON 编码——含 {{变量}} / 中文 / markdown / 多行都无需转义。\n"+
+				"读入后剥掉恰好一个尾随换行（若存在），与 node show --prompt「补恰好一个」配对，使 round-trip 字节稳定。\n"+
+				"落盘前复用整份定义的同一套校验（含空模板、模板变量引用须皆祖先）；stdin 是终端（无管道）时报错退出，不挂起等待输入。",
+			"Read the entire prompt body as raw text from stdin and let conduct handle JSON encoding—{{variable}}, Chinese text, markdown, and multiple lines require no escaping.\n"+
+				"After reading, remove exactly one trailing newline (if present), paired with node show --prompt adding exactly one, so round-trip bytes remain stable.\n"+
+				"Before storing, reuse the same validation as the complete definition (including nonempty templates and the requirement that all template-variable references be ancestors); if stdin is a terminal (no pipe), report an error and exit instead of hanging while waiting for input.",
+		),
+		Args: exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, id := args[0], args[1]
 			// 名字非法属用法错误退 2，与 node set / copy / workflow show 同族对齐（不落到 Load 抛普通 error 退 1）。
@@ -27,7 +32,7 @@ func newWorkflowNodeSetPromptCommand() *cobra.Command {
 			}
 
 			// stdin 读原始文本；是终端（无管道输入）时报缺少输入的用法错误退出 2，不挂起等待。
-			data, err := readStdin(fmt.Sprintf("缺少提示词：请通过 stdin 传入（如 cat prompt.md | conduct workflow node set-prompt %s %s）", name, id))
+			data, err := readStdin(fmt.Sprintf(localizedHelpText("缺少提示词：请通过 stdin 传入（如 cat prompt.md | conduct workflow node set-prompt %s %s）", "missing prompt: pass it through stdin (for example, cat prompt.md | conduct workflow node set-prompt %s %s)"), name, id))
 			if err != nil {
 				return err
 			}
@@ -54,7 +59,7 @@ func newWorkflowNodeSetPromptCommand() *cobra.Command {
 			if err := st.Save(wf); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ 已更新 %s·%s 提示词\n", name, id)
+			fmt.Fprintf(cmd.OutOrStdout(), localizedHelpText("✓ 已更新 %s·%s 提示词\n", "✓ Updated the prompt for %s·%s\n"), name, id)
 			return nil
 		},
 	}

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/engine"
 )
 
@@ -27,20 +28,15 @@ var knownSystemVariables = map[string]bool{
 // IsValidNodeID 报告 id 是否符合 agent 节点命名规则（不含保留名判断，供 CLI node add 在建节点前速判 id 格式）。
 func IsValidNodeID(id string) bool { return nodeIDPattern.MatchString(id) }
 
-// Problem 是一条字段级校验错误：Path 为出错字段的点路径（如 "nodes[0].id" / "nodes[0]" / "edges[1]" /
-// "nodes" / "edges"），Message 为不含路径前缀的纯消息。供编辑器把「点校验错误 → 定位到对应字段」建立在
-// 结构而非文案格式上。
-type Problem struct {
-	Path    string
-	Message string
-}
+// Problem 是一条字段级校验错误：Path 为稳定字段路径，Code/Params 为可由 CLI/UI 分别本地化的机器信息。
+type Problem = apperror.Problem
 
 // ValidateStructured 对一份定义主体执行落盘校验，逐条收集字段级错误后一并返回（承 spec〈落盘校验规则〉：
 // 恰好一个 START/END + ≥1 agent、保留名、标记节点必空、边合法、无环、单源单汇无悬空、模板引用祖先）。
-// 不修改 def。返回空切片表示校验通过。Validate 是它的字符串化 thin wrapper。
+// 不修改 def。返回空切片表示校验通过。Validate 把问题包装成共享结构化错误。
 func ValidateStructured(def *Definition) []Problem {
 	if len(def.Nodes) == 0 {
-		return []Problem{{Path: "nodes", Message: "不能为空，至少需要一个节点"}}
+		return []Problem{{Path: "nodes", Code: apperror.CodeNodesRequired}}
 	}
 
 	var problems []Problem
@@ -61,7 +57,7 @@ func ValidateStructured(def *Definition) []Problem {
 			continue // 空 id 的必填错误在下方 agent 主循环报出
 		}
 		if _, duplicate := indexByID[node.ID]; duplicate {
-			problems = append(problems, Problem{fmt.Sprintf("nodes[%d].id", position), fmt.Sprintf("与前面的节点重复 %q", node.ID)})
+			problems = append(problems, problem(fmt.Sprintf("nodes[%d].id", position), apperror.CodeDuplicateNodeID, "id", node.ID))
 			continue
 		}
 		indexByID[node.ID] = position
@@ -70,13 +66,13 @@ func ValidateStructured(def *Definition) []Problem {
 
 	// —— 节点集：恰好一个 START、一个 END，另有 ≥1 agent 节点 ——
 	if startCount != 1 {
-		problems = append(problems, Problem{"nodes", fmt.Sprintf("须恰好含一个 START 标记节点，得到 %d 个", startCount)})
+		problems = append(problems, problem("nodes", apperror.CodeStartNodeCount, "count", startCount))
 	}
 	if endCount != 1 {
-		problems = append(problems, Problem{"nodes", fmt.Sprintf("须恰好含一个 END 标记节点，得到 %d 个", endCount)})
+		problems = append(problems, problem("nodes", apperror.CodeEndNodeCount, "count", endCount))
 	}
 	if agentCount == 0 {
-		problems = append(problems, Problem{"nodes", "至少需要一个 agent 节点（START / END 之外）"})
+		problems = append(problems, Problem{Path: "nodes", Code: apperror.CodeAgentNodeRequired})
 	}
 
 	// —— 逐节点：标记节点必空 / agent 节点必填与能力表 ——
@@ -98,7 +94,7 @@ func ValidateStructured(def *Definition) []Problem {
 	// —— 无环 ——
 	cycle := DetectCycle(def)
 	if cycle != nil {
-		problems = append(problems, Problem{"edges", "检测到环 " + strings.Join(cycle, "→")})
+		problems = append(problems, problem("edges", apperror.CodeCycleDetected, "cycle", strings.Join(cycle, "→")))
 	}
 
 	// —— 模板引用祖先 —— 仅在无环时「祖先」有定义，故 DetectCycle 通过后再算。
@@ -116,11 +112,7 @@ func Validate(def *Definition) error {
 	if len(problems) == 0 {
 		return nil
 	}
-	lines := make([]string, len(problems))
-	for i, problem := range problems {
-		lines[i] = problem.Path + ": " + problem.Message
-	}
-	return fmt.Errorf("%s", strings.Join(lines, "\n"))
+	return apperror.Validation(problems)
 }
 
 // validateMarkerNode 校验 START / END 标记节点：engine / promptTemplate / engineConfig / displayName 必空
@@ -128,16 +120,16 @@ func Validate(def *Definition) error {
 func validateMarkerNode(path string, node Node) []Problem {
 	var problems []Problem
 	if node.DisplayName != "" {
-		problems = append(problems, Problem{path + ".displayName", fmt.Sprintf("标记节点 %s 的 displayName 必须为空", node.ID)})
+		problems = append(problems, markerFieldProblem(path+".displayName", node.ID, "displayName"))
 	}
 	if node.Engine != "" {
-		problems = append(problems, Problem{path + ".engine", fmt.Sprintf("标记节点 %s 的 engine 必须为空", node.ID)})
+		problems = append(problems, markerFieldProblem(path+".engine", node.ID, "engine"))
 	}
 	if node.PromptTemplate != "" {
-		problems = append(problems, Problem{path + ".promptTemplate", fmt.Sprintf("标记节点 %s 的 promptTemplate 必须为空", node.ID)})
+		problems = append(problems, markerFieldProblem(path+".promptTemplate", node.ID, "promptTemplate"))
 	}
 	if node.EngineConfig != nil {
-		problems = append(problems, Problem{path + ".engineConfig", fmt.Sprintf("标记节点 %s 的 engineConfig 必须为空", node.ID)})
+		problems = append(problems, markerFieldProblem(path+".engineConfig", node.ID, "engineConfig"))
 	}
 	return problems
 }
@@ -147,15 +139,15 @@ func validateMarkerNode(path string, node Node) []Problem {
 func validateAgentNode(path string, node Node) []Problem {
 	var problems []Problem
 	if node.ID == "" {
-		problems = append(problems, Problem{path + ".id", "必填"})
+		problems = append(problems, requiredProblem(path+".id", "id"))
 	} else if !nodeIDPattern.MatchString(node.ID) {
-		problems = append(problems, Problem{path + ".id", fmt.Sprintf("%q 非法（须匹配 ^[A-Za-z_][A-Za-z0-9_-]{0,63}$）", node.ID)})
+		problems = append(problems, problem(path+".id", apperror.CodeInvalidNodeID, "id", node.ID))
 	}
 	if node.DisplayName == "" {
-		problems = append(problems, Problem{path + ".displayName", "必填"})
+		problems = append(problems, requiredProblem(path+".displayName", "displayName"))
 	}
 	if node.PromptTemplate == "" {
-		problems = append(problems, Problem{path + ".promptTemplate", "必填"})
+		problems = append(problems, requiredProblem(path+".promptTemplate", "promptTemplate"))
 	}
 	problems = append(problems, validateEngine(path, node.Engine, node.EngineConfig)...)
 	return problems
@@ -169,31 +161,31 @@ func validateEdges(def *Definition, validNodeID func(string) bool) []Problem {
 	for i, edge := range def.Edges {
 		path := fmt.Sprintf("edges[%d]", i)
 		if edge.From == "" || edge.To == "" {
-			problems = append(problems, Problem{path, "from / to 不能为空"})
+			problems = append(problems, Problem{Path: path, Code: apperror.CodeEdgeEndpointsRequired})
 			continue
 		}
 		if !validNodeID(edge.From) {
-			problems = append(problems, Problem{path, fmt.Sprintf("from 指向不存在的节点 %q", edge.From)})
+			problems = append(problems, problem(path, apperror.CodeEdgeFromNodeNotFound, "id", edge.From))
 		}
 		if !validNodeID(edge.To) {
-			problems = append(problems, Problem{path, fmt.Sprintf("to 指向不存在的节点 %q", edge.To)})
+			problems = append(problems, problem(path, apperror.CodeEdgeToNodeNotFound, "id", edge.To))
 		}
 		if edge.From == edge.To {
-			problems = append(problems, Problem{path, fmt.Sprintf("禁止自环 %s→%s", edge.From, edge.To)})
+			problems = append(problems, problem(path, apperror.CodeSelfEdge, "from", edge.From, "to", edge.To))
 		}
 		if edge.From == NodeIDStart && edge.To == NodeIDEnd {
-			problems = append(problems, Problem{path, "禁止 START→END 直连（须过 ≥1 个 agent 节点）"})
+			problems = append(problems, Problem{Path: path, Code: apperror.CodeStartEndDirectEdge})
 		} else {
 			if edge.To == NodeIDStart {
-				problems = append(problems, Problem{path, "禁止边指向 START（START 无入边）"})
+				problems = append(problems, Problem{Path: path, Code: apperror.CodeEdgeToStart})
 			}
 			if edge.From == NodeIDEnd {
-				problems = append(problems, Problem{path, "禁止边源自 END（END 无出边）"})
+				problems = append(problems, Problem{Path: path, Code: apperror.CodeEdgeFromEnd})
 			}
 		}
 		key := edge.From + "\x00" + edge.To
 		if seen[key] {
-			problems = append(problems, Problem{path, fmt.Sprintf("重复边 %s→%s", edge.From, edge.To)})
+			problems = append(problems, problem(path, apperror.CodeDuplicateEdge, "from", edge.From, "to", edge.To))
 		}
 		seen[key] = true
 	}
@@ -216,10 +208,10 @@ func validateDegrees(def *Definition) []Problem {
 		}
 		path := fmt.Sprintf("nodes[%d]", position)
 		if inDegree[node.ID] == 0 {
-			problems = append(problems, Problem{path, fmt.Sprintf("agent 节点 %q 无入边（须 ≥1 条，可来自 START）", node.ID)})
+			problems = append(problems, problem(path, apperror.CodeNodeMissingIncomingEdge, "id", node.ID))
 		}
 		if outDegree[node.ID] == 0 {
-			problems = append(problems, Problem{path, fmt.Sprintf("agent 节点 %q 无出边（须 ≥1 条，可到 END）", node.ID)})
+			problems = append(problems, problem(path, apperror.CodeNodeMissingOutgoingEdge, "id", node.ID))
 		}
 	}
 	return problems
@@ -243,21 +235,21 @@ func validateTemplateAncestry(def *Definition, validNodeID func(string) bool) []
 			}
 			if strings.HasPrefix(key, "sys.") {
 				if !knownSystemVariables[key] {
-					problems = append(problems, Problem{path, fmt.Sprintf("引用未知系统变量 {{%s}}（仅支持 sys.userPrompt / sys.cwd / sys.runId）", key)})
+					problems = append(problems, problem(path, apperror.CodeUnknownSystemVariable, "key", key))
 				}
 				continue
 			}
 			if key == NodeIDStart || key == NodeIDEnd {
-				problems = append(problems, Problem{path, fmt.Sprintf("禁止引用标记节点 {{%s}}（无产物）", key)})
+				problems = append(problems, problem(path, apperror.CodeMarkerNodeReference, "id", key))
 				continue
 			}
 			if ancestors[key] {
 				continue
 			}
 			if validNodeID(key) {
-				problems = append(problems, Problem{path, fmt.Sprintf("引用非上游祖先节点 {{%s}}（数据流须来自沿边可达的前驱）", key)})
+				problems = append(problems, problem(path, apperror.CodeNonAncestorNodeReference, "id", key))
 			} else {
-				problems = append(problems, Problem{path, fmt.Sprintf("引用不存在的节点 {{%s}}", key)})
+				problems = append(problems, problem(path, apperror.CodeNodeReferenceNotFound, "id", key))
 			}
 		}
 	}
@@ -267,11 +259,11 @@ func validateTemplateAncestry(def *Definition, validNodeID func(string) bool) []
 // validateEngine 校验 engine 合法性及其 engineConfig（判别联合，依 engine 包能力表）。
 func validateEngine(path, engineName string, config *EngineConfig) []Problem {
 	if engineName == "" {
-		return []Problem{{path + ".engine", "必填"}}
+		return []Problem{requiredProblem(path+".engine", "engine")}
 	}
 	if !engine.Exists(engineName) {
-		return []Problem{{path + ".engine", fmt.Sprintf("未知引擎 %q（可用：%s）",
-			engineName, strings.Join(engine.RegisteredNames(), ", "))}}
+		return []Problem{problem(path+".engine", apperror.CodeUnknownEngine,
+			"engine", engineName, "available", strings.Join(engine.RegisteredNames(), ", "))}
 	}
 	if config == nil {
 		return nil
@@ -282,36 +274,66 @@ func validateEngine(path, engineName string, config *EngineConfig) []Problem {
 	if !ok {
 		// 引擎已登记但能力表待实装 → 暂不接受任何 engineConfig 字段
 		if config.Model != "" || config.Effort != "" || config.ReasoningEffort != "" {
-			problems = append(problems, Problem{path + ".engineConfig", fmt.Sprintf("engine=%q 的能力表待实装，暂不接受配置字段", engineName)})
+			problems = append(problems, problem(path+".engineConfig", apperror.CodeEngineCapabilityUnavailable, "engine", engineName))
 		}
 		return problems
 	}
 
 	if config.Model != "" && !capability.AllowsModel {
-		problems = append(problems, Problem{path + ".engineConfig.model", fmt.Sprintf("engine=%q 不接受 model", engineName)})
+		problems = append(problems, problem(path+".engineConfig.model", apperror.CodeEngineModelNotAllowed, "engine", engineName))
 	}
 	// effort / reasoningEffort：只接受该引擎声明的那一个，另一个必须为空。
 	if config.Effort != "" {
 		if capability.EffortField != "effort" {
-			problems = append(problems, Problem{path + ".engineConfig.effort", fmt.Sprintf("engine=%q 不认 effort%s", engineName, otherEffortHint(capability, "effort"))})
+			problems = append(problems, effortFieldProblem(path+".engineConfig.effort", engineName, "effort", capability))
 		} else if !slices.Contains(capability.EffortValues, config.Effort) {
-			problems = append(problems, Problem{path + ".engineConfig.effort", fmt.Sprintf("%q 不在 engine=%q 允许集 [%s] 内", config.Effort, engineName, strings.Join(capability.EffortValues, ", "))})
+			problems = append(problems, effortValueProblem(path+".engineConfig.effort", engineName, config.Effort, capability.EffortValues))
 		}
 	}
 	if config.ReasoningEffort != "" {
 		if capability.EffortField != "reasoningEffort" {
-			problems = append(problems, Problem{path + ".engineConfig.reasoningEffort", fmt.Sprintf("engine=%q 不认 reasoningEffort%s", engineName, otherEffortHint(capability, "reasoningEffort"))})
+			problems = append(problems, effortFieldProblem(path+".engineConfig.reasoningEffort", engineName, "reasoningEffort", capability))
 		} else if !slices.Contains(capability.EffortValues, config.ReasoningEffort) {
-			problems = append(problems, Problem{path + ".engineConfig.reasoningEffort", fmt.Sprintf("%q 不在 engine=%q 允许集 [%s] 内", config.ReasoningEffort, engineName, strings.Join(capability.EffortValues, ", "))})
+			problems = append(problems, effortValueProblem(path+".engineConfig.reasoningEffort", engineName, config.ReasoningEffort, capability.EffortValues))
 		}
 	}
 	return problems
 }
 
-// otherEffortHint 在用户填错调优字段时，提示该引擎实际接受的字段（若有）。
-func otherEffortHint(capability engine.EngineCapability, wrongField string) string {
+// otherEffortField 在用户填错调优字段时返回该引擎实际接受的机器字段名（若有）。
+func otherEffortField(capability engine.EngineCapability, wrongField string) string {
 	if capability.EffortField == "" || capability.EffortField == wrongField {
 		return ""
 	}
-	return fmt.Sprintf("（该引擎用 %s）", capability.EffortField)
+	return capability.EffortField
+}
+
+func problem(path string, code apperror.Code, pairs ...any) Problem {
+	params := make(apperror.Params, len(pairs)/2)
+	for index := 0; index+1 < len(pairs); index += 2 {
+		params[pairs[index].(string)] = pairs[index+1]
+	}
+	if len(params) == 0 {
+		params = nil
+	}
+	return Problem{Path: path, Code: code, Params: params}
+}
+
+func markerFieldProblem(path, id, field string) Problem {
+	return problem(path, apperror.CodeMarkerFieldNotEmpty, "id", id, "field", field)
+}
+
+func requiredProblem(path, field string) Problem {
+	return problem(path, apperror.CodeRequiredField, "field", field)
+}
+
+func effortFieldProblem(path, engineName, field string, capability engine.EngineCapability) Problem {
+	return problem(path, apperror.CodeEngineEffortFieldNotAllowed,
+		"engine", engineName, "field", field,
+		"expectedField", otherEffortField(capability, field))
+}
+
+func effortValueProblem(path, engineName, value string, allowed []string) Problem {
+	return problem(path, apperror.CodeEngineEffortValueNotAllowed,
+		"engine", engineName, "value", value, "allowed", strings.Join(allowed, ", "))
 }

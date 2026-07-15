@@ -31,7 +31,7 @@ type antigravityResult struct {
 
 func (antigravityEngine) Run(ctx context.Context, request RunRequest) (RunResult, error) {
 	if len(request.Prompt) > agyPromptLimitBytes {
-		return RunResult{}, fmt.Errorf("agy 引擎经命令行传参，prompt 过长（%d 字节 > %d 上限）；请改用 stdin 型引擎或精简上游产物",
+		return RunResult{}, fmt.Errorf("agy passes prompts as command-line arguments; prompt too long (%d bytes > %d-byte limit); use a stdin-based engine or reduce upstream output",
 			len(request.Prompt), agyPromptLimitBytes)
 	}
 	// agy 默认会就工具权限征询；工作流是无人值守运行，故跳过权限门（对齐 claude/qoder 的 bypass）。
@@ -48,14 +48,14 @@ func (antigravityEngine) Run(ctx context.Context, request RunRequest) (RunResult
 	}
 	var parsed antigravityResult
 	if err := json.Unmarshal([]byte(out.stdout), &parsed); err != nil {
-		return RunResult{}, fmt.Errorf("agy 输出非预期 JSON: %w（stdout 前 200 字: %s）", err, truncate(out.stdout, 200))
+		return RunResult{}, fmt.Errorf("agy returned unexpected JSON: %w (first 200 characters of stdout: %s)", err, truncate(out.stdout, 200))
 	}
 	if parsed.Status != "SUCCESS" {
 		reason := parsed.Error
 		if reason == "" {
 			reason = truncate(parsed.Response, 500)
 		}
-		return RunResult{}, fmt.Errorf("agy 状态 %s: %s", parsed.Status, reason)
+		return RunResult{}, fmt.Errorf("agy status %s: %s", parsed.Status, reason)
 	}
 	return RunResult{
 		Text:                 parsed.Response,

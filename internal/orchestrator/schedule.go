@@ -115,7 +115,7 @@ func (o *Orchestrator) schedule(ctx context.Context, obs Observer, record *run.R
 				id := res.entry.NodeID
 				firstFailedNodeID = &id
 				// 首个失败节点即根因：错误文案自带节点名，令 run.json 与 summary 两处指向同一节点、不再张冠李戴。
-				msg := fmt.Sprintf("节点 %s：%s", id, engineErrorText(res.entry))
+				msg := fmt.Sprintf("node %s: %s", id, engineErrorText(res.entry))
 				firstEngineErr = &msg
 			}
 			cause = errors.Join(cause, res.err, appendErr)

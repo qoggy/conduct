@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -16,9 +16,17 @@
     <div class="topbar">
       <span class="brand">conduct</span>
       <div class="tabs">
-        <a class="tab" data-tab="workflows" href="#/workflows">工作流</a>
-        <a class="tab" data-tab="runs" href="#/runs">运行</a>
+        <a class="tab" data-tab="workflows" href="#/workflows"></a>
+        <a class="tab" data-tab="runs" href="#/runs"></a>
       </div>
+      <label class="language-picker">
+        <span id="language-label"></span>
+        <select id="language">
+          <option value=""></option>
+          <option value="zh-CN"></option>
+          <option value="en"></option>
+        </select>
+      </label>
       <span class="ver" id="version"></span>
     </div>
     <main id="app"></main>

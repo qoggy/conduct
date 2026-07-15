@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/qoggy/conduct/internal/run"
 	"github.com/qoggy/conduct/internal/store"
 	"github.com/spf13/cobra"
@@ -21,11 +22,12 @@ func TestEnsureRunDeletableTerminal(t *testing.T) {
 }
 
 func TestEnsureRunDeletableRefusesRunning(t *testing.T) {
+	useTestLanguage(t, locale.Chinese)
 	st := store.New(t.TempDir())
 	// status=running 且 pid 存活（本测试进程 pid）→ 派生仍 running → 拒删。
 	seedRun(t, st, "flow-20260703-150000", run.StatusRunning, os.Getpid())
 	err := ensureRunDeletable(st, "flow-20260703-150000")
-	if err == nil || !strings.Contains(err.Error(), "仍在进行中") {
+	if err == nil || !strings.Contains(formatCLIError(err), "仍在进行中") {
 		t.Fatalf("活运行应被拒删，得到 %v", err)
 	}
 }

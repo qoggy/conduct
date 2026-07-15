@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/qoggy/conduct/internal/orchestrator"
 	"github.com/qoggy/conduct/internal/run"
 )
@@ -12,6 +13,7 @@ import (
 // TestHumanObserverScheduleHeader 覆盖 OnSchedule 两态渲染：整趟 workflow run（ResumeDoneCount=0）打印
 // 「调度 N 个节点」+ START 扇出的就绪清单；resume（ResumeDoneCount>0）打印「从中断恢复、已完成几个」的恢复头。
 func TestHumanObserverScheduleHeader(t *testing.T) {
+	useTestLanguage(t, locale.Chinese)
 	info := orchestrator.ScheduleInfo{
 		AgentNodeCount: 3,
 		InitialReady: []orchestrator.NodeBrief{
@@ -41,6 +43,7 @@ func TestHumanObserverScheduleHeader(t *testing.T) {
 
 // TestHumanObserverNodeLifecycle 覆盖单节点的开跑 / 成功 / 失败三种事件行。
 func TestHumanObserverNodeLifecycle(t *testing.T) {
+	useTestLanguage(t, locale.Chinese)
 	var start bytes.Buffer
 	humanObserver{out: &start}.OnNodeStart(orchestrator.NodeInfo{
 		NodeID: "plan", DisplayName: "计划", Engine: "claude-code",

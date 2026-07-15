@@ -16,11 +16,16 @@ func newRunWaitCommand() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "wait <id>",
-		Short: "阻塞等待一次运行到终态（等到即退 0）",
-		Long: "阻塞到 <id> 运行到达任一终态即返回并退 0，退出码只表达「有没有等到终态」，run 的成败不进退出码。\n" +
-			"<id> 取自 conduct run list。命令自身出错才非 0：不存在 / IO 失败 → 1，缺 / 非法 id → 2。\n" +
-			"run 的成败（completed / failed / interrupted）读 stdout 摘要或 --json 的 status，别用退出码判。",
-		Args: requireArgs(cobra.ExactArgs(1)),
+		Short: localizedHelpText("阻塞等待一次运行到终态（等到即退 0）", "Block until a run reaches a terminal state (exit 0 once reached)"),
+		Long: localizedHelpText(
+			"阻塞到 <id> 运行到达任一终态即返回并退 0，退出码只表达「有没有等到终态」，run 的成败不进退出码。\n"+
+				"<id> 取自 conduct run list。命令自身出错才非 0：不存在 / IO 失败 → 1，缺 / 非法 id → 2。\n"+
+				"run 的成败（completed / failed / interrupted）读 stdout 摘要或 --json 的 status，别用退出码判。",
+			"Block until run <id> reaches any terminal state, then return and exit 0. The exit code expresses only whether a terminal state was reached; run success or failure is not included in the exit code.\n"+
+				"Get <id> from conduct run list. Only errors in the command itself are nonzero: nonexistent run / IO failure → 1, missing / invalid id → 2.\n"+
+				"Read run success or failure (completed / failed / interrupted) from the stdout summary or the status in --json output; do not infer it from the exit code.",
+		),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			if err := run.ValidateID(id); err != nil {
@@ -39,13 +44,16 @@ func newRunWaitCommand() *cobra.Command {
 				record.Status = status // 派生态覆盖存储态：running 但进程已死 → interrupted
 				return printJSON(cmd, record)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "运行 %s · %s · 耗时 %s\n", record.ID, status, elapsed(record))
+			fmt.Fprintf(cmd.OutOrStdout(), localizedHelpText("运行 %s · %s · 耗时 %s\n", "Run %s · %s · duration %s\n"), record.ID, status, elapsed(record))
 			// 等到终态即完成本职 → 退 0；completed / failed / interrupted 一视同仁，run 的成败在
 			// status（stdout 摘要 / --json）里看，不进退出码——对标 docker wait / Unix wait。
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "输出收尾时 run.json 的规范化内容（同 run show <id> --json）")
+	cmd.Flags().BoolVar(&asJSON, "json", false, localizedHelpText(
+		"输出收尾时 run.json 的规范化内容（同 run show <id> --json）",
+		"Output the normalized contents of run.json at completion (same as run show <id> --json)",
+	))
 	return cmd
 }
 

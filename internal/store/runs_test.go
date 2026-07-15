@@ -4,8 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/qoggy/conduct/internal/run"
 	"github.com/qoggy/conduct/internal/workflow"
 )
@@ -25,9 +27,43 @@ func sampleRun(id string) *run.Record {
 		UserPrompt: "需求",
 		Cwd:        "/proj",
 		Status:     run.StatusRunning,
+		Language:   locale.English,
 		Pid:        os.Getpid(),
 		StartedAt:  "2026-07-03T15:00:00+08:00",
 		Artifacts:  map[string]string{},
+	}
+}
+
+func TestRunStoreRejectsMissingOrInvalidLanguage(t *testing.T) {
+	for _, language := range []locale.Language{"", "fr"} {
+		t.Run(string(language), func(t *testing.T) {
+			s := New(t.TempDir())
+			record := sampleRun("flow-20260703-150000")
+			record.Language = language
+			if err := s.CreateRun(record); err == nil {
+				t.Fatalf("CreateRun language %q = nil, want error", language)
+			}
+		})
+	}
+}
+
+func TestLoadRunRejectsMissingLanguage(t *testing.T) {
+	s := New(t.TempDir())
+	record := sampleRun("flow-20260703-150000")
+	if err := s.CreateRun(record); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.runsDir(), record.ID, "run.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), ",\n  \"language\": \"en\"", "", 1))
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LoadRun(record.ID); err == nil || !strings.Contains(err.Error(), "missing or invalid language") {
+		t.Fatalf("LoadRun missing language error = %v", err)
 	}
 }
 

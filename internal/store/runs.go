@@ -12,6 +12,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/run"
 )
 
@@ -20,12 +21,12 @@ import (
 
 var (
 	// ErrRunExists 表示目标 run id 已被占用（不覆盖历史）。
-	ErrRunExists = errors.New("运行已存在")
+	ErrRunExists = apperror.New(apperror.CodeRunAlreadyExists, nil)
 	// ErrRunNotExist 表示目标运行记录不存在。
-	ErrRunNotExist = errors.New("运行不存在")
+	ErrRunNotExist = apperror.New(apperror.CodeRunNotFound, nil)
 	// ErrSummaryNotExist 表示 run-summary.md 尚未生成（多为 running 期，收尾节点还没写）。
 	// 供 handler 映射 404，与「运行本身不存在」区分。
-	ErrSummaryNotExist = errors.New("运行总结尚未生成")
+	ErrSummaryNotExist = apperror.New(apperror.CodeRunSummaryNotFound, nil)
 )
 
 func (s *Store) runsDir() string { return filepath.Join(s.root, "runs") }
@@ -54,21 +55,24 @@ func (s *Store) SummaryPath(id string) (string, error) {
 // CreateRun 新建一次运行的目录并写入初始 run.json（开跑即写，status=running）+ 空 trace.jsonl。
 // 目录已存在即报错（run id 撞车不静默覆盖历史）。
 func (s *Store) CreateRun(record *run.Record) error {
+	if err := record.ValidateLanguage(); err != nil {
+		return err
+	}
 	dir, err := s.runDir(record.ID)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(s.runsDir(), 0o755); err != nil {
-		return fmt.Errorf("创建 runs 目录失败: %w", err)
+		return fmt.Errorf("failed to create runs directory: %w", err)
 	}
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("%s: %w", record.ID, ErrRunExists)
+			return apperror.New(apperror.CodeRunAlreadyExists, apperror.Params{"id": record.ID})
 		}
-		return fmt.Errorf("创建运行目录 %s 失败: %w", record.ID, err)
+		return fmt.Errorf("failed to create run directory %s: %w", record.ID, err)
 	}
 	if err := os.WriteFile(tracePath(dir), nil, 0o644); err != nil {
-		return fmt.Errorf("初始化 trace.jsonl 失败: %w", err)
+		return fmt.Errorf("failed to initialize trace.jsonl: %w", err)
 	}
 	return s.WriteRun(record)
 }
@@ -82,25 +86,28 @@ func (s *Store) RemoveRun(id string) error {
 	}
 	if _, statErr := os.Stat(dir); statErr != nil {
 		if errors.Is(statErr, os.ErrNotExist) {
-			return fmt.Errorf("%s: %w", id, ErrRunNotExist)
+			return apperror.New(apperror.CodeRunNotFound, apperror.Params{"id": id})
 		}
-		return fmt.Errorf("访问运行目录 %s 失败: %w", id, statErr)
+		return fmt.Errorf("failed to access run directory %s: %w", id, statErr)
 	}
 	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("删除运行目录 %s 失败: %w", id, err)
+		return fmt.Errorf("failed to remove run directory %s: %w", id, err)
 	}
 	return nil
 }
 
 // WriteRun 原子重写 run.json（增量更新 artifacts / 收尾写终态都走它）。
 func (s *Store) WriteRun(record *run.Record) error {
+	if err := record.ValidateLanguage(); err != nil {
+		return err
+	}
 	dir, err := s.runDir(record.ID)
 	if err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
-		return fmt.Errorf("序列化运行 %s 失败: %w", record.ID, err)
+		return fmt.Errorf("failed to encode run %s: %w", record.ID, err)
 	}
 	return atomicWrite(runJSONPath(dir), append(data, '\n'))
 }
@@ -113,20 +120,20 @@ func (s *Store) AppendTrace(id string, entry run.TraceEntry) (err error) {
 	}
 	line, err := json.Marshal(entry)
 	if err != nil {
-		return fmt.Errorf("序列化 trace 条目失败: %w", err)
+		return fmt.Errorf("failed to encode trace entry: %w", err)
 	}
 	file, err := os.OpenFile(tracePath(dir), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return fmt.Errorf("打开 trace.jsonl 失败: %w", err)
+		return fmt.Errorf("failed to open trace.jsonl: %w", err)
 	}
 	// 写路径上 Close 失败意味着这行 trace 可能没落全，不能像读路径那样静默丢弃：合并进返回值。
 	defer func() {
 		if cerr := file.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("关闭 trace.jsonl 失败: %w", cerr)
+			err = fmt.Errorf("failed to close trace.jsonl: %w", cerr)
 		}
 	}()
 	if _, werr := file.Write(append(line, '\n')); werr != nil {
-		return fmt.Errorf("追加 trace 失败: %w", werr)
+		return fmt.Errorf("failed to append trace entry: %w", werr)
 	}
 	return nil
 }
@@ -150,7 +157,7 @@ func (s *Store) RemoveSummary(id string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("删除运行总结 %s 失败: %w", id, err)
+		return fmt.Errorf("failed to remove run summary %s: %w", id, err)
 	}
 	return nil
 }
@@ -165,9 +172,9 @@ func (s *Store) ReadSummary(id string) (string, error) {
 	data, err := os.ReadFile(summaryPath(dir))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("%s: %w", id, ErrSummaryNotExist)
+			return "", apperror.New(apperror.CodeRunSummaryNotFound, apperror.Params{"id": id})
 		}
-		return "", fmt.Errorf("读取运行总结 %s 失败: %w", id, err)
+		return "", fmt.Errorf("failed to read run summary %s: %w", id, err)
 	}
 	return string(data), nil
 }
@@ -181,13 +188,16 @@ func (s *Store) LoadRun(id string) (*run.Record, error) {
 	data, err := os.ReadFile(runJSONPath(dir))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%s: %w", id, ErrRunNotExist)
+			return nil, apperror.New(apperror.CodeRunNotFound, apperror.Params{"id": id})
 		}
-		return nil, fmt.Errorf("读取运行 %s 失败: %w", id, err)
+		return nil, fmt.Errorf("failed to read run %s: %w", id, err)
 	}
 	var record run.Record
 	if err := decodeStrictJSON(data, &record); err != nil {
-		return nil, fmt.Errorf("运行 %s 的 run.json 损坏: %w", id, err)
+		return nil, fmt.Errorf("run.json for run %s is corrupted: %w", id, err)
+	}
+	if err := record.ValidateLanguage(); err != nil {
+		return nil, fmt.Errorf("run.json for run %s is corrupted: %w", id, err)
 	}
 	return &record, nil
 }
@@ -205,7 +215,7 @@ func (s *Store) LoadTrace(id string) ([]run.TraceEntry, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return []run.TraceEntry{}, nil
 		}
-		return nil, fmt.Errorf("读取 trace %s 失败: %w", id, err)
+		return nil, fmt.Errorf("failed to read trace %s: %w", id, err)
 	}
 	defer file.Close()
 	entries := make([]run.TraceEntry, 0)
@@ -217,7 +227,7 @@ func (s *Store) LoadTrace(id string) ([]run.TraceEntry, error) {
 			if len(line) > 0 {
 				var entry run.TraceEntry
 				if err := json.Unmarshal(line, &entry); err != nil {
-					return nil, fmt.Errorf("trace %s 第 %d 行损坏: %w", id, lineNumber, err)
+					return nil, fmt.Errorf("trace %s is corrupted at line %d: %w", id, lineNumber, err)
 				}
 				entries = append(entries, entry)
 			}
@@ -227,7 +237,7 @@ func (s *Store) LoadTrace(id string) ([]run.TraceEntry, error) {
 			if errors.Is(readErr, io.EOF) {
 				return entries, nil
 			}
-			return nil, fmt.Errorf("读取 trace %s 失败: %w", id, readErr)
+			return nil, fmt.Errorf("failed to read trace %s: %w", id, readErr)
 		}
 	}
 }
@@ -247,7 +257,7 @@ func (s *Store) CountTrace(id string) (int, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0, nil
 		}
-		return 0, fmt.Errorf("读取 trace %s 失败: %w", id, err)
+		return 0, fmt.Errorf("failed to read trace %s: %w", id, err)
 	}
 	defer file.Close()
 	count := 0
@@ -261,7 +271,7 @@ func (s *Store) CountTrace(id string) (int, error) {
 			if errors.Is(readErr, io.EOF) {
 				return count, nil
 			}
-			return 0, fmt.Errorf("统计 trace %s 行数失败: %w", id, readErr)
+			return 0, fmt.Errorf("failed to count lines in trace %s: %w", id, readErr)
 		}
 	}
 }
@@ -287,7 +297,7 @@ func (s *Store) CountProgress(id string) (int, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0, nil
 		}
-		return 0, fmt.Errorf("读取 trace %s 失败: %w", id, err)
+		return 0, fmt.Errorf("failed to read trace %s: %w", id, err)
 	}
 	defer file.Close()
 	lastSuccess := map[string]bool{}
@@ -299,7 +309,7 @@ func (s *Store) CountProgress(id string) (int, error) {
 			if len(line) > 0 {
 				var pl progressLine
 				if err := json.Unmarshal(line, &pl); err != nil {
-					return 0, fmt.Errorf("trace %s 第 %d 行损坏: %w", id, lineNumber, err)
+					return 0, fmt.Errorf("trace %s is corrupted at line %d: %w", id, lineNumber, err)
 				}
 				lastSuccess[pl.NodeID] = pl.Success // 后写覆盖前写，末条为准
 			}
@@ -314,7 +324,7 @@ func (s *Store) CountProgress(id string) (int, error) {
 				}
 				return count, nil
 			}
-			return 0, fmt.Errorf("读取 trace %s 失败: %w", id, readErr)
+			return 0, fmt.Errorf("failed to read trace %s: %w", id, readErr)
 		}
 	}
 }
@@ -327,7 +337,7 @@ func (s *Store) ListRuns() ([]*run.Record, []error, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil, nil
 		}
-		return nil, nil, fmt.Errorf("读取 runs 目录失败: %w", err)
+		return nil, nil, fmt.Errorf("failed to read runs directory: %w", err)
 	}
 	var records []*run.Record
 	var skipped []error
@@ -363,13 +373,13 @@ func startedAfter(a, b string) bool {
 func atomicWrite(finalPath string, data []byte) error {
 	tempPath := finalPath + ".tmp"
 	if err := os.WriteFile(tempPath, data, 0o644); err != nil {
-		return fmt.Errorf("写入 %s 失败: %w", finalPath, err)
+		return fmt.Errorf("failed to write %s: %w", finalPath, err)
 	}
 	if err := os.Rename(tempPath, finalPath); err != nil {
 		if removeErr := os.Remove(tempPath); removeErr != nil {
-			return fmt.Errorf("提交 %s 失败: %w（且清理临时文件失败: %v）", finalPath, err, removeErr)
+			return fmt.Errorf("failed to commit %s: %w (and failed to remove temporary file: %v)", finalPath, err, removeErr)
 		}
-		return fmt.Errorf("提交 %s 失败: %w", finalPath, err)
+		return fmt.Errorf("failed to commit %s: %w", finalPath, err)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/workflow"
 	"github.com/spf13/cobra"
 )
@@ -10,10 +11,13 @@ import (
 func newWorkflowEditCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "edit <name>",
-		Short: "从 stdin 读 JSON 整体替换既有工作流",
-		Long: "从 stdin 读入一份完整定义，原子替换名为 <name> 的既有工作流。\n\n" +
+		Short: localizedHelpText("从 stdin 读 JSON 整体替换既有工作流", "Read JSON from stdin to replace an existing workflow in full"),
+		Long: localizedHelpText(
+			"从 stdin 读入一份完整定义，原子替换名为 <name> 的既有工作流。\n\n",
+			"Read a complete definition from stdin and atomically replace the existing workflow named <name>.\n\n",
+		) +
 			workflowDefinitionHelp(),
-		Args: requireArgs(cobra.ExactArgs(1)),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			if err := workflow.ValidateName(name); err != nil {
@@ -24,7 +28,7 @@ func newWorkflowEditCommand() *cobra.Command {
 				return err
 			}
 			if !st.Exists(name) {
-				return fmt.Errorf("工作流 %s 不存在", name)
+				return apperror.New(apperror.CodeWorkflowNotFound, apperror.Params{"name": name})
 			}
 			data, err := readStdinDefinition()
 			if err != nil {
@@ -41,7 +45,7 @@ func newWorkflowEditCommand() *cobra.Command {
 			if err = st.ReplaceDefinition(wf); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ 已更新 %s\n", name)
+			fmt.Fprintf(cmd.OutOrStdout(), localizedHelpText("✓ 已更新 %s\n", "✓ Updated %s\n"), name)
 			return nil
 		},
 	}

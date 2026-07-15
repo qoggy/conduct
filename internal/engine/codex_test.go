@@ -68,21 +68,21 @@ func TestCodexRunTurnFailedIsError(t *testing.T) {
   '{"type":"turn.failed","message":"配额耗尽"}' \
   '{"type":"item.completed","item":{"type":"agent_message","text":"不该被采信"}}'`)
 	_, err := codexEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
-	if err == nil || !strings.Contains(err.Error(), "codex 报错") || !strings.Contains(err.Error(), "配额耗尽") {
+	if err == nil || !strings.Contains(err.Error(), "codex error") || !strings.Contains(err.Error(), "配额耗尽") {
 		t.Errorf("turn.failed 应转译为错误，得到 %v", err)
 	}
 }
 
 func TestCodexRunErrorEventIsError(t *testing.T) {
 	_, err := parseCodexStream(`{"type":"error","message":"模型不可用"}` + "\n")
-	if err == nil || !strings.Contains(err.Error(), "codex 报错") || !strings.Contains(err.Error(), "模型不可用") {
+	if err == nil || !strings.Contains(err.Error(), "codex error") || !strings.Contains(err.Error(), "模型不可用") {
 		t.Errorf("error 事件应转译为错误，得到 %v", err)
 	}
 }
 
 func TestCodexRunUnparseableLineIsError(t *testing.T) {
 	_, err := parseCodexStream(`{"type":"thread.started","thread_id":"th-1"}` + "\n这不是JSON\n")
-	if err == nil || !strings.Contains(err.Error(), "无法解析") || !strings.Contains(err.Error(), "这不是JSON") {
+	if err == nil || !strings.Contains(err.Error(), "failed to parse line 2") || !strings.Contains(err.Error(), "这不是JSON") {
 		t.Errorf("无法解析的行应显式报错并附内容，得到 %v", err)
 	}
 }
@@ -93,7 +93,7 @@ func TestCodexRunNoAgentMessageIsError(t *testing.T) {
 		`{"type":"thread.started","thread_id":"th-1"}`,
 		`{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}`,
 	}, "\n") + "\n")
-	if err == nil || !strings.Contains(err.Error(), "未产出最终 agent_message") {
+	if err == nil || !strings.Contains(err.Error(), "did not produce a final agent_message") {
 		t.Errorf("无 agent_message 应报错，得到 %v", err)
 	}
 }
@@ -114,7 +114,7 @@ func TestCodexRunNonZeroExit(t *testing.T) {
 	fakeBinary(t, "codex", `echo "边界爆炸" >&2
 exit 1`)
 	_, err := codexEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
-	if err == nil || !strings.Contains(err.Error(), "codex 退出码 1") || !strings.Contains(err.Error(), "边界爆炸") {
+	if err == nil || !strings.Contains(err.Error(), "codex exited with code 1") || !strings.Contains(err.Error(), "边界爆炸") {
 		t.Errorf("应转译退出码+stderr，得到 %v", err)
 	}
 }

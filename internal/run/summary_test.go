@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/qoggy/conduct/internal/workflow"
 )
 
@@ -30,6 +31,7 @@ func sampleRecord() *Record {
 		UserPrompt: "给购物车加一个清空按钮",
 		Cwd:        "/Users/me/proj",
 		Status:     StatusCompleted,
+		Language:   locale.Chinese,
 		StartedAt:  "2026-07-03T15:22:33+08:00",
 		EndedAt:    &ended,
 		Artifacts:  map[string]string{"plan": "# 方案\n加按钮", "code": "diff --git ..."},
@@ -80,17 +82,62 @@ func TestSummarizePrompt(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := summarizePrompt(c.prompt); got != c.want {
+			if got := summarizePrompt(c.prompt, locale.Chinese); got != c.want {
 				t.Errorf("summarizePrompt(%q) = %q，期望 %q", c.prompt, got, c.want)
 			}
 		})
 	}
 }
 
+func TestRenderSummaryEnglishPreservesExternalContent(t *testing.T) {
+	record := sampleRecord()
+	record.Language = locale.English
+	record.UserPrompt = "保留用户原文"
+	errorText := "引擎原始错误"
+	record.Error = &errorText
+	record.Status = StatusFailed
+	failedNodeID := "code"
+	record.FailedNodeID = &failedNodeID
+	markdown := RenderSummary(record, []TraceEntry{{
+		NodeID: "code", DisplayName: "编码", Engine: "claude-code", StartedAt: record.StartedAt, EndedAt: *record.EndedAt,
+	}})
+	for _, want := range []string{
+		"**Workflow** autopilot · 2 nodes",
+		"**Request** 保留用户原文",
+		"**Status** ❌ failed",
+		"**Working directory** /Users/me/proj",
+		"**Failed node** code",
+		"**Error** 引擎原始错误",
+		"## Nodes",
+		"| Node | Engine | Start → End | Duration |",
+		"| 编码 | claude-code |",
+		"## Artifacts",
+	} {
+		if !strings.Contains(markdown, want) {
+			t.Errorf("English summary missing %q:\n%s", want, markdown)
+		}
+	}
+	for _, unwanted := range []string{"**工作流**", "**需求**", "**状态**", "**工作目录**", "## 节点", "## 产物"} {
+		if strings.Contains(markdown, unwanted) {
+			t.Errorf("English summary contains Chinese product text %q:\n%s", unwanted, markdown)
+		}
+	}
+}
+
+func TestValidateLanguageRejectsMissingOrInvalidValue(t *testing.T) {
+	for _, language := range []locale.Language{"", "fr"} {
+		record := sampleRecord()
+		record.Language = language
+		if err := record.ValidateLanguage(); err == nil {
+			t.Fatalf("ValidateLanguage(%q) = nil, want error", language)
+		}
+	}
+}
+
 func TestRenderSummaryFailedShowsNodeAndError(t *testing.T) {
 	r := sampleRecord()
 	r.Status = StatusFailed
-	errMsg := "claude 退出码 1: boom"
+	errMsg := "claude exited with code 1: boom"
 	r.Error = &errMsg
 	failedID := "code"
 	r.FailedNodeID = &failedID  // 失败节点由 schedule 落进 record，summary 直接读（不再从 trace 猜）
@@ -102,7 +149,7 @@ func TestRenderSummaryFailedShowsNodeAndError(t *testing.T) {
 			StartedAt: "2026-07-03T15:22:34+08:00", EndedAt: "2026-07-03T15:22:34+08:00"},
 	}
 	md := RenderSummary(r, trace)
-	for _, want := range []string{"**失败节点** code", "**错误** claude 退出码 1: boom", "| 编码 | claude-code |"} {
+	for _, want := range []string{"**失败节点** code", "**错误** claude exited with code 1: boom", "| 编码 | claude-code |"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("failed summary 缺少 %q\n完整:\n%s", want, md)
 		}

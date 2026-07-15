@@ -4,6 +4,7 @@
 // 高亮由 Prism 承担（真 markdown / json 语法），本组件只负责叠层、滚动同步与可选 ghost 页脚。
 
 import { h } from "./dom.js";
+import { i18n } from "./i18n.js";
 import { highlightHTML } from "./highlight.js";
 
 // createCodeEditor(opts) → { element, getValue, setValue, focus }
@@ -40,7 +41,7 @@ export function createCodeEditor(opts) {
   const children = [scroll];
   if (opts.ghostAppend) {
     children.push(
-      h("div", { class: "ghostblk" }, h("span", { class: "ghosttag" }, opts.ghostLabel || "运行时自动追加"), opts.ghostAppend),
+      h("div", { class: "ghostblk" }, h("span", { class: "ghosttag" }, opts.ghostLabel || i18n.ghostAppend), opts.ghostAppend),
     );
   }
   const element = h("div", { class: "pe-wrap" + (opts.attached ? " pe-wrap--attached" : "") }, ...children);

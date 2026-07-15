@@ -3,7 +3,7 @@
 // 下方运行总结 marked 渲染、冻结定义折叠、running 可终止 / failed·interrupted 可恢复。
 // 全页不显示、不提及任何内部文件路径（cwd 是用户自己传的运行参数，照常展示）。
 
-import { h, mount, copyText, copyIcon } from "../dom.js";
+import { h, mount, copyText, copyIcon, toast } from "../dom.js";
 import { api } from "../api.js";
 import { navigate } from "../router.js";
 import { i18n } from "../i18n.js";
@@ -370,7 +370,7 @@ function renderMarkdown(text) {
     const rendered = globalThis.marked.parse(source, { renderer: cachedMarkdownRenderer, breaks: true });
     return globalThis.DOMPurify.sanitize(rendered);
   } catch (err) {
-    console.error("conduct ui: Markdown 渲染失败，已回退纯文本", err);
+    console.error("conduct ui: Markdown rendering failed; fell back to plain text", err);
     return `<pre><code>${escapeHTML(source)}</code></pre>`;
   }
 }
@@ -483,7 +483,8 @@ function openResume(outlet, d) {
       h("p", { class: "muted", style: { margin: "6px 0 0" } }, i18n.resumeNote),
     ],
     onConfirm: async () => {
-      await api.resumeRun(d.id); // 202 返回 {runId}（即原 id）；续跑后该 run 转 running，刷新即见推进
+      const response = await api.resumeRun(d.id); // 202 返回 {runId}（即原 id）；续跑后该 run 转 running，刷新即见推进
+      if (response.note && i18n[response.note]) toast(i18n[response.note]);
       reload(outlet, d.id);
     },
   });

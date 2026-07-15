@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/engine"
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/qoggy/conduct/internal/run"
 	"github.com/qoggy/conduct/internal/store"
 	"github.com/qoggy/conduct/internal/workflow"
@@ -59,9 +62,10 @@ func newOrchestrator(t *testing.T, reply func(engine.RunRequest) (engine.RunResu
 	fe := fakeEngine{mu: &sync.Mutex{}, calls: calls, reply: reply}
 	st := store.New(t.TempDir())
 	o := &Orchestrator{
-		Store:   st,
-		Engines: func(string) (engine.Engine, error) { return fe, nil },
-		Now:     fixedClock(),
+		Store:    st,
+		Engines:  func(string) (engine.Engine, error) { return fe, nil },
+		Now:      fixedClock(),
+		Language: locale.English,
 	}
 	return o, calls, st
 }
@@ -132,11 +136,75 @@ func TestRunThreadsArtifactsAndCompletes(t *testing.T) {
 	if rec.Status != run.StatusCompleted || rec.EndedAt == nil {
 		t.Errorf("应收尾为 completed，得到 %+v", rec)
 	}
+	if rec.Language != locale.English {
+		t.Errorf("run 应快照开跑语言 en，得到 %q", rec.Language)
+	}
 	if rec.Artifacts["plan"] != "out:加个按钮" || rec.Artifacts["review"] != "out:REVIEW:out:PLAN:out:加个按钮" {
 		t.Errorf("artifacts 未正确落盘: %+v", rec.Artifacts)
 	}
 	if _, hasStart := rec.Artifacts["START"]; hasStart {
 		t.Error("artifacts 不应含 START 标记节点")
+	}
+}
+
+func TestSummaryLanguageSnapshotSurvivesGlobalSettingChangeAndResume(t *testing.T) {
+	settingsRoot := filepath.Join(t.TempDir(), ".conduct")
+	english := locale.English
+	if _, err := locale.UpdateLanguage(settingsRoot, &english); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := locale.Read(settingsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	def := workflow.Definition{
+		Nodes: []workflow.Node{
+			{ID: "START"},
+			{ID: "code", DisplayName: "编码", Engine: "claude-code", PromptTemplate: "implement"},
+			{ID: "END"},
+		},
+		Edges: []workflow.Edge{{From: "START", To: "code"}, {From: "code", To: "END"}},
+	}
+	failing, _, st := newOrchestrator(t, func(engine.RunRequest) (engine.RunResult, error) {
+		chinese := locale.Chinese
+		if _, updateErr := locale.UpdateLanguage(settingsRoot, &chinese); updateErr != nil {
+			return engine.RunResult{}, updateErr
+		}
+		return engine.RunResult{}, errors.New("engine failure")
+	})
+	failing.Language = settings.ResolvedLanguage
+	runID, err := failing.Run(context.Background(), wf("flow", def), "用户原文", "/proj", &captureObserver{})
+	if err == nil {
+		t.Fatal("first run must fail so it can be resumed")
+	}
+	failedSummary, err := st.ReadSummary(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(failedSummary, "**Workflow** flow") || !strings.Contains(failedSummary, "## Nodes") ||
+		strings.Contains(failedSummary, "**工作流**") || strings.Contains(failedSummary, "## 节点") {
+		t.Fatalf("failed summary did not retain the English snapshot:\n%s", failedSummary)
+	}
+
+	resuming, _, _ := newOrchestrator(t, echoReply)
+	resuming.Store = st
+	resuming.Language = locale.Chinese // 当前进程已解析为中文，resume 仍须沿用 record.Language。
+	record := mustLoad(t, st, runID)
+	trace, err := st.LoadTrace(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resuming.Resume(context.Background(), record, trace, &captureObserver{}); err != nil {
+		t.Fatal(err)
+	}
+	resumedSummary, err := st.ReadSummary(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(resumedSummary, "**Workflow** flow") || !strings.Contains(resumedSummary, "## Nodes") ||
+		strings.Contains(resumedSummary, "**工作流**") || strings.Contains(resumedSummary, "## 节点") {
+		t.Fatalf("resumed summary did not retain the English snapshot:\n%s", resumedSummary)
 	}
 }
 
@@ -235,7 +303,7 @@ func TestRunFailStopsBeforeFanout(t *testing.T) {
 		},
 	}
 	o, calls, st := newOrchestrator(t, func(req engine.RunRequest) (engine.RunResult, error) {
-		return engine.RunResult{DurationMilliseconds: 3}, fmt.Errorf("claude 退出码 1: boom")
+		return engine.RunResult{DurationMilliseconds: 3}, fmt.Errorf("claude exited with code 1: boom")
 	})
 	runID, err := o.Run(context.Background(), wf("flow", def), "需求", "/p", &captureObserver{})
 	if err == nil || !strings.Contains(err.Error(), "boom") {
@@ -268,8 +336,9 @@ func TestRunFailedNodeAttributionAndTimestamp(t *testing.T) {
 	base := time.Date(2026, 7, 3, 15, 22, 33, 0, time.FixedZone("CST", 8*3600))
 	tick := 0
 	o := &Orchestrator{
-		Store:   store.New(t.TempDir()),
-		Engines: func(string) (engine.Engine, error) { return fe, nil },
+		Store:    store.New(t.TempDir()),
+		Engines:  func(string) (engine.Engine, error) { return fe, nil },
+		Language: locale.English,
 		Now: func() time.Time { // 每次 +1s（o.Now 只在调度线程调用，无需锁）
 			instant := base.Add(time.Duration(tick) * time.Second)
 			tick++
@@ -284,8 +353,8 @@ func TestRunFailedNodeAttributionAndTimestamp(t *testing.T) {
 	if rec.FailedNodeID == nil || *rec.FailedNodeID != "gen" {
 		t.Errorf("FailedNodeID 应为 gen，得到 %v", rec.FailedNodeID)
 	}
-	if rec.Error == nil || !strings.Contains(*rec.Error, "节点 gen：") || !strings.Contains(*rec.Error, "boom") {
-		t.Errorf("error 应自带节点名『节点 gen：…boom』，得到 %v", rec.Error)
+	if rec.Error == nil || !strings.Contains(*rec.Error, "node gen:") || !strings.Contains(*rec.Error, "boom") {
+		t.Errorf("error 应自带固定英文节点上下文『node gen: …boom』，得到 %v", rec.Error)
 	}
 	trace, _ := o.Store.LoadTrace(runID)
 	if len(trace) != 1 {
@@ -399,7 +468,7 @@ func seedFailedRun(t *testing.T, st *store.Store, def workflow.Definition, artif
 		ID: id, Workflow: "flow", WorkflowSnapshot: wf("flow", def),
 		UserPrompt: "加按钮", Cwd: "/proj", Status: run.StatusFailed,
 		Pid: 21474836, StartedAt: "2026-07-03T15:22:33+08:00",
-		EndedAt: &ended, Artifacts: artifacts, Error: &errMsg,
+		EndedAt: &ended, Artifacts: artifacts, Error: &errMsg, Language: locale.English,
 	}
 	if err := st.CreateRun(record); err != nil {
 		t.Fatal(err)
@@ -519,7 +588,7 @@ func TestResumeAllSuccessInterruptedFinalizesCompleted(t *testing.T) {
 	record := &run.Record{
 		ID: "flow-20260703-152233", Workflow: "flow", WorkflowSnapshot: wf("flow", def),
 		UserPrompt: "需求", Cwd: "/p", Status: run.StatusRunning, Pid: -1,
-		StartedAt: "2026-07-03T15:22:33+08:00", Artifacts: map[string]string{"a": "done-a"},
+		StartedAt: "2026-07-03T15:22:33+08:00", Artifacts: map[string]string{"a": "done-a"}, Language: locale.English,
 	}
 	if err := st.CreateRun(record); err != nil {
 		t.Fatal(err)
@@ -554,7 +623,7 @@ func TestResumeEmptyTraceRunsFromStart(t *testing.T) {
 	record := &run.Record{
 		ID: "flow-20260703-152233", Workflow: "flow", WorkflowSnapshot: wf("flow", def),
 		UserPrompt: "需求", Cwd: "/p", Status: run.StatusFailed,
-		StartedAt: "2026-07-03T15:22:33+08:00", Artifacts: map[string]string{},
+		StartedAt: "2026-07-03T15:22:33+08:00", Artifacts: map[string]string{}, Language: locale.English,
 	}
 	if err := st.CreateRun(record); err != nil {
 		t.Fatal(err)
@@ -576,7 +645,7 @@ func TestResumeInterruptedGapRunsUnfinished(t *testing.T) {
 	record := &run.Record{
 		ID: "flow-20260703-152233", Workflow: "flow", WorkflowSnapshot: wf("flow", def),
 		UserPrompt: "需求", Cwd: "/p", Status: run.StatusRunning, Pid: -1,
-		StartedAt: "2026-07-03T15:22:33+08:00", Artifacts: map[string]string{"plan": "planned"},
+		StartedAt: "2026-07-03T15:22:33+08:00", Artifacts: map[string]string{"plan": "planned"}, Language: locale.English,
 	}
 	if err := st.CreateRun(record); err != nil {
 		t.Fatal(err)
@@ -599,7 +668,7 @@ func TestResumeInterruptedGapRunsUnfinished(t *testing.T) {
 // TestResumeMissingSnapshotFailsLoud 覆盖缺快照的防御性报错。
 func TestResumeMissingSnapshotFailsLoud(t *testing.T) {
 	o, _, _ := newOrchestrator(t, echoReply)
-	record := &run.Record{ID: "x-1", Status: run.StatusFailed}
+	record := &run.Record{ID: "x-1", Status: run.StatusFailed, Language: locale.English}
 	if err := o.Resume(context.Background(), record, nil, &captureObserver{}); err == nil {
 		t.Fatal("缺 workflowSnapshot 应报错")
 	}
@@ -610,9 +679,19 @@ func TestResumeMissingSnapshotFailsLoud(t *testing.T) {
 // 收尾成 completed，把 failed 运行静默改写成成功。
 func TestResumeInvalidSnapshotFailsLoud(t *testing.T) {
 	o, _, _ := newOrchestrator(t, echoReply)
-	record := &run.Record{ID: "x-2", Status: run.StatusFailed, WorkflowSnapshot: wf("flow", workflow.Definition{})}
-	if err := o.Resume(context.Background(), record, nil, &captureObserver{}); err == nil {
+	record := &run.Record{ID: "x-2", Status: run.StatusFailed, WorkflowSnapshot: wf("flow", workflow.Definition{}), Language: locale.English}
+	err := o.Resume(context.Background(), record, nil, &captureObserver{})
+	if err == nil {
 		t.Fatal("空/非法 workflowSnapshot 应报错，不得冒充 completed")
+	}
+	applicationError, ok := apperror.As(err)
+	if !ok || applicationError.Code != apperror.CodeTechnicalFailure {
+		t.Fatalf("损坏快照应保留顶层固定英文技术错误，得到 %T: %v", err, err)
+	}
+	for _, want := range []string{"workflowSnapshot for run x-2", "failed validation", "cannot be resumed"} {
+		if !strings.Contains(applicationError.TechnicalDetail, want) {
+			t.Errorf("技术详情缺少 %q：%s", want, applicationError.TechnicalDetail)
+		}
 	}
 	if record.Status == run.StatusCompleted {
 		t.Fatalf("失败运行被非法快照静默改写为 completed（status=%q）", record.Status)

@@ -175,8 +175,8 @@ function filterSelect(label, options, value, onPick) {
   const sel = h(
     "select",
     { class: "inp", style: { width: "auto", minHeight: "0" }, onChange: (e) => onPick(e.target.value) },
-    h("option", { value: "" }, `${label}：${i18n.filterAll}`),
-    ...options.map((o) => h("option", { value: o, selected: o === value }, `${label}：${o}`)),
+    h("option", { value: "" }, `${label}${i18n.filterSeparator}${i18n.filterAll}`),
+    ...options.map((o) => h("option", { value: o, selected: o === value }, `${label}${i18n.filterSeparator}${o}`)),
   );
   return sel;
 }

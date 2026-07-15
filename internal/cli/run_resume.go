@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/launch"
 	"github.com/qoggy/conduct/internal/orchestrator"
 	"github.com/qoggy/conduct/internal/run"
@@ -16,14 +17,20 @@ func newRunResumeCommand() *cobra.Command {
 	var detach bool
 	cmd := &cobra.Command{
 		Use:   "resume <id>",
-		Short: "从中断处恢复一次未完成的运行",
-		Long: "恢复一次 failed 或 interrupted 运行：跳过已成功的节点，补跑未完成的前沿及其下游、续到终态，续写同一 run（id 不变）。\n" +
-			"failed / interrupted 可恢复；completed / running（进程存活）一律 fail-loud 退 1。\n" +
-			"-d / --detach 后台恢复：以独立会话 spawn 子进程续跑，打印 run id 立刻退 0，用 run show / run wait / run stop 查等停。\n\n" +
-			"示例：\n" +
+		Short: localizedHelpText("从中断处恢复一次未完成的运行", "Resume an incomplete run from its interruption point"),
+		Long: localizedHelpText(
+			"恢复一次 failed 或 interrupted 运行：跳过已成功的节点，补跑未完成的前沿及其下游、续到终态，续写同一 run（id 不变）。\n"+
+				"failed / interrupted 可恢复；completed / running（进程存活）一律 fail-loud 退 1。\n"+
+				"-d / --detach 后台恢复：以独立会话 spawn 子进程续跑，打印 run id 立刻退 0，用 run show / run wait / run stop 查等停。\n\n"+
+				"示例：\n",
+			"Resume a failed or interrupted run: skip nodes that already succeeded, run the unfinished frontier and its downstream nodes, continue to a terminal state, and append to the same run (id unchanged).\n"+
+				"failed / interrupted runs may be resumed; completed / running (process alive) always fail loudly and exit 1.\n"+
+				"-d / --detach resumes in the background: spawn a child process in an independent session to continue the run, print the run id, and immediately exit 0; use run show / run wait / run stop to inspect, wait for, or stop it.\n\n"+
+				"Examples:\n",
+		) +
 			"  conduct run resume autopilot-20260703-152233\n" +
 			"  conduct run resume autopilot-20260703-152233 -d",
-		Args: requireArgs(cobra.ExactArgs(1)),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			if err := run.ValidateID(id); err != nil {
@@ -51,6 +58,8 @@ func newRunResumeCommand() *cobra.Command {
 				return err
 			}
 			orch := orchestrator.New(st)
+			// Resume 的 summary 使用 run.json 中开跑时快照的语言；这里的当前语言只影响 CLI 进度外壳。
+			orch.Language = selectedLanguage
 			if asJSON {
 				obs := &jsonObserver{out: cmd.OutOrStdout()}
 				if err := orch.Resume(cmd.Context(), record, trace, obs); err != nil {
@@ -66,12 +75,12 @@ func newRunResumeCommand() *cobra.Command {
 			if pathErr != nil {
 				return pathErr
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✅ 完成，阅读 %s 获取运行详情。\n", summary)
+			fmt.Fprintf(cmd.OutOrStdout(), localizedHelpText("✅ 完成，阅读 %s 获取运行详情。\n", "✅ Completed. Read %s for run details.\n"), summary)
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "逐节点输出机器可读事件 JSON（每节点一行），无进度装饰")
-	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "后台恢复：打印 run id 后立刻退 0，不阻塞到运行结束")
+	cmd.Flags().BoolVar(&asJSON, "json", false, localizedHelpText("逐节点输出机器可读事件 JSON（每节点一行），无进度装饰", "Output machine-readable event JSON for each node (one line per node), without progress decoration"))
+	cmd.Flags().BoolVarP(&detach, "detach", "d", false, localizedHelpText("后台恢复：打印 run id 后立刻退 0，不阻塞到运行结束", "Resume in the background: print the run id and immediately exit 0 without blocking until the run finishes"))
 	return cmd
 }
 
@@ -80,13 +89,13 @@ func newRunResumeCommand() *cobra.Command {
 func checkResumable(record *run.Record) error {
 	switch status := record.EffectiveStatus(); status {
 	case run.StatusCompleted:
-		return fmt.Errorf("%s: 已成功完成，无需恢复", record.ID)
+		return apperror.New(apperror.CodeRunNotResumable, apperror.Params{"id": record.ID, "status": status})
 	case run.StatusRunning:
-		return fmt.Errorf("%s: 仍在运行中，无法恢复", record.ID)
+		return apperror.New(apperror.CodeRunNotResumable, apperror.Params{"id": record.ID, "status": status})
 	case run.StatusFailed, run.StatusInterrupted:
 		return nil
 	default:
-		return fmt.Errorf("%s: 状态 %s 无法恢复", record.ID, status)
+		return apperror.New(apperror.CodeRunNotResumable, apperror.Params{"id": record.ID, "status": status})
 	}
 }
 
@@ -96,11 +105,11 @@ func checkResumable(record *run.Record) error {
 func runResumeDetached(cmd *cobra.Command, st *store.Store, record *run.Record, asJSON bool) error {
 	exePath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("解析自身可执行文件路径失败: %w", err)
+		return fmt.Errorf("failed to resolve current executable path: %w", err)
 	}
 	stderrDir, err := os.MkdirTemp("", "conduct-detach-")
 	if err != nil {
-		return fmt.Errorf("创建启动日志临时目录失败: %w", err)
+		return fmt.Errorf("failed to create launch log temporary directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(stderrDir) }()
 
@@ -113,6 +122,6 @@ func runResumeDetached(cmd *cobra.Command, st *store.Store, record *run.Record, 
 func runResumeDetachedWith(cmd *cobra.Command, launcher detachLauncher, record *run.Record, asJSON bool) error {
 	runID, note, err := launcher.LaunchResume(record.ID)
 	return emitDetach(cmd, runID, note, err, record.Workflow, asJSON, func(id string) string {
-		return fmt.Sprintf("已在后台恢复 %s；conduct run show %s 查看进度、conduct run stop %s 终止。", id, id, id)
+		return fmt.Sprintf(localizedHelpText("已在后台恢复 %s；conduct run show %s 查看进度、conduct run stop %s 终止。", "Resumed %s in the background; use conduct run show %s to inspect progress and conduct run stop %s to stop it."), id, id, id)
 	})
 }

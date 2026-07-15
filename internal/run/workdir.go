@@ -1,9 +1,10 @@
 package run
 
 import (
-	"errors"
 	"fmt"
 	"os"
+
+	"github.com/qoggy/conduct/internal/apperror"
 )
 
 // 引擎工作目录（run 的 --cwd / {{sys.cwd}}）的存在性校验：一次运行只应落在已存在的目录上，
@@ -13,9 +14,9 @@ import (
 
 var (
 	// ErrWorkingDirNotExist 表示目标工作目录不存在。
-	ErrWorkingDirNotExist = errors.New("工作目录不存在")
+	ErrWorkingDirNotExist = apperror.New(apperror.CodeWorkingDirectoryNotFound, nil)
 	// ErrWorkingDirNotDir 表示目标路径存在但不是目录。
-	ErrWorkingDirNotDir = errors.New("工作目录不是目录")
+	ErrWorkingDirNotDir = apperror.New(apperror.CodeWorkingDirectoryNotDir, nil)
 )
 
 // ValidateWorkingDir 校验一个（应为绝对路径的）工作目录已存在且确为目录。
@@ -25,12 +26,12 @@ func ValidateWorkingDir(absDir string) error {
 	info, err := os.Stat(absDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("%s: %w", absDir, ErrWorkingDirNotExist)
+			return apperror.New(apperror.CodeWorkingDirectoryNotFound, apperror.Params{"path": absDir})
 		}
-		return fmt.Errorf("无法访问工作目录 %s: %w", absDir, err)
+		return fmt.Errorf("failed to access working directory %s: %w", absDir, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("%s: %w", absDir, ErrWorkingDirNotDir)
+		return apperror.New(apperror.CodeWorkingDirectoryNotDir, apperror.Params{"path": absDir})
 	}
 	return nil
 }

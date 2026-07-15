@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/workflow"
 	"github.com/spf13/cobra"
 )
@@ -22,15 +23,26 @@ func newWorkflowEdgeCommand() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "edge <name>",
-		Short: "列出或增删工作流的边（--add / --rm，多改动原子生效）",
-		Long: "不带 --add / --rm 时列出该工作流的全部边（含 START / END 连边）。\n" +
-			"用 --add / --rm 增删边时，多个改动作为一次原子事务生效——适合 a→b→c 改 a→c→b 这类需同时删旧加新的调序。\n" +
-			"删不存在的边、加已存在的边都会报错退出；同一条边同时 --add 与 --rm 视为先删后加、保留该边、不报重复。",
-		Example: "  # 列出全部边\n" +
-			"  conduct workflow edge myflow\n" +
-			"  # 把 s1→s2→END 调序成 s1→s3→END\n" +
-			"  conduct workflow edge myflow --rm s1:s2 --rm s2:END --add s1:s3 --add s3:END",
-		Args: requireArgs(cobra.ExactArgs(1)),
+		Short: localizedHelpText("列出或增删工作流的边（--add / --rm，多改动原子生效）", "List, add, or remove workflow edges (--add / --rm; multiple changes apply atomically)"),
+		Long: localizedHelpText(
+			"不带 --add / --rm 时列出该工作流的全部边（含 START / END 连边）。\n"+
+				"用 --add / --rm 增删边时，多个改动作为一次原子事务生效——适合 a→b→c 改 a→c→b 这类需同时删旧加新的调序。\n"+
+				"删不存在的边、加已存在的边都会报错退出；同一条边同时 --add 与 --rm 视为先删后加、保留该边、不报重复。",
+			"Without --add / --rm, list all edges in the workflow (including START / END edges).\n"+
+				"When adding or removing edges with --add / --rm, multiple changes apply as one atomic transaction—suitable for reorderings such as changing a→b→c to a→c→b, which require old edges to be removed and new ones added together.\n"+
+				"Removing a nonexistent edge or adding an existing edge reports an error and exits; passing both --add and --rm for the same edge means remove it first and then add it, preserving the edge without reporting a duplicate.",
+		),
+		Example: localizedHelpText(
+			"  # 列出全部边\n"+
+				"  conduct workflow edge myflow\n"+
+				"  # 把 s1→s2→END 调序成 s1→s3→END\n"+
+				"  conduct workflow edge myflow --rm s1:s2 --rm s2:END --add s1:s3 --add s3:END",
+			"  # List all edges\n"+
+				"  conduct workflow edge myflow\n"+
+				"  # Reorder s1→s2→END as s1→s3→END\n"+
+				"  conduct workflow edge myflow --rm s1:s2 --rm s2:END --add s1:s3 --add s3:END",
+		),
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			if err := workflow.ValidateName(name); err != nil {
@@ -73,13 +85,19 @@ func newWorkflowEdgeCommand() *cobra.Command {
 			if err := st.Save(wf); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ 已更新 %s 边（+%d -%d）\n", name, len(addEdges), len(rmEdges))
+			fmt.Fprintf(cmd.OutOrStdout(), localizedHelpText("✓ 已更新 %s 边（+%d -%d）\n", "✓ Updated edges for %s (+%d -%d)\n"), name, len(addEdges), len(rmEdges))
 			return nil
 		},
 	}
-	cmd.Flags().StringArrayVar(&adds, "add", nil, "加一条边 <from:to>（可重复；from / to 可为 START / END）")
-	cmd.Flags().StringArrayVar(&rms, "rm", nil, "删一条边 <from:to>（可重复）")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "列出边时以机器可读 JSON 输出（每项 {from,to}）；改边时无效")
+	cmd.Flags().StringArrayVar(&adds, "add", nil, localizedHelpText(
+		"加一条边 <from:to>（可重复；from / to 可为 START / END）",
+		"Add an edge <from:to> (repeatable; from / to may be START / END)",
+	))
+	cmd.Flags().StringArrayVar(&rms, "rm", nil, localizedHelpText("删一条边 <from:to>（可重复）", "Remove an edge <from:to> (repeatable)"))
+	cmd.Flags().BoolVar(&asJSON, "json", false, localizedHelpText(
+		"列出边时以机器可读 JSON 输出（每项 {from,to}）；改边时无效",
+		"When listing edges, output machine-readable JSON (each item is {from,to}); ignored when changing edges",
+	))
 	return cmd
 }
 
@@ -108,7 +126,7 @@ func parseEdgeSpecs(specs []string) ([]workflow.Edge, error) {
 	for _, spec := range specs {
 		from, to, found := strings.Cut(spec, ":")
 		if !found || from == "" || to == "" {
-			return nil, usageErrorf("边格式非法 %q（应为 from:to，两端非空）", spec)
+			return nil, localizedUsageErrorf("边格式非法 %q（应为 from:to，两端非空）", "invalid edge format %q (expected from:to with both endpoints nonempty)", spec)
 		}
 		edges = append(edges, workflow.Edge{From: from, To: to})
 	}
@@ -126,7 +144,7 @@ func applyEdgeChanges(current, adds, rms []workflow.Edge) ([]workflow.Edge, erro
 	for _, edge := range rms {
 		key := edgeKey(edge)
 		if !currentSet[key] {
-			return nil, fmt.Errorf("删不存在的边 %s→%s", edge.From, edge.To)
+			return nil, apperror.New(apperror.CodeEdgeNotFound, apperror.Params{"from": edge.From, "to": edge.To})
 		}
 		rmSet[key] = true
 	}
@@ -143,7 +161,7 @@ func applyEdgeChanges(current, adds, rms []workflow.Edge) ([]workflow.Edge, erro
 	// --add 对「当前 − rm」判定：已存在则报重复（与 --rm 对称，不静默去重）。
 	for _, edge := range adds {
 		if afterRmSet[edgeKey(edge)] {
-			return nil, fmt.Errorf("加已存在的边 %s→%s", edge.From, edge.To)
+			return nil, apperror.New(apperror.CodeEdgeAlreadyExists, apperror.Params{"from": edge.From, "to": edge.To})
 		}
 		afterRm = append(afterRm, edge)
 		afterRmSet[edgeKey(edge)] = true // 拦住同批 --add 内的重复（否则落到整份校验的重复边）

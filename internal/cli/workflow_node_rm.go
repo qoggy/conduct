@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/workflow"
 	"github.com/spf13/cobra"
 )
@@ -12,18 +13,23 @@ import (
 func newWorkflowNodeRmCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rm <name> <id>",
-		Short: "删一个 agent 节点及其所有连边",
-		Long: "删名为 <name> 的工作流里 id 为 <id> 的 agent 节点，并级联删除以它为端点的所有边，再校验结果。\n" +
-			"删后若制造孤立节点（某节点失去全部入边或全部出边）、或该节点被他人 {{<id>}} 引用致悬空，则拒绝、原文件不变。\n" +
-			"START / END 是保留节点，node rm START / node rm END 直接拒绝。",
-		Args: requireArgs(cobra.ExactArgs(2)),
+		Short: localizedHelpText("删一个 agent 节点及其所有连边", "Remove an agent node and all its connected edges"),
+		Long: localizedHelpText(
+			"删名为 <name> 的工作流里 id 为 <id> 的 agent 节点，并级联删除以它为端点的所有边，再校验结果。\n"+
+				"删后若制造孤立节点（某节点失去全部入边或全部出边）、或该节点被他人 {{<id>}} 引用致悬空，则拒绝、原文件不变。\n"+
+				"START / END 是保留节点，node rm START / node rm END 直接拒绝。",
+			"Remove the agent node with id <id> from the workflow named <name>, cascade removal to every edge with that node as an endpoint, and then validate the result.\n"+
+				"If removal would create an isolated node (a node loses all incoming or all outgoing edges), or if another node's {{<id>}} reference would be left dangling, reject the operation and leave the original file unchanged.\n"+
+				"START / END are reserved nodes; node rm START / node rm END are rejected directly.",
+		),
+		Args: exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, id := args[0], args[1]
 			if err := workflow.ValidateName(name); err != nil {
 				return &usageError{err: err}
 			}
 			if id == workflow.NodeIDStart || id == workflow.NodeIDEnd {
-				return fmt.Errorf("START / END 为保留节点，不可删除")
+				return apperror.New(apperror.CodeReservedNodeID, apperror.Params{"id": id, "action": "remove"})
 			}
 
 			st, err := openStore()
@@ -45,7 +51,7 @@ func newWorkflowNodeRmCommand() *cobra.Command {
 				nodes = append(nodes, node)
 			}
 			if !found {
-				return fmt.Errorf("工作流 %s 无节点 %s", name, id)
+				return apperror.New(apperror.CodeNodeNotFound, apperror.Params{"id": id})
 			}
 			// 级联删除以该 id 为端点的所有边。
 			edges := make([]workflow.Edge, 0, len(wf.Definition.Edges))
@@ -64,7 +70,7 @@ func newWorkflowNodeRmCommand() *cobra.Command {
 			if err := st.Save(wf); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ 已删节点 %s·%s\n", name, id)
+			fmt.Fprintf(cmd.OutOrStdout(), localizedHelpText("✓ 已删节点 %s·%s\n", "✓ Removed node %s·%s\n"), name, id)
 			return nil
 		},
 	}

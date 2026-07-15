@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 
+	"github.com/qoggy/conduct/internal/apperror"
 	"github.com/qoggy/conduct/internal/workflow"
 	"github.com/spf13/cobra"
 )
@@ -22,7 +23,7 @@ type nodeSetOptions struct {
 func checkNodeSetFlagCombo(opts nodeSetOptions) error {
 	if opts.NewID == nil && opts.Engine == nil && opts.Model == nil && opts.Effort == nil &&
 		opts.ReasoningEffort == nil && opts.DisplayName == nil {
-		return usageErrorf("至少给一个字段选项（--id / --engine / --model / --effort / --reasoning-effort / --display-name）")
+		return localizedUsageErrorf("至少给一个字段选项（--id / --engine / --model / --effort / --reasoning-effort / --display-name）", "provide at least one field option (--id / --engine / --model / --effort / --reasoning-effort / --display-name)")
 	}
 	return nil
 }
@@ -66,7 +67,7 @@ func applyNodeSet(def *workflow.Definition, id string, opts nodeSetOptions) erro
 	applyEngineConfig(&node.EngineConfig, opts)
 	if opts.DisplayName != nil {
 		if *opts.DisplayName == "" {
-			return fmt.Errorf("节点 %s 的 displayName 不能为空", id)
+			return apperror.New(apperror.CodeNodeDisplayNameRequired, apperror.Params{"id": id})
 		}
 		node.DisplayName = *opts.DisplayName
 	}
@@ -88,11 +89,16 @@ func newWorkflowNodeSetCommand() *cobra.Command {
 	var newIDFlag, engineFlag, modelFlag, effortFlag, reasoningEffortFlag, displayNameFlag string
 	cmd := &cobra.Command{
 		Use:   "set <name> <id>",
-		Short: "改某 agent 节点的字段（id / 引擎 / 模型 / 档位 / 显示名）",
-		Long: "只改一个 agent 节点的字段（id / 引擎 / 模型 / 档位 / 显示名），不重发整份定义。\n" +
-			"用 --id 给这个节点改 id，指向它的连线、别处提示词里的 {{id}} 会自动跟着改。\n" +
-			"提示词走 node set-prompt；增删节点走 node add / node rm；改边走 edge。",
-		Args: requireArgs(cobra.ExactArgs(2)),
+		Short: localizedHelpText("改某 agent 节点的字段（id / 引擎 / 模型 / 档位 / 显示名）", "Change fields on an agent node (id / engine / model / effort level / display name)"),
+		Long: localizedHelpText(
+			"只改一个 agent 节点的字段（id / 引擎 / 模型 / 档位 / 显示名），不重发整份定义。\n"+
+				"用 --id 给这个节点改 id，指向它的连线、别处提示词里的 {{id}} 会自动跟着改。\n"+
+				"提示词走 node set-prompt；增删节点走 node add / node rm；改边走 edge。",
+			"Change only one agent node's fields (id / engine / model / effort level / display name) without resending the complete definition.\n"+
+				"Use --id to change this node's id; edges pointing to it and {{id}} references in other prompts are updated automatically.\n"+
+				"Use node set-prompt for prompts; node add / node rm to add or remove nodes; and edge to change edges.",
+		),
+		Args: exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, id := args[0], args[1]
 			if err := workflow.ValidateName(name); err != nil {
@@ -144,16 +150,19 @@ func newWorkflowNodeSetCommand() *cobra.Command {
 			if opts.NewID != nil {
 				finalID = *opts.NewID // 改了 id 后按新 id 回显，别再打印已不存在的旧 id
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ 已更新 %s·%s\n", name, finalID)
+			fmt.Fprintf(cmd.OutOrStdout(), localizedHelpText("✓ 已更新 %s·%s\n", "✓ Updated %s·%s\n"), name, finalID)
 			return nil
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&newIDFlag, "id", "", "给这个节点改 id，指向它的连线、别处的 {{id}} 引用会自动跟着改；新 id 唯一、须匹配 ^[A-Za-z_][A-Za-z0-9_-]{0,63}$、不得为 START/END")
-	f.StringVar(&engineFlag, "engine", "", "设引擎（claude-code / antigravity / qoder / codex）")
-	f.StringVar(&modelFlag, "model", "", "设模型；传空串就是清除、回落引擎默认")
-	f.StringVar(&effortFlag, "effort", "", "设 claude-code 档位；传空串清除")
-	f.StringVar(&reasoningEffortFlag, "reasoning-effort", "", "设 qoder / codex 推理档位；传空串清除")
-	f.StringVar(&displayNameFlag, "display-name", "", "改节点显示名（须非空）")
+	f.StringVar(&newIDFlag, "id", "", localizedHelpText(
+		"给这个节点改 id，指向它的连线、别处的 {{id}} 引用会自动跟着改；新 id 唯一、须匹配 ^[A-Za-z_][A-Za-z0-9_-]{0,63}$、不得为 START/END",
+		"Change this node's id; edges pointing to it and {{id}} references elsewhere are updated automatically; the new id must be unique, match ^[A-Za-z_][A-Za-z0-9_-]{0,63}$, and not be START/END",
+	))
+	f.StringVar(&engineFlag, "engine", "", localizedHelpText("设引擎（claude-code / antigravity / qoder / codex）", "Set the engine (claude-code / antigravity / qoder / codex)"))
+	f.StringVar(&modelFlag, "model", "", localizedHelpText("设模型；传空串就是清除、回落引擎默认", "Set the model; pass an empty string to clear it and fall back to the engine default"))
+	f.StringVar(&effortFlag, "effort", "", localizedHelpText("设 claude-code 档位；传空串清除", "Set the claude-code effort level; pass an empty string to clear it"))
+	f.StringVar(&reasoningEffortFlag, "reasoning-effort", "", localizedHelpText("设 qoder / codex 推理档位；传空串清除", "Set the qoder / codex reasoning effort level; pass an empty string to clear it"))
+	f.StringVar(&displayNameFlag, "display-name", "", localizedHelpText("改节点显示名（须非空）", "Change the node display name (must be nonempty)"))
 	return cmd
 }

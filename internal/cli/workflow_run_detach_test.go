@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/spf13/cobra"
 )
 
@@ -88,6 +89,7 @@ func TestRunDetachedWithSuccessJSON(t *testing.T) {
 
 // 成功人读（默认）→ 退 0，stdout 打印含 run id 的引导提示。
 func TestRunDetachedWithSuccessHuman(t *testing.T) {
+	useTestLanguage(t, locale.Chinese)
 	cmd, out := newDetachTestCmd()
 	if err := runDetachedWith(cmd, &fakeDetachLauncher{runID: "flow-20260707-120000"}, "flow", "需求", "/proj", false); err != nil {
 		t.Fatalf("成功不应报错: %v", err)
