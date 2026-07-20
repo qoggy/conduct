@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-20
+
+### Added
+
+- Added Kiro as a supported AI coding engine, using the user's existing Kiro profile and project configuration and supporting per-node model and effort settings.
+
+### Changed
+
+- Engines that support reasoning-effort configuration now use `engineConfig.effort` and the `--effort` CLI option.
+- Run details now use JSON `null` when token usage or session information is unavailable; human-readable CLI and UI views omit unavailable values.
+- Running a Kiro node sets `chat.disableMarkdownRendering=true` in the active Kiro profile. The setting affects Kiro's classic UI, persists after the run, and is not restored automatically.
+- The workflow editor now suggests Kiro and Codex model names while continuing to accept custom model values.
+
+### Removed
+
+- Removed `reasoningEffort` and `--reasoning-effort`. Existing workflows, run records, and scripts using the old names are not migrated automatically and must be updated to use `effort` and `--effort`.
+
 ## [0.1.1] - 2026-07-16
 
 ### Added
@@ -126,7 +143,8 @@ Initial public release.
 - One-line install script: `curl -sSL https://raw.githubusercontent.com/qoggy/conduct/main/install.sh | sh`, which detects the OS and architecture and installs the latest version.
 - Released under the MIT license.
 
-[unreleased]: https://github.com/qoggy/conduct/compare/v0.1.1...HEAD
+[unreleased]: https://github.com/qoggy/conduct/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/qoggy/conduct/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/qoggy/conduct/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/qoggy/conduct/compare/v0.0.3...v0.1.0
 [0.0.3]: https://github.com/qoggy/conduct/compare/v0.0.2...v0.0.3
