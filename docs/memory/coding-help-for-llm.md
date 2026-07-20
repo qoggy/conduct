@@ -22,4 +22,4 @@ type: coding
 **边界**：「信息完备」指**把本命令用起来**所需（参数结构 + 最小示例），不是把教程 / 概念 / 最佳实践也塞进来。后者是跨命令的深度内容，放独立的 help topic 命令（见 coding-help-topic-command），`--help` 末尾只留一行指针。`--help` 仍遵循社区标准的精简速查定位。
 
 **Why:** conduct 的核心使用者是沙箱里的 AI，`--help` 是它现学现用的唯一入口；缺参数结构 / 示例它就没法用，塞存储细节 / 套话则挤占 context 又无用。
-**How to apply:** 新增或修改任何命令的 Short / Long / flag 描述时。取值枚举（引擎名、effort 集等）优先从 `internal/engine` 能力表动态生成，避免静态文案与实现漂移。
+**How to apply:** 新增或修改任何命令的 Short / Long / flag 描述时。取值枚举（引擎名、effort 集等）从 `internal/engine` 的 descriptor 注册表动态生成，避免静态文案与实现漂移。

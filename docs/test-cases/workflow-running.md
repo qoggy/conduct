@@ -404,32 +404,6 @@ JSON
 
 ---
 
-## ui
-
-### TC-014 ui 启动并打印入口地址（交互 / 半自动）
-
-- **目的**：验证 `conduct ui` 启动可视化界面、stdout 打印入口地址、进程驻留至被中断。
-- **前置**：建隔离环境（临时 HOME）：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`。
-- **步骤**：
-  1. 后台启动，等待后先探活、再抓取输出、后中断：
-     ```bash
-     "$CONDUCT" ui > "$WORK/ui.log" 2>&1 &
-     UIPID=$!
-     sleep 2
-     kill -0 "$UIPID" 2>/dev/null && echo "ui_alive"   # 中断前先确认进程仍驻留
-     kill "$UIPID" 2>/dev/null
-     wait "$UIPID" 2>/dev/null                          # 回收，避免僵尸进程
-     cat "$WORK/ui.log"
-     ```
-- **预期**：
-  - 打印 `ui_alive`——`sleep 2` 后进程仍活着（未自行退出），证明它驻留而非一闪而过。
-  - `ui.log` 含启动横幅与一个入口地址（形如 `http://127.0.0.1:<port>`；端口每次可能不同，只校验 `http://127.0.0.1:` 前缀，不比对端口号）。
-  - **说明**：服务端启动的错误路径（端口占用 / store 不可读）与 `/api/*` 全端点的黑盒覆盖见 [ui-server.md](./ui-server.md)，本文不重复。
-  - 归一化说明：端口号非确定，忽略；本用例含时序成分，非纯确定性，必要时人工在终端 `conduct ui` 目视确认并 `Ctrl-C` 退出。
-- **清理**：`kill "$UIPID" 2>/dev/null; export HOME="$OLD_HOME"; rm -rf "$WORK"`。
-
----
-
 ## 补充：运行中（running）状态可见
 
 ### TC-015 💸 运行途中 run list / run show 显示 running，完成后转 completed

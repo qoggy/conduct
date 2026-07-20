@@ -14,7 +14,10 @@
 make build
 CONDUCT="$PWD/bin/conduct"   # 用绝对路径，cd 进临时目录 / 改 HOME 后仍可用
 REAL_HOME="$HOME"            # 一次性记下真实家目录，供中途失败时找回
+test -r "$PWD/docs/test-cases/atomic-conduct-test.sh"
 ```
+
+> TC-019 在独立脚本块里 `source docs/test-cases/atomic-conduct-test.sh` 并调用 `conduct_test_setup`：单一 shell 原子边界、trap 托底清理、真实 `~/.conduct/workflows`/`runs` 前后零差异快照（见 [atomic-conduct-test.sh](./atomic-conduct-test.sh)），不依赖下面「建隔离环境」的手工模式。
 
 各用例〈前置〉统一用这段建立隔离环境（下文简称「建隔离环境」）：
 
@@ -55,11 +58,11 @@ cat "$WORK/base.json" | "$CONDUCT" workflow create flow --definition
 ## 功能覆盖清单（动笔前规划）
 
 - **copy**：正常派生 / 深拷 engineConfig 且与源独立（数据流转 + 隔离）/ dst 已存在拒绝 / src 不存在 / dst 名非法 / runs 不动。
-- **node add**：缺省自动接 `START→id→END` / 连加多个得并行扇出 / `--from`/`--to` 显式指定 / `--model`/`--reasoning-effort` 等调优选项 / id 为保留名拒绝 / id 已存在拒绝 / id 格式非法 / 缺 `--engine`/`--display-name` 用法错误 / `--from` 指向不存在节点 / 目标工作流不存在。
+- **node add**：缺省自动接 `START→id→END` / 连加多个得并行扇出 / `--from`/`--to` 显式指定 / `--model`/`--effort` 调优选项 / id 为保留名拒绝 / id 已存在拒绝 / id 格式非法 / 缺 `--engine`/`--display-name` 用法错误 / `--from` 指向不存在节点 / 目标工作流不存在。
 - **node rm**：级联删边 / 结果孤立时拒绝并保留原文件 / `START`/`END` 拒删。
 - **edge**：`--add`/`--rm` 原子批量、给一对即单改 / `--add` 已存在的边报错 / `--rm` 不存在的边报错 / 同边同时 `--add`+`--rm` 视为保留 / reorder 三步配方（`set-prompt` → `edge` 批量 → `set-prompt`）。
 - **edge（列出）**：无 `--add`/`--rm` 时列出边，人类可读 / `--json`。
-- **node set**：`--engine`/`--model`/`--effort`/`--reasoning-effort`/`--display-name` 逐项生效 / 空串清除标量 / `--engine` 级联不兼容拒绝、同命令一并修好 / 未给任何字段用法错误 / `--display-name` 空拒绝 / 目标节点不存在 / 工作流名非法。
+- **node set**：`--engine`/`--model`/`--effort`/`--display-name` 逐项生效 / 空串清除标量 / `--engine` 级联不兼容拒绝、同命令一并修好 / 未给任何字段用法错误 / `--display-name` 空拒绝 / 目标节点不存在 / 工作流名非法；删除的 `--reasoning-effort` 与普通未知 flag 同路失败。
 - **node set-prompt**：原始文本免转义写入 / round-trip 字节稳定 / 空输入拒绝 / stdin 是终端拒绝不挂起。
 - **node show**：三态（人类可读 / `--prompt` / `--json`）/ `--prompt` 与 `--json` 互斥 / 与 set-prompt 的 round-trip 配对 / `START`/`END` 无可查看定义。
 - **文案**：`create`/`edit` 的 `--help` 含 `engineConfig` 示例、不含 evaluator/redoTarget/loopCount 残留提及；`workflow`/`node` 未知子命令列出全部动词（含新命令 `copy`/`node`/`edge`/`add`/`rm`）。
@@ -155,15 +158,15 @@ cat "$WORK/base.json" | "$CONDUCT" workflow create flow --definition
 
 ### TC-007 node add --from/--to 显式指定，构建菱形汇聚
 
-- **目的**：验证 `--from`（逗号分隔多个前驱）、`--to`、以及 `--model`/`--reasoning-effort` 等调优选项在建节点时一并生效。
+- **目的**：验证 `--from`（逗号分隔多个前驱）、`--to`、以及统一 `--effort` 调优选项在建节点时一并生效。
 - **前置**：建隔离环境；建库 flow（`START→gen→review→END`）。
 - **步骤**：
-  1. `"$CONDUCT" workflow node add flow merged --engine qoder --display-name 合并 --reasoning-effort high --from gen,review --to END; echo "exit=$?"`
+  1. `"$CONDUCT" workflow node add flow merged --engine qoder --display-name 合并 --effort high --from gen,review --to END; echo "exit=$?"`
   2. `"$CONDUCT" workflow node show flow merged --json`
   3. `"$CONDUCT" workflow edge flow`
 - **预期**：
   - 步骤 1 退出码 `0`，stdout 含 `✓ 已加节点 flow·merged`。
-  - 步骤 2 打印含 `"engine": "qoder"`、`"engineConfig": {"reasoningEffort": "high"}`。
+  - 步骤 2 打印含 `"engine": "qoder"`、`"engineConfig": {"effort": "high"}`。
   - 步骤 3 含 `gen → merged`、`review → merged`、`merged → END`（原 `review → END` 边仍在，因 `node add` 只加边、不动既有边——`review` 此时有两条出边）。
 - **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
@@ -341,19 +344,50 @@ cat "$WORK/base.json" | "$CONDUCT" workflow create flow --definition
   - 步骤 3 输出含 `(引擎默认)`（model 已回落默认）。
 - **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
-### TC-019 node set --engine 改引擎的级联：不兼容整份拒绝，可同命令一并重设
+### TC-019 node set --engine 改引擎的级联：不兼容整份拒绝，可同命令清除
 
 - **目的**：验证改 engine 后旧引擎专属字段被新引擎拒收时**整份校验失败退 1、绝不静默丢弃**；且允许在**同一条命令**里清掉旧字段修好。
-- **前置**：建隔离环境；建库 flow；先给 `gen` 配 claude-code 专属 effort：`"$CONDUCT" workflow node set flow gen --effort high`。
-- **步骤**：
-  1. 只换引擎、不清旧字段（应被拒）：`"$CONDUCT" workflow node set flow gen --engine qoder; echo "exit=$?"`
-  2. 同命令换引擎 + 清旧 effort + 设新档位（应成功）：`"$CONDUCT" workflow node set flow gen --engine qoder --effort "" --reasoning-effort medium; echo "exit=$?"`
-  3. `"$CONDUCT" workflow node show flow gen --json`
+- **前置**：无；下方脚本自行建立隔离、注册 trap、固定中文 locale、造 fixture 并做真实 store 前后快照。
+- **步骤**：完整复制执行一个脚本块：
+
+  ```bash
+  bash <<'BASH'
+  set -euo pipefail
+  source docs/test-cases/atomic-conduct-test.sh
+  conduct_test_setup
+  export LC_ALL=zh_CN.UTF-8
+  cat > "$WORK/base.json" <<'JSON'
+  {
+    "nodes": [
+      { "id": "START" },
+      {"id":"gen","displayName":"生成","engine":"claude-code","promptTemplate":"生成：{{sys.userPrompt}}"},
+      {"id":"review","displayName":"评审","engine":"claude-code","promptTemplate":"评审 {{gen}}"},
+      { "id": "END" }
+    ],
+    "edges": [
+      {"from":"START","to":"gen"},{"from":"gen","to":"review"},{"from":"review","to":"END"}
+    ]
+  }
+  JSON
+  cat "$WORK/base.json" | "$CONDUCT" workflow create flow --definition
+  "$CONDUCT" workflow node set flow gen --effort high
+  # 1. 只换到 antigravity、不清旧字段（应被拒）
+  set +e
+  "$CONDUCT" workflow node set flow gen --engine antigravity 2>"$WORK/step1.err"
+  echo "step1-exit=$?"
+  set -e
+  cat "$WORK/step1.err"
+  "$CONDUCT" workflow node show flow gen --json | python3 -c 'import json,sys; n=json.load(sys.stdin); assert n["engine"] == "claude-code"; assert n["engineConfig"]["effort"] == "high"; print("after-rejected=claude-code/high")'
+  # 2. 同命令换引擎 + 清旧 effort（应成功）
+  "$CONDUCT" workflow node set flow gen --engine antigravity --effort ""; echo "step2-exit=$?"
+  "$CONDUCT" workflow node show flow gen --json
+  BASH
+  ```
 - **预期**：
-  - 步骤 1 退出码 `1`，stderr 含 `engine="qoder" 不认 effort`（旧 effort 未被静默丢弃、整份校验拦下）；原定义不变（仍是 claude-code）。
-  - 步骤 2 退出码 `0`，stdout 含 `✓ 已更新 flow·gen`。
-  - 步骤 3 打印含 `"engine": "qoder"`、`"engineConfig": {"reasoningEffort": "medium"}`（旧 effort 已清、新档位落位）。
-- **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
+  - `step1-exit=1`，`$WORK/step1.err` 含 `engine="antigravity" 不接受 effort`；随后打印 `after-rejected=claude-code/high`，证明旧 effort 未被静默丢弃、整份校验拦下且原定义不变。
+  - `step2-exit=0`，stdout 含 `✓ 已更新 flow·gen`。
+  - 最后一条命令打印含 `"engine": "antigravity"`，且不含 `engineConfig`（旧 effort 已清）。
+- **清理**：脚本 trap 自动恢复 `HOME/PATH`、清理临时目录并比较真实 store 前后快照。
 
 ### TC-020 node set 未给任何字段选项报用法错误
 
@@ -541,3 +575,16 @@ cat "$WORK/base.json" | "$CONDUCT" workflow create flow --definition
   - 步骤 1 退出码 `2`，stderr 含 `未知子命令 "bogus"（可用：create / copy / edit / node / edge / rename / delete / list / show / run）`。
   - 步骤 2 退出码 `2`，stderr 含 `未知子命令 "bogus"（可用：add / rm / set / set-prompt / show）`。
 - **清理**：无。
+
+### TC-032 删除的 --reasoning-effort 是普通未知 flag
+
+- **目的**：验证旧 flag 没有别名或专门迁移诊断，与 `--xxxabc` 走同一 Cobra 未知选项路径。
+- **前置**：`WORK=$(mktemp -d)`。
+- **步骤**：
+  1. `LC_ALL=C "$CONDUCT" workflow node set flow gen --reasoning-effort high 2>"$WORK/reasoning.err"; echo "reasoning_exit=$?"`
+  2. `LC_ALL=C "$CONDUCT" workflow node set flow gen --xxxabc high 2>"$WORK/ordinary.err"; echo "ordinary_exit=$?"`
+  3. `sed 's/reasoning-effort/<unknown>/g' "$WORK/reasoning.err" > "$WORK/reasoning.norm"; sed 's/xxxabc/<unknown>/g' "$WORK/ordinary.err" > "$WORK/ordinary.norm"; diff -u "$WORK/reasoning.norm" "$WORK/ordinary.norm"; echo "diff_exit=$?"`
+- **预期**：
+  - 步骤 1、2 都退出 `2`，stderr 仅为普通 `unknown flag` 错误。
+  - 步骤 3 打印 `diff_exit=0`，没有“请改用 effort”等专门提示。
+- **清理**：`rm -rf "$WORK"`。

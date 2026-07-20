@@ -189,25 +189,52 @@ stop_ui() { kill "$UIPID" 2>/dev/null; wait "$UIPID" 2>/dev/null; }
   - 返回 `{"version":"<VERSION>"}`（`<VERSION>` 不逐字比对）。
 - **清理**：`stop_ui; export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
-### TC-010 GET /api/engines 返回引擎能力表
+### TC-010 GET /api/engines 返回 descriptor 可序列化字段
 
-- **目的**：验证引擎端点列出已注册引擎及其能力表（检查器引擎 / effort 下拉数据源）；能力表待实装的引擎以 `capability:null` 表达，不误报成 `allowsModel:false`。
+- **目的**：验证引擎端点按 name 排序列出全部 descriptor，capability 恒为对象，并提供 model 建议、effort 枚举与图标路径。
 - **前置**：`WORK=$(mktemp -d); OLD_HOME="$HOME"; export HOME="$WORK"`；粘贴 `start_ui`；`start_ui`。
 - **步骤**：
   1. ```bash
      curl -s "$B/api/engines" | python3 -c '
      import sys, json
      d = json.load(sys.stdin)
-     names = sorted(e["name"] for e in d)
+     names = [e["name"] for e in d]
      print("names=", names)
-     cc = [e for e in d if e["name"]=="claude-code"][0]["capability"]
-     print("cc_effortField=", cc["effortField"])
-     print("cc_has_high=", "high" in cc["effortValues"])
+     assert names == sorted(names)
+     assert all(isinstance(e["capability"], dict) for e in d)
+     cc = next(e for e in d if e["name"] == "claude-code")
+     assert cc["capability"]["modelSuggestions"] == ["sonnet", "opus", "fable"]
+     assert cc["capability"]["allowsEffort"] is True
+     assert "high" in cc["capability"]["effortValues"]
+     assert cc["iconPath"] == "/vendor/engine-icons/claude-code.png"
+     print("cc=", cc)
+     agy = next(e for e in d if e["name"] == "antigravity")
+     assert agy["capability"]["modelSuggestions"] == []
+     assert agy["capability"]["allowsEffort"] is False
+     assert agy["capability"]["effortValues"] == []
+     print("agy=", agy)
+     codex = next(e for e in d if e["name"] == "codex")
+     assert codex["capability"]["modelSuggestions"] == [
+         "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.3-codex-spark",
+     ]
+     print("codex=", codex)
+     kiro = next(e for e in d if e["name"] == "kiro")
+     assert kiro["capability"]["modelSuggestions"] == [
+         "auto", "claude-sonnet-5", "claude-opus-4.8",
+         "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+     ]
+     assert kiro["capability"]["allowsEffort"] is True
+     assert kiro["capability"]["effortValues"] == ["low", "medium", "high", "xhigh", "max"]
+     assert kiro["iconPath"] == "/vendor/engine-icons/kiro.png"
+     print("kiro=", kiro)
      '
      ```
 - **预期**：
-  - `names=` 含 `claude-code`、`antigravity`、`qoder`、`codex`（四引擎均已注册）。
-  - `cc_effortField= effort`、`cc_has_high= True`（claude-code 的 effort 档位含 `high`）。
+  - `names=` 按 name 排序；所有 `capability` 都是对象而非 `null`。
+  - `cc=` 的 capability 含 `allowsModel:true`、`modelSuggestions:['sonnet','opus','fable']`、`allowsEffort:true` 与包含 `high` 的 `effortValues`；`iconPath` 为 `/vendor/engine-icons/claude-code.png`。
+  - `agy=` 的 `modelSuggestions:[]`、`allowsEffort:false` 且 `effortValues:[]`；capability 的列表无内容时不输出 `null`。
+  - `codex=` 的 `modelSuggestions` 精确为 `['gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna','gpt-5.5','gpt-5.3-codex-spark']`。
+  - `kiro=` 的 `modelSuggestions` 精确为 `['auto','claude-sonnet-5','claude-opus-4.8','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna']`（不构成模型白名单）；`allowsEffort:true` 与精确 `effortValues:['low','medium','high','xhigh','max']`；`iconPath` 为 `/vendor/engine-icons/kiro.png`。
   - **说明**：这是唯一无 CLI 命令等价的只读信息性端点（「无独占能力」不变量的显式豁免）。
 - **清理**：`stop_ui; export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 

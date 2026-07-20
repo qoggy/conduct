@@ -14,7 +14,10 @@
 make build
 CONDUCT="$PWD/bin/conduct"   # 用绝对路径，cd 进临时目录 / 改 HOME 后仍可用
 REAL_HOME="$HOME"            # 一次性记下真实家目录，供各用例清理时恢复（见下注）
+test -r "$PWD/docs/test-cases/atomic-conduct-test.sh"
 ```
+
+> TC-033、TC-034 各自在独立脚本块里 `source docs/test-cases/atomic-conduct-test.sh` 并调用 `conduct_test_setup`：单一 shell 原子边界、trap 托底清理、真实 `~/.conduct/workflows`/`runs` 前后零差异快照（见 [atomic-conduct-test.sh](./atomic-conduct-test.sh)），不依赖下面「建隔离环境」的手工模式。
 
 各用例〈前置〉统一用这段建立隔离环境（下文简称「建隔离环境」）：
 
@@ -619,35 +622,83 @@ JSON
   - 步骤 2 退出码 `1`，stderr 含 `nodes[2].id: 与前面的节点重复 "a"`。
 - **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 
-### TC-033 未知引擎被拒 / 已注册引擎被接受
+### TC-033 未知引擎被拒 / 已注册引擎包含 Codex 与 Kiro
 
-- **目的**：验证 `engine` 取未注册值时被拒并回显可用引擎清单；已注册引擎（`codex`，`engineConfig` 全选填）空 `engineConfig` 时被接受。
-- **前置**：建隔离环境。
-- **步骤**：
-  1. `printf '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"nope","promptTemplate":"hi"},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' | "$CONDUCT" workflow create e1 --definition; echo "exit=$?"`
-  2. `printf '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"codex","promptTemplate":"hi"},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' | "$CONDUCT" workflow create e2 --definition; echo "exit=$?"`
+- **目的**：验证 `engine` 取未注册值时被拒并回显动态生成的可用引擎清单；代表性的已注册引擎 `codex` 与 `kiro` 在空 `engineConfig` 时被接受。
+- **前置**：无；下方脚本自行建立隔离、注册 trap、固定中文 locale，并做真实 store 前后快照。
+- **步骤**：完整复制执行一个脚本块：
+
+  ```bash
+  bash <<'BASH'
+  set -euo pipefail
+  source docs/test-cases/atomic-conduct-test.sh
+  conduct_test_setup
+  export LC_ALL=zh_CN.UTF-8
+  set +e
+  printf '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"nope","promptTemplate":"hi"},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' | "$CONDUCT" workflow create e1 --definition
+  echo "e1-exit=$?"
+  set -e
+  printf '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"codex","promptTemplate":"hi"},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' | "$CONDUCT" workflow create e2 --definition; echo "e2-exit=$?"
+  printf '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"kiro","promptTemplate":"hi"},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' | "$CONDUCT" workflow create e3 --definition; echo "e3-exit=$?"
+  BASH
+  ```
 - **预期**：
-  - 步骤 1 退出码 `1`，stderr 含 `nodes[1].engine: 未知引擎 "nope"`，并列出 `可用：antigravity, claude-code, codex, qoder`。
-  - 步骤 2 退出码 `0`，建流成功（codex 已注册，空 engineConfig 合法）。
-- **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
+  - `e1-exit=1`，stderr 含 `nodes[1].engine: 未知引擎 "nope"`，并在 `可用：` 后按 name 排序列出当前 descriptor 注册表中的全部引擎。
+  - `e2-exit=0`，建流成功（codex 已注册，空 engineConfig 合法）。
+  - `e3-exit=0`，建流成功（kiro 已注册，空 engineConfig 合法）。
+- **清理**：脚本 trap 自动恢复 `HOME/PATH`、清理临时目录并比较真实 store 前后快照。
 
 ### TC-034 engineConfig 引擎-字段匹配与取值被校验
 
-- **目的**：验证 `engineConfig` 的调优字段与引擎绑定：claude-code 用 `effort`、qoder/codex 用 `reasoningEffort`、antigravity 二者都不认；且取值须在各自允许集内。逐条触发。
-- **前置**：建隔离环境。
-- **步骤**（每条都应退出 `1`；`agent 节点包在 START→a→END` 里，下方只写变化的 `engineConfig` 部分）：
-  1. claude effort 非法值：`printf '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"claude-code","promptTemplate":"hi","engineConfig":{"effort":"insane"}},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' | "$CONDUCT" workflow create c1 --definition; echo "exit=$?"`
-  2. claude 不认 reasoningEffort：`printf '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"claude-code","promptTemplate":"hi","engineConfig":{"reasoningEffort":"high"}},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' | "$CONDUCT" workflow create c2 --definition; echo "exit=$?"`
-  3. antigravity 不认 effort：`printf '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"antigravity","promptTemplate":"hi","engineConfig":{"effort":"high"}},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' | "$CONDUCT" workflow create c3 --definition; echo "exit=$?"`
-  4. qoder 不认 effort：`printf '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"qoder","promptTemplate":"hi","engineConfig":{"effort":"high"}},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' | "$CONDUCT" workflow create c4 --definition; echo "exit=$?"`
-  5. qoder reasoningEffort 非法值：`printf '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"qoder","promptTemplate":"hi","engineConfig":{"reasoningEffort":"insane"}},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' | "$CONDUCT" workflow create c5 --definition; echo "exit=$?"`
+- **目的**：验证统一 `effort` 对 claude-code/qoder/codex/kiro 生效、antigravity 拒绝，且旧 `reasoningEffort` 与普通未知字段 `xxxabc` 完全同路失败。
+- **前置**：无；下方脚本自行建立隔离、注册 trap、固定中文 locale，并做真实 store 前后快照（agent 节点均包在 START→a→END 中）。
+- **步骤**：完整复制执行一个脚本块：
+
+  ```bash
+  bash <<'BASH'
+  set -euo pipefail
+  source docs/test-cases/atomic-conduct-test.sh
+  conduct_test_setup
+  export LC_ALL=zh_CN.UTF-8
+  expect_rejected() {
+    local name="$1" json="$2"
+    set +e
+    printf '%s' "$json" | "$CONDUCT" workflow create "$name" --definition
+    rc=$?
+    set -e
+    echo "$name-exit=$rc"
+  }
+  # 1. claude effort 非法值
+  expect_rejected c1 '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"claude-code","promptTemplate":"hi","engineConfig":{"effort":"insane"}},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' 2>"$WORK/c1.err"; cat "$WORK/c1.err"
+  # 2. antigravity 不认 effort
+  expect_rejected c2 '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"antigravity","promptTemplate":"hi","engineConfig":{"effort":"high"}},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' 2>"$WORK/c2.err"; cat "$WORK/c2.err"
+  # 3. qoder effort 非法值
+  expect_rejected c3 '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"qoder","promptTemplate":"hi","engineConfig":{"effort":"insane"}},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' 2>"$WORK/c3.err"; cat "$WORK/c3.err"
+  # 4. 四引擎统一接受合法 effort
+  for pair in 'claude-code high' 'qoder max' 'codex xhigh' 'kiro max'; do
+    set -- $pair
+    printf '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"%s","promptTemplate":"hi","engineConfig":{"effort":"%s"}},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' "$1" "$2" | "$CONDUCT" workflow create "ok-$1" --definition
+  done
+  echo "ok-exit=$?"
+  # 5. reasoningEffort 与 xxxabc 同路失败
+  for field in reasoningEffort xxxabc; do
+    set +e
+    printf '{"nodes":[{"id":"START"},{"id":"a","displayName":"甲","engine":"codex","promptTemplate":"hi","engineConfig":{"%s":"high"}},{"id":"END"}],"edges":[{"from":"START","to":"a"},{"from":"a","to":"END"}]}' "$field" | "$CONDUCT" workflow create "bad-$field" --definition 2>"$WORK/$field.err"
+    echo "$field-exit=$?"
+    set -e
+  done
+  sed 's/reasoningEffort/<unknown>/g' "$WORK/reasoningEffort.err" > "$WORK/reasoning.norm"
+  sed 's/xxxabc/<unknown>/g' "$WORK/xxxabc.err" > "$WORK/ordinary.norm"
+  diff -u "$WORK/reasoning.norm" "$WORK/ordinary.norm"; echo "diff_exit=$?"
+  BASH
+  ```
 - **预期**：
-  - 步骤 1 stderr 含 `"insane" 不在 engine="claude-code" 允许集`。
-  - 步骤 2 stderr 含 `engine="claude-code" 不认 reasoningEffort`。
-  - 步骤 3 stderr 含 `engine="antigravity" 不认 effort`。
-  - 步骤 4 stderr 含 `engine="qoder" 不认 effort`。
-  - 步骤 5 stderr 含 `不在 engine="qoder" 允许集`。
-- **清理**：`export HOME="$OLD_HOME"; rm -rf "$WORK"`。
+  - `c1-exit=1`，`$WORK/c1.err` 含 `"insane" 不在 engine="claude-code" 允许集`。
+  - `c2-exit=1`，`$WORK/c2.err` 含 `engine="antigravity" 不接受 effort`。
+  - `c3-exit=1`，`$WORK/c3.err` 含 `不在 engine="qoder" 允许集`。
+  - `ok-exit=0`（四引擎循环创建均成功，证明统一接受 `effort` 且各自允许集仍独立）。
+  - `reasoningEffort-exit=1`、`xxxabc-exit=1`；`diff_exit=0`（归一化后的 stderr 完全相同，只出现 JSON decoder 的普通 `unknown field`，没有迁移建议或字段专用诊断）。
+- **清理**：脚本 trap 自动恢复 `HOME/PATH`、清理临时目录并比较真实 store 前后快照。
 
 ### TC-035 边合法性：自环 / 重复边 / 指向 START / 源自 END / START→END 直连
 

@@ -1,6 +1,6 @@
 ## 这是什么
 
-conduct —— 把 workflow 定义（JSON）解释成确定性步骤、逐步驱动多种 AI 编程引擎（claude-code / antigravity / qoder）执行的命令行工具。
+conduct —— 把 workflow 定义（JSON）解释成确定性步骤、逐步驱动已注册 AI 编程引擎执行的命令行工具。当前引擎清单以 `conduct --help` 和 `docs/specs/engines.md` 为准。
 
 ## 动手前必读
 

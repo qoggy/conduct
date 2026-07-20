@@ -8,23 +8,24 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 
 - 每个引擎是**本机已安装的无头 CLI**，conduct 以子进程方式调用它，喂一段提示词、拿回一段产物文本。conduct 不内嵌任何模型调用，也不管引擎自身的登录 / 计费。
 - workflow 是**无人值守**运行，故各引擎一律**跳过工具权限门**（bypass），由 conduct 在参数里写死。
-- 所有引擎共用同一组入参（`RunRequest`）与出参（`RunResult`），差异只在「这组入参怎么翻译成各自的 CLI 参数」与「怎么从各自的 JSON 输出里取回文本 / token」。
+- 所有引擎共用同一组入参（`RunRequest`）与出参（`RunResult`），差异只在「这组入参怎么翻译成各自的 CLI 参数」与「怎么从各自的输出里取回文本 / metadata」。
 - `engine` 与 `engineConfig` 构成**判别联合**：`engine` 是判别式（tag），`engineConfig` 的合法字段由 `engine` 决定——把「引擎 / 模型 / 调优档位三者绑定」编进结构本身，不能各自独立填（见〈引擎能力表〉）。
 
 ## 支持的引擎
 
-| engine（`Name()`） | 本机可执行文件 | prompt 传递 | 状态 |
+| engine（`Descriptor().Name`） | 本机可执行文件 | prompt 传递 | 状态 |
 | --- | --- | --- | --- |
 | `claude-code` | `claude` | stdin | 已实装 |
 | `antigravity` | `agy` | 命令行参数（argv） | 已实装 |
 | `qoder` | `qodercli` | stdin | 已实装 |
 | `codex` | `codex` | stdin（`codex exec -`） | 已实装 |
+| `kiro` | `kiro-cli` | stdin | 已实装 |
 
-`engine` 字段的合法取值即上表已注册（`Name()` 在注册表内）引擎。注册表见 `internal/engine/engine.go`（`Register` / `Lookup` / `RegisteredNames`）；各引擎在各自 `*.go` 的 `init()` 里注册（`internal/engine/claudecode.go` / `antigravity.go` / `qoder.go` / `codex.go`）。未登记的名字在校验期即被拒（错误附可用引擎清单）。
+`engine` 字段的合法取值即上表已注册引擎的 `Descriptor().Name`。注册表见 `internal/engine/engine.go`（`Register` / `Lookup` / `Describe` / `RegisteredDescriptors` / `RegisteredNames`）；各引擎在自身文件的 `init()` 中用同一个 `Engine` 同时注册执行实现、能力、图标和 replay 函数。未登记的名字在校验期即被拒（错误附可用引擎清单）。
 
 ## 引擎抽象（conduct ↔ 引擎的统一接口）
 
-所有引擎实现同一个 `Engine` 接口（`internal/engine/engine.go`）：`Name() string` 返回稳定标识，`Run(ctx, RunRequest) (RunResult, error)` 执行一次提示词。conduct 只经这两个方法与引擎交互。
+所有引擎实现同一个 `Engine` 接口（`internal/engine/engine.go`）：`Descriptor() EngineDescriptor` 返回静态元数据，`Run(ctx, RunRequest) (RunResult, error)` 执行一次提示词。conduct 只经这两个方法与引擎交互。`EngineDescriptor` 同时包含 `Name`、`Capability`、`IconFilename` 和 `SessionReplayCommand`；注册时 fail-fast 校验名称唯一、能力开关与数组组合、数组重复值和图标文件名，并对切片做深拷贝。
 
 **入参 `RunRequest`**——这是 conduct 能喂给任一引擎的全部参数，逐引擎翻译成 CLI 参数：
 
@@ -33,7 +34,7 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 | `Prompt` | string | 完整提示词（运行内核已把模板变量、上游产物渲染进来） | 必有 |
 | `Model` | string | 模型；来自 `engineConfig.model` | 空 → 不传 `--model`，用引擎自身默认模型 |
 | `WorkingDirectory` | string | 引擎读写文件的工作目录（= `workflow run --cwd`） | 空 → 继承 conduct 当前进程的工作目录 |
-| `Effort` | string | 引擎特定的推理强度；来自 `engineConfig.effort` 或 `reasoningEffort`（见〈schema 字段映射〉） | 空 → 不传调优标志，用引擎默认 |
+| `Effort` | string | 引擎特定的推理强度；来自统一的 `engineConfig.effort` | 空 → 不传调优标志，用引擎默认 |
 
 **出参 `RunResult`**——conduct 从各引擎 JSON 输出里归一化出来的产物：
 
@@ -41,8 +42,14 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 | --- | --- | --- | --- |
 | `Text` | string | 本次运行的产物文本，作为该 workflow 节点的输出；字段始终返回，成功但没有文本产物时允许为空字符串 | `""` |
 | `DurationMilliseconds` | int64 | 本次子进程调用耗时（conduct 侧计时，非引擎回报） | 必有 |
-| `Tokens` | int | 本次消耗的 token 数 | `0` |
-| `SessionID` | string | 本次运行的引擎会话/线程 id（各引擎从自身 JSON 输出取：claude-code / qoder 的 `session_id`、antigravity 的 `conversation_id`、codex 的 `thread_id`）。conduct 记入该节点 trace，供凭引擎自带工具回放该节点（见 [cli-runtime.md](./cli-runtime.md)〈runs/ 落盘结构〉） | 空串 |
+| `Tokens` | `*int` | 引擎明确回报的本次 token 数；已知值 `0` 仍为非 `nil` 指针 | `nil` |
+| `SessionID` | `*string` | 引擎明确回报的非空会话/线程 id（claude-code / qoder 的 `session_id`、antigravity 的 `conversation_id`、codex 的 `thread_id`）。conduct 记入该节点 trace，供凭引擎自带工具回放该节点（见 [cli-runtime.md](./cli-runtime.md)〈runs/ 落盘结构〉） | `nil` |
+
+token usage / session id 的缺失不能用 `0`、空字符串或字段缺省冒充。trace 始终写出 `tokens` / `sessionId`；未知值序列化为 JSON `null`。claude-code / qoder 只有 input/output token 字段都存在时才相加；antigravity 只有 `total_tokens` 存在时才返回；codex 只有收到完整 `turn.completed.usage` 时才返回；所有引擎都把空 session id 规范化为 `nil`。Kiro 普通无头输出不提供这两项，固定返回 `nil`。
+
+`SessionReplayCommand` 接收原始 session id，返回供 CLI/UI 展示和复制的完整命令；它必须调用共享 `engine.ShellQuote`，且只能是确定性纯函数。claude-code、codex、qoder、antigravity 分别生成 `claude -r`、`codex resume`、`qodercli -r`、`agy --conversation` 命令；Kiro 为 `nil`。函数为 `nil` 或返回空串时只展示 id，不生成命令。该命令永不由 conduct 执行。
+
+调度器传入的 `context.Context` 用于取消节点运行。适配器必须把它传入子进程调用，不保存或跨 `Run` 复用，也不自行添加 conduct 未配置的超时；取消后子进程终止并返回错误。
 
 `RunRequest` 没有的旋钮（如系统提示词、工具白名单、上下文窗口），conduct **不下传**——一律走引擎自身默认。
 
@@ -50,18 +57,17 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 
 一次引擎调用的 CLI 参数由三部分拼成：conduct 写死的**默认参数**（见〈conduct 默认写死的参数〉）＋ 由 `RunRequest` 映射来的**可变参数**＋ prompt / cwd。下表是 `engineConfig` 字段与 `RunRequest` 各字段到每个引擎具体 CLI 参数的映射：
 
-| 来源 | `RunRequest` 字段 | claude-code（`claude`） | antigravity（`agy`） | qoder（`qodercli`） | codex（`codex exec`） |
-| --- | --- | --- | --- | --- | --- |
-| 渲染后的提示词 | `Prompt` | stdin | 命令行参数 `-p <prompt>` | stdin | stdin（`codex exec -`） |
-| `engineConfig.model` | `Model` | `--model <m>` | `--model <m>` | `--model <m>`（亦接受档位名） | `--model <m>` |
-| `engineConfig.effort` | `Effort` | `--effort <v>` | **忽略**（强度编码在 model 标签后缀） | —— | —— |
-| `engineConfig.reasoningEffort` | `Effort` | —— | —— | `--reasoning-effort <v>` | `-c model_reasoning_effort=<v>` |
-| `workflow run --cwd` | `WorkingDirectory` | `cmd.Dir` | `cmd.Dir`（agy 无 `--cwd`，靠切目录） | `cmd.Dir` | `cmd.Dir` |
+| 来源 | `RunRequest` 字段 | claude-code（`claude`） | antigravity（`agy`） | qoder（`qodercli`） | codex（`codex exec`） | kiro（`kiro-cli chat`） |
+| --- | --- | --- | --- | --- | --- | --- |
+| 渲染后的提示词 | `Prompt` | stdin | 命令行参数 `-p <prompt>` | stdin | stdin（`codex exec -`） | stdin |
+| `engineConfig.model` | `Model` | `--model <m>` | `--model <m>` | `--model <m>`（亦接受档位名） | `--model <m>` | `--model <m>` |
+| `engineConfig.effort` | `Effort` | `--effort <v>` | **拒绝**（强度编码在 model 标签后缀） | `--reasoning-effort <v>` | `-c model_reasoning_effort=<v>` | `--effort <v>` |
+| `workflow run --cwd` | `WorkingDirectory` | `cmd.Dir` | `cmd.Dir`（agy 无 `--cwd`，靠切目录） | `cmd.Dir` | `cmd.Dir` | `cmd.Dir` |
 
 要点：
 
-- **`effort` 与 `reasoningEffort` 映射到同一个 `RunRequest.Effort`**，但一个 `engineConfig` 上二者互斥（判别联合决定：claude-code 只认 `effort`，qoder 与 codex 只认 `reasoningEffort`，见〈引擎能力表〉），故不会撞车。
-- **antigravity 没有独立调优字段**：推理强度作为后缀编码在 model 标签里（如 `Gemini 3.5 Flash (Medium)` / `Claude Opus 4.6 (Thinking)`），要改强度就换 model 标签。故 `agy` 引擎刻意**忽略** `RunRequest.Effort`（`engineConfig` 上也不接受 effort 类字段）。见 `docs/references/agy-print.md`。
+- workflow、CLI、HTTP 和 UI 只使用统一字段 `effort`；适配器再把 `RunRequest.Effort` 翻译成供应商方言。Qoder 的 `--reasoning-effort` 与 Codex 的 `model_reasoning_effort` 只存在于对应适配器内部。
+- **antigravity 没有独立调优字段**：推理强度作为后缀编码在 model 标签里（如 `Gemini 3.5 Flash (Medium)` / `Claude Opus 4.6 (Thinking)`），要改强度就换 model 标签。`engineConfig.effort` 在保存期被拒，因此正常调用不会向适配器传入该值。见 `docs/references/agy-print.md`。
 - `Model` 为空则不传 `--model`；conduct **不探测**引擎默认模型名，运行记录里该字段留空（见 [cli-runtime.md](./cli-runtime.md)〈runs/ 落盘结构〉）。
 
 ## 逐引擎详述
@@ -77,7 +83,7 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 ### antigravity（`agy`）
 
 - **提示词**：走**命令行参数** `-p <prompt>`（agy 无 stdin 形态）；工作目录用 `cmd.Dir`（agy 无 `--cwd`）。
-- **prompt 大小上限**：经 argv 传参受 `ARG_MAX` 约束（macOS 约 1MB，含环境变量）。conduct 设保守上限 **256 KiB**（`agyPromptLimitBytes`），超限**提前**返回可读错误，胜过 exec 抛无指向性的 `argument list too long`。长上游产物叠加可能触顶——此时改用 stdin 型引擎（claude-code / qoder）或精简上游产物。
+- **prompt 大小上限**：经 argv 传参受 `ARG_MAX` 约束（macOS 约 1MB，含环境变量）。conduct 设保守上限 **256 KiB**（`agyPromptLimitBytes`），超限**提前**返回可读错误，胜过 exec 抛无指向性的 `argument list too long`。长上游产物叠加可能触顶——此时改用 stdin 型引擎（claude-code / qoder / codex / Kiro）或精简上游产物。
 - **安全提示**：prompt 经 argv 传递，在多用户机器上对 `ps` 可见——这是 agy 无 stdin 形态的固有限制。
 - **默认参数**：`-p <prompt> --output-format json --dangerously-skip-permissions`。
 - **可变参数**：`Model` 非空 → `--model <m>`；`Effort` **忽略**（见〈schema 字段映射〉）。
@@ -97,7 +103,7 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 - **提示词**：走 **stdin**，用 `codex exec … -` 的 `-` 哨兵强制从 stdin 读取 prompt（codex 语义：省略 prompt 位置参数或用 `-` 时从 stdin 读）。选 stdin 而非 argv，规避 agy 那种 `ARG_MAX` 上限，与 claude-code / qoder 同族。工作目录用 `cmd.Dir`。
 - **默认参数**：`exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -`（`-` 在 PROMPT 位）。权限用 `--dangerously-bypass-approvals-and-sandbox`（无沙箱 + 全权限）与其它引擎的 bypass 对齐；`--skip-git-repo-check` 允许在非 git 仓库目录运行（workflow 的 cwd 未必是 git 仓库）。
 - **可变参数**：`Model` 非空 → `--model <m>`；`Effort` 非空 → `-c model_reasoning_effort=<v>`（codex 无专用调优标志，`-c key=value` 覆盖配置项；value 按 TOML 解析失败即当字面字符串，故 `-c model_reasoning_effort=high` 即字符串 `"high"`）。
-- **输出解析**：codex `--json` 的 stdout 是 **JSON Lines 事件流**（每行一个事件对象），**非**单个 JSON 对象——与其它三引擎的单对象输出结构不同，需逐行扫描按 `type` 归一化（逐行读取范式同 `internal/store/runs.go` 的 `LoadTrace`，避开 `bufio.Scanner` 的 token 上限）：
+- **输出解析**：codex `--json` 的 stdout 是 **JSON Lines 事件流**（每行一个事件对象），**非**单个 JSON 对象——与 claude-code、antigravity、qoder 三个单对象 JSON 引擎的输出结构不同，需逐行扫描按 `type` 归一化（逐行读取范式同 `internal/store/runs.go` 的 `LoadTrace`，避开 `bufio.Scanner` 的 token 上限）：
   - `thread.started` → `thread_id`（→ `RunResult.SessionID`）
   - `item.completed` 且 `item.type == "agent_message"` → `item.text`（→ `RunResult.Text`，取**最后一条**）
   - `turn.completed` → `usage.input_tokens` + `usage.output_tokens`（→ `RunResult.Tokens`，取最后一个 turn）
@@ -111,12 +117,23 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
   ```
 - 实现见 `internal/engine/codex.go`；CLI 参考 `docs/references/codex.md`。
 
+### kiro（`kiro-cli chat`）
+
+- **设置副作用**：每次运行先执行 `kiro-cli settings chat.disableMarkdownRendering true`，永久写入用户当前 Kiro profile 的全局 classic UI 设置；不备份、不恢复。设置失败时不启动 chat，返回设置错误及已耗时长。conduct 完整继承环境，不设置或覆盖 `KIRO_HOME`。
+- **提示词与目录**：完整 prompt 走 stdin，工作目录用 `cmd.Dir`；conduct 不做 Kiro 专属字节数或 token 数限制。图片继续把本地绝对路径写进 prompt。
+- **默认参数**：`chat --legacy-ui --no-interactive --wrap never --trust-all-tools --require-mcp-startup`。不传 `--agent`、`--resume` 或 `--resume-id`，因此复用用户默认 agent、认证、全局与项目配置并创建新 session。
+- **可变参数**：`Model` 非空 → `--model <m>`；`Effort` 非空 → `--effort <v>`。model 是开放集合；effort 在保存期限定为 `low` / `medium` / `high` / `xhigh` / `max`。
+- **输出解析**：普通 chat 没有 JSON 模式。适配器在原始 stdout 中寻找最后一个完整 `\x1b[m> \x1b[0m` assistant 标记，截取其后文本、删除 ANSI CSI 序列并只移除结尾换行；工具日志与中间 assistant 文本不进入 `Text`。标记存在但正文为空允许成功；找不到标记显式报 unexpected output，并分别附清理后的 stdout/stderr 前 500 字摘要。该标记只承担 classic UI 的结构分界，不根据最终回答、工具日志或 stderr 的自然语言内容推导状态。
+- **失败判定**：chat 非零退出时保留退出码；stderr 非空时附清理 ANSI、截断至 500 字的 stderr，stderr 为空时只报告退出码，不读取 stdout 补充诊断。退出 `0` 时只验证最终 assistant 结构，存在即成功、缺失即返回通用 unexpected output。Kiro 没有机器可读的业务失败字段，conduct 不用 `is rejected because`、`context window has overflowed` 等自然语言关键词猜测权限或上下文状态，因为相同文本可以合法出现在用户输入、模型回答、工具日志和被读取的源码中。
+- **metadata**：普通无头输出不提供本次 token usage 或当前 session id，`Tokens` / `SessionID` 固定为 `nil`。Kiro 仍在用户 profile 中持久化 session，可在相同工作目录用 `kiro-cli chat --list-sessions` 查看；conduct 不读取私有 session 文件或猜测 id。
+- 实现见 `internal/engine/kiro.go`；CLI 调研见 `docs/references/kiro-cli.md`。
+
 ## 图片输入
 
 需要引擎「看」一张图片时，把图片的**本地绝对路径**写进 prompt 文本即可——各引擎自带的文件读取工具会自行打开该路径的图片并理解其内容。conduct **不提供**专门的图片入参（`RunRequest` 无图片字段）、也不做任何 URL 下载或附件管道。
 
-- **已验证行为**：`claude-code` / `codex` / `qoder` / `antigravity` 四引擎在无头模式下，仅凭 prompt 里给出的本地绝对路径，均能读出并识别图片内容（同一张图实测，四者都正确认出）。
-- **为什么不接专门旗标**：四引擎里只有个别有图片附件旗标（如 `qoder` 的 `--attachment <file>`，见 `docs/references/qodercli-print.md`），`claude` 与 `agy` 根本没有，且 conduct 走的 `codex exec` 非交互子命令其参考文档（`docs/references/codex.md`）也未列图片旗标；已知的图片旗标都只吃**本地文件路径**、无一接受 URL。既然「路径写进 prompt」对四引擎全部生效，就没必要为少数引擎接一套不统一、还得先把 URL 下载成本地文件的图片管道——那是不必要的复杂度（承〈引擎抽象〉「`RunRequest` 没有的旋钮一律不下传、走引擎自身默认」）。
+- **已验证行为**：`claude-code` / `codex` / `qoder` / `antigravity` / `kiro` 五引擎在无头模式下，仅凭 prompt 里给出的本地绝对路径，均能由自身文件工具读取图片；能否正确理解仍取决于所选模型。
+- **为什么不接专门旗标**：五引擎里只有个别有图片附件旗标（如 `qoder` 的 `--attachment <file>`，见 `docs/references/qodercli-print.md`），`claude`、`agy` 与 Kiro 普通 chat 没有 conduct 可统一使用的附件旗标，且 `codex exec` 参考文档（`docs/references/codex.md`）也未列图片旗标；已知旗标都只吃**本地文件路径**、无一接受 URL。既然「路径写进 prompt」是五引擎的统一约定，就不新增一套不统一的图片管道。
 - **边界**：
   - 路径须是引擎进程**可访问**的本地文件；sandbox 场景下图片必须先存在于 sandbox 文件系统内（这是文件可达性问题，与有没有图片旗标无关）。
   - 只支持本地路径、**不支持 URL**——远端图片请调用方自行下载到本地，再把本地路径写进 prompt。
@@ -142,30 +159,38 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 | codex | `--dangerously-bypass-approvals-and-sandbox` | 无人值守，无沙箱 + 全权限（与其它引擎 bypass 对齐） |
 | codex | `--skip-git-repo-check` | 允许在非 git 仓库目录运行 |
 | codex | `-`（PROMPT 位） | 强制从 stdin 读取 prompt |
+| kiro | `settings chat.disableMarkdownRendering true` | chat 前永久固定用户当前 profile 的 classic UI Markdown 渲染设置 |
+| kiro | `chat --legacy-ui --no-interactive` | 固定 classic UI 输出标记并无人值守运行一次 |
+| kiro | `--wrap never` | 禁止主动插入终端宽度硬换行 |
+| kiro | `--trust-all-tools` | 信任当前 agent 可见的全部工具 |
+| kiro | `--require-mcp-startup` | 必需 MCP server 启动失败时显式失败 |
 
-除上表外，conduct **不注入**系统提示词、工具白名单、超时、上下文窗口等——这些走各引擎自身默认。机器可解析的 JSON 输出是硬依赖：claude-code / antigravity / qoder 靠 `--output-format json`、codex 靠 `--json`，conduct 据此解析 `Text` / `Tokens` / `SessionID`（见各引擎输出解析）。
+除上表外，conduct **不注入**系统提示词、工具白名单、超时、上下文窗口等——这些走各引擎自身默认。claude-code / antigravity / qoder 依赖 `--output-format json`、codex 依赖 `--json`；Kiro 普通 chat 没有机器输出模式，依赖固定的 classic UI 原始 assistant 标记（见各引擎输出解析）。
 
 ## 引擎能力表
 
-`engineConfig` 的合法字段是判别联合，由 `engine` 决定。校验内核（`internal/engine/capability.go` 的 `engineCapabilities`）为每个引擎登记一张能力表：是否接受 `model`（`AllowsModel`）、调优字段名（`EffortField`）及其枚举（`EffortValues`），以及给 UI 展示的常见 model 建议值（`ModelValues`）。**已注册但未在能力表列出的引擎，一律不接受任何 `engineConfig` 字段。**
+`engineConfig` 的合法字段是判别联合，由 `engine` 决定。每个引擎的 `Descriptor()` 内嵌必有的 `EngineCapability`：是否接受 `model`（`AllowsModel`）、非约束性模型建议（`ModelSuggestions`）、是否接受统一的 `effort`（`AllowsEffort`）及其强制枚举（`EffortValues`）。执行实现和 capability 通过同一个 `Engine` 同时注册，不存在“引擎已注册但 capability 缺失”的状态。
 
-| engine | `model` | model 建议值（`ModelValues`，非白名单） | 调优字段 | 调优字段枚举 |
+`EngineCapability` 的四个字段始终有明确值。`ModelSuggestions` / `EffortValues` 在无内容时是非 `nil` 空切片，HTTP JSON 固定输出 `[]` 而不是 `null`；布尔字段则如实输出 `true` / `false`。
+
+| engine | `model` | model 建议值（`ModelSuggestions`，非白名单） | `effort` | `EffortValues` |
 | --- | --- | --- | --- | --- |
 | `claude-code` | 接受（Claude 系） | `sonnet` · `opus` · `fable` | `effort` | `low` · `medium` · `high` · `xhigh` · `max` · `ultracode` · `auto`（实际可用档位随模型） |
 | `antigravity` | 接受（完整 model 标签） | 无 | 无 | ——（推理强度编码在 model 标签后缀） |
-| `qoder` | 接受（模型名或档位） | `Auto` · `Ultimate` · `Performance` · `Efficient` · `Lite` | `reasoningEffort` | `disabled` · `off` · `none` · `low` · `medium` · `high` · `xhigh` · `max` |
-| `codex` | 接受（GPT 系） | 无 | `reasoningEffort` | `low` · `medium` · `high` · `xhigh` |
+| `qoder` | 接受（模型名或档位） | `Auto` · `Ultimate` · `Performance` · `Efficient` · `Lite` | 接受 | `disabled` · `off` · `none` · `low` · `medium` · `high` · `xhigh` · `max` |
+| `codex` | 接受（GPT 系） | `gpt-5.6-sol` · `gpt-5.6-terra` · `gpt-5.6-luna` · `gpt-5.5` · `gpt-5.3-codex-spark` | 接受 | `low` · `medium` · `high` · `xhigh` |
+| `kiro` | 接受（开放模型名） | `auto` · `claude-sonnet-5` · `claude-opus-4.8` · `gpt-5.6-sol` · `gpt-5.6-terra` · `gpt-5.6-luna` | `effort` | `low` · `medium` · `high` · `xhigh` · `max` |
 
-`engineConfig` 三个字段（`internal/workflow/definition.go` 的 `EngineConfig`）——`model` / `effort` / `reasoningEffort`——**均选填**，校验时逐字段核对：
+`engineConfig` 两个字段（`internal/workflow/definition.go` 的 `EngineConfig`）——`model` / `effort`——**均选填**，校验时逐字段核对：
 
-- `effort` 仅 `claude-code` 认；`reasoningEffort` 仅 `qoder` 与 `codex` 认；给错引擎即拒（如给 `antigravity` 设 `effort`）。
+- `effort` 由 claude-code、qoder、codex、kiro 接受；antigravity 拒绝。
 - 调优字段的值须落在该字段枚举内，否则拒。
-- `model` 当前**不做白名单**：接受任意非空串（待有权威模型表再收紧）；省略则用引擎默认模型。`ModelValues` 只是 UI 下拉建议项，不参与 `workflow.Validate` 强校验；为空只表示该引擎未登记建议值，不表示不接受 `model`。
+- `model` 当前**不做白名单**：接受任意非空串（待有权威模型表再收紧）；省略则用引擎默认模型。`ModelSuggestions` 只是 UI 下拉建议项，不参与 `workflow.Validate` 强校验；为空只表示该引擎未登记建议值，不表示不接受 `model`。
 - 每个 agent 节点独立按上表校验其 `engine` + `engineConfig`；`START` / `END` 两个保留标记节点不承载 `engine`/`engineConfig`，不参与此表（见 [cli-authoring.md](./cli-authoring.md)〈落盘校验规则〉）。
 
-具体校验流程与错误格式（如 `nodes[0].engineConfig.effort: engine="antigravity" 不认 effort`）见 [cli-authoring.md](./cli-authoring.md)〈落盘校验规则〉。
+具体校验流程与错误格式（如 `nodes[0].engineConfig.effort: engine="antigravity" 不接受 effort`）见 [cli-authoring.md](./cli-authoring.md)〈落盘校验规则〉。旧字段 `reasoningEffort` 不兼容：它和 `xxxabc` 一样由严格 JSON 解码作为普通未知字段拒绝，无别名、迁移或专门诊断。
 
-> **能力表是活的**：随引擎演进维护。改这张表须同步 `internal/engine/capability.go`、本节、以及 `create` / `edit` 的 `--help` 里由能力表动态生成的定义结构说明（见 [cli-authoring.md](./cli-authoring.md)）。
+> **descriptor 是活的**：随引擎演进在各适配器的 `Descriptor()` 内维护；CLI help、workflow 校验和 HTTP/UI 都动态消费这份事实源。
 
 ## 错误与退出行为
 
@@ -174,26 +199,30 @@ workflow 定义的整体 schema、`engineConfig` 的落盘校验入口在 [cli-a
 - **非零退出码**：`<engine> exited with code <code>: <stderr summary>`（stderr 截断至 500 字）。**claude-code 例外**：非零退出时先尝试把 stdout 解析成 JSON 取 `result`，非空则优先返回 `claude error: <result>`；只有 stdout 非法 JSON 或 `result` 为空才落到这条退出码+stderr 摘要（见〈claude-code〉小节）。
 - **找不到可执行文件等**：`failed to invoke <engine>: <original error>`。
 - **输出非预期 JSON**：claude-code / antigravity 使用 `<engine> returned unexpected JSON: <err> (first 200 characters of stdout: …)`；qoder 使用 `qodercli returned unexpected JSON: …`；codex 使用 `codex returned unexpected JSON: failed to parse line <line>: …`。
+- **Kiro 输出失败**：非零退出时只把 stderr 作为第三方诊断来源；stderr 为空则错误仅含退出码，stdout 不作为错误信息兜底。最终 assistant 标记缺失时返回 `kiro-cli returned unexpected output` 并分别附 stdout/stderr 摘要；设置命令失败时错误带 `kiro-cli settings` 且不启动 chat。exit `0` 且有最终 assistant 标记时返回该回答，不依据回答或混合终端记录中的自然语言分类错误。
 - **引擎自报失败**（进程退出码为 0、但引擎自身报告业务失败）：
   - claude-code：`is_error` 为真 → 附 `result` 文本。
   - qoder：`is_error` 为真 → 优先附 `errors` 数组拼接的报错信息（`result` 此时可能整个不存在）；`errors` 为空才回退 `result`；两者皆空给兜底提示。
   - antigravity：`status != "SUCCESS"` → 优先附 `error` 字段；为空才回退截断至 500 字的 `response` 摘要。
   - codex：JSONL 中出现 `turn.failed` 或 `error` 事件 → 返回该事件携带的错误信息；若事件没有可用消息则返回明确的 codex 失败兜底文案。
+  - Kiro：普通 chat 没有结构化失败字段，不做自然语言错误分类；只有进程退出码和最终 assistant 结构参与成功失败判定。
 - **prompt 超限**（仅 antigravity）：超 256 KiB 时**在调用前**返回 `agy passes prompts as command-line arguments; prompt too long (…); use a stdin-based engine or reduce upstream output`。
 
 这些错误如何冒泡到 `workflow run` 的退出码见 [cli-runtime.md](./cli-runtime.md)。
 
 ## 实现状态
 
+- **Descriptor 注册表**：**已实装**。五个引擎各自在自身文件同时注册执行实现、capability、图标和 replay；workflow 校验、CLI help、CLI/HTTP TraceView 与 UI 均消费该注册表。通用测试覆盖 fail-fast 校验、排序和深拷贝。
 - **引擎 `claude-code` / `antigravity` / `qoder`**：**已实装**（无头 CLI `claude -p` / `agy -p` / `qodercli -p`，均经真实调用冒烟通过；单测 `internal/engine/exec_test.go` 用假二进制覆盖参数 / stdin / cwd 接线与 JSON 解析）。三者的 `RunResult.SessionID` 解析（从 `session_id` / `conversation_id` 取）**已实装**——在各自结果结构体补取已有字段，无新增 CLI 参数（单测 `internal/engine/session_test.go`）。
-- **引擎 `codex`**：**已实装**。`internal/engine/codex.go` 注册 codex 引擎；能力表（`capability.go`）含 `codex` 行（`model?` + `reasoningEffort ∈ {low, medium, high, xhigh}`）。契约见本篇〈codex〉小节、〈schema 字段映射〉、〈conduct 默认写死的参数〉、〈引擎能力表〉——codex 输出为 JSONL 事件流，逐行扫描按 type 归一化（单测 `internal/engine/codex_test.go` 覆盖 thread.started / agent_message / turn.completed / turn.failed / 无法解析行 / 无 agent_message 各路径）。
-- **`RunResult.SessionID`**：**已实装**。四引擎从各自 JSON 输出的会话 id 字段（claude-code / qoder 的 `session_id`、antigravity 的 `conversation_id`、codex 的 `thread_id`）填充；conduct 记入该节点 trace 的 `sessionId`（见 [cli-runtime.md](./cli-runtime.md)〈runs/ 落盘结构〉）。四引擎默认均持久化会话 transcript，故 id 指向可回放的真实会话；conduct 不额外拷贝 transcript。
+- **引擎 `codex`**：**已实装**。`internal/engine/codex.go` 同时注册执行实现与 descriptor（`model? + effort ∈ {low, medium, high, xhigh}`）。契约见本篇〈codex〉小节、〈schema 字段映射〉、〈conduct 默认写死的参数〉、〈引擎能力表〉——codex 输出为 JSONL 事件流，逐行扫描按 type 归一化（单测 `internal/engine/codex_test.go` 覆盖 thread.started / agent_message / turn.completed / turn.failed / 无法解析行 / 无 agent_message 各路径）。
+- **引擎 `kiro`**：**已实装**。`internal/engine/kiro.go` 注册 Kiro，引导全局设置写入、classic UI chat 参数与原始 assistant 标记解析；`internal/engine/kiro_test.go` 以 PATH 假二进制覆盖设置顺序、环境继承、参数/stdin/cwd、解析、非零退出、格式错误，以及回答/工具日志包含诊断关键词时不得误报。
+- **`RunResult.SessionID`**：**已实装可空语义**。claude-code / qoder 从 `session_id`、antigravity 从 `conversation_id`、codex 从 `thread_id` 填充非空指针；缺失、JSON `null` 或空字符串返回 `nil`。Kiro 不提供当前 id，固定 `nil`。conduct 不额外拷贝 transcript。
 - **`RunResult.DurationMilliseconds`**：由 conduct 侧计时（`internal/engine/exec.go` 的 `runCommand`），非引擎回报。
-- **`RunResult.Tokens`**：各引擎均从自身 `usage` 字段取（codex 取 `input_tokens` + `output_tokens`，口径同其它引擎的 input+output）；引擎不回报时为 `0`。
+- **`RunResult.Tokens`**：**已实装可空语义**。结构化引擎仅在所需 usage 字段完整存在时返回指针（已知 `0` 有效），否则返回 `nil`；Kiro 固定 `nil`。trace 对未知值明确写 JSON `null`。
 
 ## 待确认
 
-- **`model` 白名单**：当前不校验模型名（任意非空串放行）。`ModelValues` 只是 UI 建议值，不是权威模型表。是否随每引擎维护一张权威模型表并收紧为白名单，待定——收紧会更早暴露拼写错误，但增加维护面。
+- **`model` 白名单**：当前不校验模型名（任意非空串放行）。`ModelSuggestions` 只是 UI 建议值，不是权威模型表。是否随每引擎维护一张权威模型表并收紧为白名单，待定——收紧会更早暴露拼写错误，但增加维护面。
 - **子进程超时**：conduct 当前不对引擎调用设超时（依赖 `ctx` 取消与引擎自身超时，如 agy 默认 `--print-timeout 5m`）。是否在引擎层统一加可配置超时，待定。
-- **codex `reasoningEffort` 枚举**：沿用 `{low, medium, high, xhigh}`。codex 另支持 `minimal` 档，是否纳入待定（纳入更全，但需确认当前 codex-cli 版本对所选模型确实接受该档）。
+- **codex `effort` 枚举**：沿用 `{low, medium, high, xhigh}`。codex 另支持 `minimal` 档，是否纳入待定（纳入更全，但需确认当前 codex-cli 版本对所选模型确实接受该档）。
 - **codex token 口径**：`Tokens = input_tokens + output_tokens`，与 claude-code / qoder 一致；codex 另回报 `reasoning_output_tokens`（推理 token）与 `cached_input_tokens`，本方案不计入以免与其它引擎口径不一 / 重复计数。是否单列推理 token，待定。

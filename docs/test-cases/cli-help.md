@@ -12,6 +12,7 @@
 | 正常路径 | `--help`、命令路径帮助与内嵌主题按环境输出中文或英文 | TC-005 |
 | 边界与错误 | 未知主题或命令路径 fail-loud，退出 `2` | TC-004 |
 | 边界与错误 | `C`、`POSIX`、未设置或无法识别的语言值使用英文 | TC-006 |
+| 数据流转 | 根帮助「支持引擎」句子由 descriptor 注册表动态生成（含 kiro，按 name 排序） | TC-007 |
 | 数据流转 | `help workflow node set` 与目标命令 `--help` 输出一致 | TC-002 |
 | 数据流转 | prompts 文档带出 DAG 模板变量、祖先引用与并行写盘冲突约束 | TC-003 |
 | 特性叠加 | `LC_ALL` > `LC_MESSAGES` > `LANG`，高优先级值无法识别时不读取低优先级值 | TC-006 |
@@ -28,7 +29,7 @@ make build
 CONDUCT="$PWD/bin/conduct"
 ```
 
-本文全部是只读命令，不创建 store 或其它状态，无需临时 HOME。需要保存输出时，每个用例自行创建并删除独立临时目录。
+本文全部是只读命令，不创建 store 或其它状态。需要保存输出、或需要用空的隔离 `HOME` 让语言只由 `LC_ALL` 决定（不受已持久化的 `settings.json` 语言影响）时，每个用例自行创建并删除独立临时目录。
 
 ## 用例
 
@@ -54,7 +55,7 @@ CONDUCT="$PWD/bin/conduct"
   3. `command grep -v 'help for set' "$WORK/by-flag.txt" > "$WORK/by-flag.norm"; diff -u "$WORK/by-flag.norm" "$WORK/by-help.txt"; echo "diff_exit=$?"`
 - **预期**：
   - 步骤 1、2 分别打印 `help_exit=0`、`flag_exit=0`。
-  - 两份输出都含 `conduct workflow node set <name> <id> [flags]`，并列出 `--id`、`--engine`、`--model`、`--effort`、`--reasoning-effort`、`--display-name`。
+  - 两份输出都含 `conduct workflow node set <name> <id> [flags]`，并列出 `--id`、`--engine`、`--model`、`--effort`、`--display-name`，不含 `--reasoning-effort`。
   - 步骤 3 打印 `diff_exit=0`，证明两条公开入口得到同一命令说明与业务选项。归一化只排除 Cobra 在 `--help` 入口额外注入的 `-h, --help  help for set` 自身帮助行。
 - **清理**：`rm -rf "$WORK"`。
 
@@ -169,3 +170,34 @@ CONDUCT="$PWD/bin/conduct"
   - 三个中文匹配证明每一级变量都能在更高优先级变量未设置时选择中文。
   - 四个英文匹配中，`fr_FR` 位于最高优先级，虽低优先级均为中文仍直接使用英文，证明不可识别值不会继续向下取值；`C`、`POSIX` 与全部未设置也使用英文。
 - **清理**：原子 shell 块退出时由 trap 自动删除临时目录。
+
+### TC-007 根帮助的「支持引擎」句子由 descriptor 注册表动态生成
+
+- **目的**：验证 `conduct --help` 正文里「支持 … 引擎」这句话不是硬编码的旧四引擎清单，而是按 name 排序动态列出当前 descriptor 注册表中的**全部**引擎（含新登记的 `kiro`），且中英文各按自身连接符成句。这守住 `internal/cli/root.go` 的 `engineNamesSentence()` 动态拼接——新增 / 移除引擎时该句应自动跟随，无需改文案。
+- **前置**：无需 Kiro 凭据或引擎二进制（只读 `--help`）。用一个空的隔离 `HOME` 执行，使语言只由 `LC_ALL` 决定、不受执行者已持久化的 `settings.json` 语言影响；不写任何 conduct store 状态。
+- **步骤**：执行以下原子 shell 块；任一断言失败即以非零状态退出：
+
+  ```bash
+  (
+    set -euo pipefail
+    WORK=$(mktemp -d)
+    trap 'rm -rf "$WORK"' EXIT
+    HOME="$WORK" LC_ALL=en_US.UTF-8 "$CONDUCT" --help > "$WORK/root.en.txt"
+    HOME="$WORK" LC_ALL=zh_CN.UTF-8 "$CONDUCT" --help > "$WORK/root.zh.txt"
+
+    # 英文：Oxford 逗号 + and 连接，全 5 个引擎按 name 排序，含 kiro
+    command grep -F 'it supports the antigravity, claude-code, codex, kiro, and qoder engines, all invoked through headless CLIs.' "$WORK/root.en.txt"
+    # 中文：顿号连接，全 5 个引擎按 name 排序，含 kiro
+    command grep -F '支持 antigravity、claude-code、codex、kiro、qoder 引擎，均以无头 CLI 方式调用。' "$WORK/root.zh.txt"
+
+    # 反向守卫：绝不残留漏掉 kiro 的旧四引擎硬编码写法
+    if command grep -qF 'claude-code、antigravity、qoder、codex' "$WORK/root.zh.txt"; then exit 1; fi
+    if command grep -qF 'the claude-code, antigravity, qoder, and codex engines' "$WORK/root.en.txt"; then exit 1; fi
+  )
+  echo "exit=$?"
+  ```
+- **预期**：
+  - 原子 shell 块退出码 `0`（`echo` 打印 `exit=0`）：两条正向 `grep` 均命中，两条反向守卫均未命中。
+  - 英文句子逐字为 `it supports the antigravity, claude-code, codex, kiro, and qoder engines, all invoked through headless CLIs.`；中文句子逐字为 `支持 antigravity、claude-code、codex、kiro、qoder 引擎，均以无头 CLI 方式调用。`——两者引擎集合相同、均按 name 排序且含 `kiro`，仅连接符（`, ` + `and` ↔ `、`）随语言不同。
+  - 反向守卫证明未回退到删除前的四引擎硬编码文案。
+- **清理**：原子 shell 块退出时由 trap 自动删除隔离 `HOME` 临时目录；未触碰真实 `HOME` 下的 conduct store。

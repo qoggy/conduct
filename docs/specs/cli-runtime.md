@@ -99,19 +99,19 @@ conduct workflow run <name> ["<用户需求>"] [--cwd <dir>] [-d | --detach] [--
 
 **用户需求的来源（按优先级）**：① 命令行位置参数 `<用户需求>`；② 省略它、且 stdin 是管道 / 重定向（非 TTY）时，读取**整个 stdin** 作为需求（如 `cat req.txt | conduct workflow run <name>`）。二者皆无、stdin 又是终端时，报参数缺失并退出 `2`，**不静默挂起等待输入**。
 
-**给引擎看图片**：需求文本里直接写图片的**本地绝对路径**即可——各引擎自带的文件工具会自行读取该图（已实测 claude / codex / qoder / antigravity 均能仅凭绝对路径识别本地图片）。conduct **不提供**专门的图片旗标、也不做 URL 下载；细节与边界见 [engines.md](./engines.md)〈图片输入〉。
+**给引擎看图片**：需求文本里直接写图片的**本地绝对路径**即可——已验证支持该方式的引擎会用自身文件工具读取图片。conduct **不提供**专门的图片旗标、也不做 URL 下载；当前验证清单、细节与边界见 [engines.md](./engines.md)〈图片输入〉。
 
 **输出**：
 
 - 人类可读（默认）：**事件流**逐行滚动打印节点生命周期，并行节点的事件交错呈现——
   1. 先打印 `▶ 调度 N 个节点` 概述（`START` 扇出几个即几个同刻开跑）；
-  2. 每个节点开跑打印 `▶ <id> [<displayName>] 开跑 · engine=<e>`；完成打印 `✓ <id> 完成 · <耗时> · tokens=<n> · 产物 <len> 字符：<前 80 字预览>`；失败打印 `✗ <id> 失败 · <耗时> · <错误摘要>`；
+  2. 每个节点开跑打印 `▶ <id> [<displayName>] 开跑 · engine=<e>`；完成打印 `✓ <id> 完成 · <耗时> [· tokens=<n>] · 产物 <len> 字符：<前 80 字预览>`（引擎未提供 usage 时省略整个 token 片段；已知 `0` 显示 `tokens=0`）；失败打印 `✗ <id> 失败 · <耗时> · <错误摘要>`；
   3. 结束打印 `✅ 完成，阅读 <run-summary.md 路径> 获取运行详情`；
   4. 退出 `0`。
 - `--json`：stdout **每节点落定一行**事件 JSON，无进度装饰（无单独汇总事件，整体概要见落盘的 `run.json`）。每行即 `trace.jsonl` 的一条记录（按**完成序**输出，非拓扑序），完整字段见〈runs/ 落盘结构〉，下例仅列核心字段：
 
   ```json
-  {"nodeId":"a","displayName":"调研现状","engine":"claude-code","success":true,"output":"...","startedAt":"2026-07-13T16:00:00+08:00","endedAt":"2026-07-13T16:00:40+08:00","durationMs":40000}
+  {"nodeId":"a","displayName":"调研现状","engine":"kiro","success":true,"output":"...","tokens":null,"sessionId":null,"startedAt":"2026-07-13T16:00:00+08:00","endedAt":"2026-07-13T16:00:40+08:00","durationMs":40000}
   ```
 
 - 落盘副作用：在运行目录 `~/.conduct/runs/<id>/` 下——**开跑即写** `run.json`（`status:"running"`），`trace.jsonl` 每节点落定即追加，**收尾**把 `run.json` 更新为终态并生成 `run-summary.md`；三文件结构见〈runs/ 落盘结构〉，供 `run list` / `run show` 查询。
@@ -290,7 +290,7 @@ conduct run show <id> [--trace] [--json]
   | **不加 `--trace`** | `run-summary.md` 全文（未收尾时退回状态摘要） | `run.json` 概要 |
   | **加 `--trace`** | 状态摘要 + 每节点完整 input/output | `run.json` + `"trace":[…]`（`trace.jsonl` 逐行） |
 
-  人类 `--trace` 视图里节点按 `startedAt` 排序（并行下 trace 追加序＝完成序、不定，按开跑时刻还原时间线）；某节点若记有 `sessionId`（引擎回报的会话/线程 id，见〈runs/ 落盘结构〉），在该节点 input 前附一行会话信息 + 该引擎的回放命令（`claude-code`→`claude -r <id>`、`codex`→`codex resume <id>`、`qoder`→`qodercli -r <id>`、`antigravity`→`agy --conversation <id>`；未知引擎只显示 id）；`--json` 视图经 `trace` 数组的 `sessionId` 字段带出。
+  人类 `--trace` 视图里节点按 `startedAt` 排序（并行下 trace 追加序＝完成序、不定，按开跑时刻还原时间线）；某节点若记有有效非空 `sessionId`（引擎回报的会话/线程 id，见〈runs/ 落盘结构〉），在该节点 input 前附一行会话信息，并按注册 descriptor 的 `SessionReplayCommand` 附回放命令。`sessionId` 为 `null`、旧记录缺字段或历史空字符串时整块省略；引擎未知、函数为 nil 或返回空串时只显示 id。`--json --trace` 使用共享 `run.TraceView`，每条增加读时派生的 `sessionReplayCommand`（无命令为 `null`）；`tokens` / `sessionId` 未知值也为 JSON `null`。
 
 - 运行态：`status:"running"` 且 `pid` 存活 → 显示实时进度；`status:"running"` 但 `pid` 已死 → 标 `interrupted`、尽力展示已有 trace；退出 `0`。
 - `<id>` 不存在：stderr `<id>: 运行不存在`；退出 `1`。
@@ -601,7 +601,7 @@ conduct run rm demo-20260703-160140 --yes
 </output>
 ````
 
-**`runs/<id>/trace.jsonl`** —— 逐节点执行日志，[JSON Lines](https://jsonlines.org/) 格式：每行一个独立 JSON，追加写，**行序＝完成序**（并行下与拓扑序不同，跨运行不定；审计按 `startedAt` 还原时间线）。每次 agent 节点执行尝试一条（`START` / `END` 不产条目）；首次运行通常每节点一条，`resume` 会保留旧失败条目并为同一 `nodeId` 追加新条目。`run --json` 逐节点吐出的事件就是这些记录：
+**`runs/<id>/trace.jsonl`** —— 逐节点执行日志，[JSON Lines](https://jsonlines.org/) 格式：每行一个独立 JSON，追加写，**行序＝完成序**（并行下与拓扑序不同，跨运行不定；审计按 `startedAt` 还原时间线）。每次 agent 节点执行尝试一条（`START` / `END` 不产条目）；首次运行通常每节点一条，`resume` 会保留旧失败条目并为同一 `nodeId` 追加新条目。`sessionReplayCommand` 是读取时由 `TraceView` 派生的展示字段，**不写入**此文件。`run --json` 逐节点吐出的事件就是这些持久化记录：
 
 ```jsonc
 // 每行一条（此处换行仅为可读，实际每条压成一行）
@@ -611,19 +611,21 @@ conduct run rm demo-20260703-160140 --yes
   "engine": "claude-code",     // 该节点实际调用的引擎（同定义的判别式；引擎层如何把它落到 CLI 调用见 engines.md）
   "engineConfig": {            // 该节点生效的引擎配置，记声明值，结构同定义（见 cli-authoring.md〈workflow 定义 schema〉、engines.md〈引擎能力表〉）
     "model": "claude-opus-4-8",// 声明的模型；定义省略则此字段缺省（引擎侧用其默认模型，本记录不额外探测该默认名）
-    "effort": "high"           // claude-code 档位（antigravity 无；qoder / codex 用 reasoningEffort）
+    "effort": "high"           // 声明的推理档位；是否接受及合法值由引擎 descriptor capability 决定
   },
   "input": "…",                // 该节点喂给引擎的完整输入（渲染后的 promptTemplate，全文不截断）
   "success": true,             // 该节点是否成功
   "error": null,               // 失败（success=false）时的错误信息：引擎报错 / 退出码 / stderr 摘要，全文；成功为 null
   "output": "…",               // 该节点产物全文（不截断；进度显示里的 80 字预览只是展示截断）
-  "tokens": 1100,              // 选填：本节点 token 消耗（引擎回报则记）
-  "sessionId": "0199a213-…",  // 选填：该节点引擎的会话/线程 id（引擎回报则记）；凭它用引擎自带工具回放本节点（见 engines.md〈引擎抽象〉RunResult.SessionID）
+  "tokens": 1100,              // 必有、可空：引擎明确回报的本节点 token 消耗；未知为 null，已知 0 写 0
+  "sessionId": "0199a213-…",  // 必有、可空：引擎明确回报的非空会话/线程 id；未知为 null；凭非空 id 用引擎自带工具回放本节点
   "startedAt": "2026-07-13T16:00:00+08:00",  // 节点开跑时刻（RFC3339）——并行下据此还原时间线
   "endedAt": "2026-07-13T16:00:40+08:00",    // 节点落定时刻（RFC3339）
   "durationMs": 40000          // 该节点耗时（毫秒）
 }
 ```
+
+新写入的每条 trace 都显式包含 `tokens` / `sessionId`。旧 trace 缺少字段时读取为 `nil`，经 `run show --json --trace` 或 HTTP 重新输出会规范化为 JSON `null`，无需迁移历史文件。Kiro 两项固定为 `null`；这表示引擎未提供，不表示免费或实际消耗为零。
 
 > **运行态与中断判定**：`run.json` 开跑即写（`status:"running"`）、`trace.jsonl` 每节点落定即追加、`run-summary.md` 收尾才生成（故 `running` 时尚无 summary）。`run show` / `run list` 读到 `status:"running"` 时按 `pid` 判活（并核对 `pidStartTime` 启动时刻，防 pid 被无关新进程复用时误判）：进程在＝真运行中；进程已死＝ `interrupted`（崩溃 / 被强杀），尽力展示已有 trace。终态 `completed` / `failed` 以 run.json 为准。
 
@@ -648,13 +650,13 @@ conduct run rm demo-20260703-160140 --yes
 | 并行 DAG 调度器 | **已实现**（`internal/workflow/graph.go` 图算法 + `internal/orchestrator/schedule.go` 并行调度器：Kahn 拓扑 + 并发、单调度 goroutine 独占共享态（`pending`/`done`/`ready`）、START 预置 done、END no-op、drain 失败语义） |
 | `workflow run` 事件流输出 | **已实现**（节点生命周期事件流：`▶ 开跑` / `✓ 完成` / `✗ 失败`，无 iteration；`--json` 每节点落定吐一行 `TraceEntry`） |
 | `workflow run` 无 `--max-parallel` | **已实现**（不引入并发上限，就绪节点一律开跑，受 DAG 结构自然约束） |
-| trace.jsonl schema | **已实现**（`run.TraceEntry` 已删除 `Type` / `Iteration`，新增 `StartedAt` / `EndedAt`，主键为 `NodeID`） |
+| trace.jsonl schema | **已实现**（`run.TraceEntry` 已删除 `Type` / `Iteration`，新增 `StartedAt` / `EndedAt`，主键为 `NodeID`；`Tokens` / `SessionID` 为无 `omitempty` 的可空指针，未知值显式写 `null`） |
 | run.json schema | **已实现**（`run.Record` 无 `Steps int`；进度分母由 `WorkflowSnapshot` 读时算 agent 节点数；`workflowSnapshot` 嵌套 `definition{nodes, edges}`；`failedNodeId` 直接记录首个失败节点；`language` 必填且严格校验） |
 | `run resume` DAG 语义 | **已实现**（`internal/cli/run_resume.go` 按 nodeId 推断 `done` 集 + 前驱解锁续跑，不再经过 evaluator，复用同一并行调度循环） |
 | `run list` 进度列 | **已实现**（`NODES` 列 = agent 节点数，JSON 字段 `nodeCount`） |
 | `run-summary.md` 渲染 | **已实现**（节点表按 `startedAt` 排序，无 evaluator 行） |
 | `run list` / `run show` / `run stop` / `run wait` / `run rm` / `workflow run -d` | **已实现**（命令骨架与后台发射机制 `internal/launch` 已随 schema / 进度 / 术语（步→节点）同步调整读写与展示） |
-| 引擎 `claude-code` / `antigravity` / `qoder` / `codex` | **已实装**（无头 CLI 调用、每节点 `sessionId` 回填不受本次模型改造影响；契约见 [engines.md](./engines.md)） |
+| Descriptor 注册表中的引擎 | **已实装**（当前清单、无头 CLI 调用及可空 token/session metadata 契约见 [engines.md](./engines.md)） |
 
 > **不考虑兼容**：旧线性 run 记录与新模型结构不同，**无法用新版 `run resume` 续跑**，未写迁移代码；旧记录仅作历史查看（字段对不上处尽力展示）——这是本次改造的既定取舍，非缺陷。
 
