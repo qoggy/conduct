@@ -13,7 +13,7 @@ func TestEveryApplicationErrorCodeHasBilingualRendering(t *testing.T) {
 		"name": "demo", "id": "node", "path": "/tmp/demo", "status": "completed",
 		"from": "a", "to": "b", "count": 2, "field": "engine", "kind": "Origin",
 		"value": "x", "cycle": "a→b→a", "key": "sys.unknown", "engine": "demo",
-		"available": "codex", "allowed": "low,high", "expectedField": "reasoningEffort",
+		"available": "codex", "allowed": "low,high",
 	}
 	hanzi := regexp.MustCompile(`[\p{Han}]`)
 	for _, code := range apperror.AllCodes() {

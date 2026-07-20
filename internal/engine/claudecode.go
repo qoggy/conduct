@@ -11,16 +11,30 @@ import (
 // prompt 走 stdin，工作目录用 cmd.Dir；输出解析 --output-format json 的单对象。
 type claudeCodeEngine struct{}
 
-func (claudeCodeEngine) Name() string { return "claude-code" }
+func (claudeCodeEngine) Descriptor() EngineDescriptor {
+	return EngineDescriptor{
+		Name: "claude-code",
+		Capability: EngineCapability{
+			AllowsModel:      true,
+			ModelSuggestions: []string{"sonnet", "opus", "fable"},
+			AllowsEffort:     true,
+			EffortValues:     []string{"low", "medium", "high", "xhigh", "max", "ultracode", "auto"},
+		},
+		IconFilename: "claude-code.png",
+		SessionReplayCommand: func(sessionID string) string {
+			return "claude -r " + ShellQuote(sessionID)
+		},
+	}
+}
 
 // claudeResult 是 `claude -p --output-format json` 的 stdout 单对象（只取用到的字段）。
 type claudeResult struct {
-	Result    string `json:"result"`
-	IsError   bool   `json:"is_error"`
-	SessionID string `json:"session_id"`
-	Usage     struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+	Result    string  `json:"result"`
+	IsError   bool    `json:"is_error"`
+	SessionID *string `json:"session_id"`
+	Usage     *struct {
+		InputTokens  *int `json:"input_tokens"`
+		OutputTokens *int `json:"output_tokens"`
 	} `json:"usage"`
 }
 
@@ -50,11 +64,15 @@ func (claudeCodeEngine) Run(ctx context.Context, request RunRequest) (RunResult,
 	if parsed.IsError {
 		return RunResult{}, fmt.Errorf("claude error: %s", parsed.Result)
 	}
+	var tokens *int
+	if parsed.Usage != nil {
+		tokens = tokenTotal(parsed.Usage.InputTokens, parsed.Usage.OutputTokens)
+	}
 	return RunResult{
 		Text:                 parsed.Result,
 		DurationMilliseconds: out.durationMs,
-		Tokens:               parsed.Usage.InputTokens + parsed.Usage.OutputTokens,
-		SessionID:            parsed.SessionID,
+		Tokens:               tokens,
+		SessionID:            nonEmptyString(parsed.SessionID),
 	}, nil
 }
 

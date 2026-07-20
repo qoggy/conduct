@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -117,6 +118,40 @@ func TestAppendAndLoadTrace(t *testing.T) {
 	}
 	if len(entries) != 3 || entries[0].NodeID != "a" || entries[2].NodeID != "c" {
 		t.Errorf("trace 追加/读取顺序错: %+v", entries)
+	}
+}
+
+func TestTraceNullableMetadataIsExplicitAndBackwardCompatible(t *testing.T) {
+	s := New(t.TempDir())
+	rec := sampleRun("flow-20260703-150000")
+	if err := s.CreateRun(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendTrace(rec.ID, run.TraceEntry{NodeID: "new", Success: true}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(s.runsDir(), rec.ID, "trace.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"tokens":null`) || !strings.Contains(string(data), `"sessionId":null`) {
+		t.Fatalf("新 trace 应显式序列化 null metadata: %s", data)
+	}
+
+	writeRawTrace(t, s, rec.ID, `{"nodeId":"old","success":true}`+"\n")
+	entries, err := s.LoadTrace(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Tokens != nil || entries[0].SessionID != nil {
+		t.Fatalf("旧 trace 缺失字段应读取为 nil: %+v", entries)
+	}
+	normalized, err := json.Marshal(entries[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(normalized), `"tokens":null`) || !strings.Contains(string(normalized), `"sessionId":null`) {
+		t.Fatalf("旧 trace 重新输出应规范化为 null: %s", normalized)
 	}
 }
 

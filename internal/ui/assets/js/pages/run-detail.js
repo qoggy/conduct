@@ -223,9 +223,8 @@ function nodeDetail(node, entry) {
   // engine · model · [effort] · [tokens] · [耗时]
   const parts = [engine, cfg && cfg.model ? cfg.model : i18n.engineDefaultModel];
   if (cfg && cfg.effort) parts.push("effort " + cfg.effort);
-  if (cfg && cfg.reasoningEffort) parts.push("reasoningEffort " + cfg.reasoningEffort);
   if (entry) {
-    if (entry.tokens) parts.push(fmtTokens(entry.tokens) + " tok");
+    if (entry.tokens !== null && entry.tokens !== undefined) parts.push(fmtTokens(entry.tokens) + " tok");
     parts.push(fmtDurationMs(entry.durationMs));
   }
   const stats = h("div", { class: "dkv" }, engineIconEl(engine), h("span", {}, parts.join(" · ")));
@@ -270,23 +269,6 @@ function runningProgress(k, n) {
   return h("div", { style: { marginTop: "10px" } }, h("div", { class: "prog" }, h("span", { class: "prog-i", style: { width: pct.toFixed(1) + "%" } })));
 }
 
-// sessionReplayCmd 镜像 CLI 的 sessionReplayLine（internal/cli/run_show.go）：按引擎给出「凭会话 id
-// 回放本节点」的命令；未知引擎无对应命令，返回空串（调用方退化为只显 id）。
-function sessionReplayCmd(engine, sessionId) {
-  switch (engine) {
-    case "claude-code":
-      return "claude -r " + sessionId;
-    case "codex":
-      return "codex resume " + sessionId;
-    case "qoder":
-      return "qodercli -r " + sessionId;
-    case "antigravity":
-      return "agy --conversation " + sessionId;
-    default:
-      return "";
-  }
-}
-
 // sessionRow 是节点详情里的会话信息：会话 id 一行、该引擎回放命令另起一行（各自可复制）。
 // 引擎未回报会话 id 时整块不渲染；未知引擎无回放命令时只出会话 id 一行。
 // 返回两行的数组（h/mount 会扁平化数组子节点）——末行仍是 .dkv，紧邻其后的输入 .edbar 照旧紧贴。
@@ -301,7 +283,7 @@ function sessionRow(entry) {
       copyText(entry.sessionId);
     }, "cpd"),
   );
-  const cmd = sessionReplayCmd(entry.engine, entry.sessionId);
+  const cmd = entry.sessionReplayCommand;
   if (!cmd) return [idLine];
   const replayLine = h(
     "div",

@@ -33,8 +33,12 @@ func (h humanObserver) OnNodeStart(info orchestrator.NodeInfo) {
 
 func (h humanObserver) OnNodeDone(entry run.TraceEntry) {
 	if entry.Success {
-		fmt.Fprintf(h.out, localizedHelpText("✓ %s 完成 · %s · tokens=%d · 产物 %d 字符：%s\n", "✓ %s completed · %s · tokens=%d · artifact %d characters: %s\n"),
-			entry.NodeID, formatDurationMs(entry.DurationMs), entry.Tokens,
+		tokens := ""
+		if entry.Tokens != nil {
+			tokens = fmt.Sprintf(" · tokens=%d", *entry.Tokens)
+		}
+		fmt.Fprintf(h.out, localizedHelpText("✓ %s 完成 · %s%s · 产物 %d 字符：%s\n", "✓ %s completed · %s%s · artifact %d characters: %s\n"),
+			entry.NodeID, formatDurationMs(entry.DurationMs), tokens,
 			len([]rune(entry.Output)), preview(entry.Output, 80))
 		return
 	}

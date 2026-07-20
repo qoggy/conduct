@@ -61,33 +61,32 @@ type versionResponse struct {
 	Version string `json:"version"`
 }
 
-// engineInfo 是 GET /api/engines 的单个条目。Capability 为 nil（JSON null）表示引擎已注册但
-// 能力表尚未实装——不得误报成 allowsModel:false（见 ui.md〈需要额外实现〉①）。
 type engineInfo struct {
-	Name       string            `json:"name"`
-	Capability *engineCapability `json:"capability"`
+	Name       string           `json:"name"`
+	Capability engineCapability `json:"capability"`
+	IconPath   string           `json:"iconPath"`
 }
 
 type engineCapability struct {
-	AllowsModel  bool     `json:"allowsModel"`
-	EffortField  string   `json:"effortField"`
-	EffortValues []string `json:"effortValues"`
-	// ModelValues 是 model 字段的建议值（非白名单，纯 UI 下拉便利），为空表示该引擎未登记建议值。
-	ModelValues []string `json:"modelValues"`
+	AllowsModel      bool     `json:"allowsModel"`
+	ModelSuggestions []string `json:"modelSuggestions"`
+	AllowsEffort     bool     `json:"allowsEffort"`
+	EffortValues     []string `json:"effortValues"`
 }
 
-func engineInfoOf(name string) engineInfo {
-	capability, ok := engine.Capability(name)
-	if !ok {
-		return engineInfo{Name: name, Capability: nil}
+func engineInfoOf(descriptor engine.EngineDescriptor) engineInfo {
+	iconPath := ""
+	if descriptor.IconFilename != "" {
+		iconPath = "/vendor/engine-icons/" + descriptor.IconFilename
 	}
 	return engineInfo{
-		Name: name,
-		Capability: &engineCapability{
-			AllowsModel:  capability.AllowsModel,
-			EffortField:  capability.EffortField,
-			EffortValues: capability.EffortValues,
-			ModelValues:  capability.ModelValues,
+		Name:     descriptor.Name,
+		IconPath: iconPath,
+		Capability: engineCapability{
+			AllowsModel:      descriptor.Capability.AllowsModel,
+			ModelSuggestions: descriptor.Capability.ModelSuggestions,
+			AllowsEffort:     descriptor.Capability.AllowsEffort,
+			EffortValues:     descriptor.Capability.EffortValues,
 		},
 	}
 }
@@ -133,7 +132,7 @@ type runDetail struct {
 	Progress int `json:"progress"`
 	// Trace 用指针区分「未请求」与「请求了但为空」：未带 ?trace=1 → nil → omitempty 省略；
 	// 带 ?trace=1 → 非 nil（空则为 []），恒有 trace 字段（数组语义，与 run show --json --trace 一致）。
-	Trace *[]run.TraceEntry `json:"trace,omitempty"`
+	Trace *[]run.TraceView `json:"trace,omitempty"`
 }
 
 type launchResponse struct {

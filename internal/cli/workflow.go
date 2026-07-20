@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/qoggy/conduct/internal/engine"
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/qoggy/conduct/internal/store"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -180,14 +181,38 @@ func promptTemplateHint() string {
 	)
 }
 
-// effortEnum 返回某引擎 effort / reasoningEffort 字段合法取值的 "a|b|c" 串（无该字段或引擎未登记能力表则空串），
-// 供 node add 的 --effort / --reasoning-effort 说明从能力表动态取值，不在文案里硬编码枚举。
-func effortEnum(engineName string) string {
-	capability, ok := engine.Capability(engineName)
-	if !ok || capability.EffortField == "" {
-		return ""
+func engineNamesHelp() string {
+	return engineNamesHelpFrom(engine.RegisteredDescriptors())
+}
+
+func engineNamesHelpFrom(descriptors []engine.EngineDescriptor) string {
+	names := make([]string, len(descriptors))
+	for index, descriptor := range descriptors {
+		names[index] = descriptor.Name
 	}
-	return strings.Join(capability.EffortValues, "|")
+	return strings.Join(names, " / ")
+}
+
+func engineNamesSentence() string {
+	names := engine.RegisteredNames()
+	if selectedLanguage == locale.Chinese || len(names) < 2 {
+		return strings.Join(names, localizedHelpText("、", ", "))
+	}
+	return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
+}
+
+func effortValuesHelp() string {
+	return effortValuesHelpFrom(engine.RegisteredDescriptors())
+}
+
+func effortValuesHelpFrom(descriptors []engine.EngineDescriptor) string {
+	parts := make([]string, 0)
+	for _, descriptor := range descriptors {
+		if descriptor.Capability.AllowsEffort {
+			parts = append(parts, descriptor.Name+":"+strings.Join(descriptor.Capability.EffortValues, "|"))
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 // workflowDefinitionHelp 返回「从 stdin 读入的工作流定义主体 JSON」的结构说明 + 最小示例，
@@ -238,33 +263,30 @@ func workflowDefinitionHelp() string {
 		"引擎（engine 取值）与各自 engineConfig 允许字段：\n",
 		"Engines (valid engine values) and the engineConfig fields each allows:\n",
 	))
-	for _, name := range engine.RegisteredNames() {
-		capability, ok := engine.Capability(name)
-		if !ok {
-			fmt.Fprintf(&b, localizedHelpText(
-				"  %s：暂不接受任何 engineConfig 字段\n",
-				"  %s: currently accepts no engineConfig fields\n",
-			), name)
-			continue
-		}
-		var fields []string
-		if capability.AllowsModel {
-			fields = append(fields, "model")
-		}
-		if capability.EffortField != "" {
-			fields = append(fields, fmt.Sprintf("%s(%s)", capability.EffortField, strings.Join(capability.EffortValues, "|")))
-		}
-		line := strings.Join(fields, " ")
-		if capability.EffortField == "" {
-			line += localizedHelpText(
-				"（无独立 effort 字段，推理强度编码在 model 标签里）",
-				" (no separate effort field; reasoning intensity is encoded in the model tag)",
-			)
-		}
+	for _, descriptor := range engine.RegisteredDescriptors() {
+		name := descriptor.Name
+		line := engineConfigFieldsHelp(descriptor.Capability)
 		fmt.Fprintf(&b, localizedHelpText("  %s：%s\n", "  %s: %s\n"), name, line)
 	}
 	b.WriteString(templateVariablesHelp() + "\n" + graphConstraintsHelp() + "\n" + promptTemplateHint())
 	return b.String()
+}
+
+func engineConfigFieldsHelp(capability engine.EngineCapability) string {
+	var fields []string
+	if capability.AllowsModel {
+		fields = append(fields, "model")
+	}
+	if capability.AllowsEffort {
+		fields = append(fields, fmt.Sprintf("effort(%s)", strings.Join(capability.EffortValues, "|")))
+	}
+	if len(fields) == 0 {
+		return localizedHelpText(
+			"不接受任何 engineConfig 字段",
+			"accepts no engineConfig fields",
+		)
+	}
+	return strings.Join(fields, " ")
 }
 
 // printJSON 把值以缩进 JSON 打印到 stdout。

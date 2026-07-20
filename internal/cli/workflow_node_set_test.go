@@ -156,12 +156,12 @@ func TestApplyNodeSetEngineSwitchCaughtByValidate(t *testing.T) {
 	node.EngineConfig = &workflow.EngineConfig{Effort: "high"} // claude-code 专属
 	def := defWith(node)
 
-	// 只改 engine 为 qoder，不清 effort → applyNodeSet 不预判，交整份校验。
-	if err := applyNodeSet(def, "gen", nodeSetOptions{Engine: strPtr("qoder")}); err != nil {
+	// 只改 engine 为 antigravity，不清 effort → applyNodeSet 不预判，交整份校验。
+	if err := applyNodeSet(def, "gen", nodeSetOptions{Engine: strPtr("antigravity")}); err != nil {
 		t.Fatalf("applyNodeSet 不应预判引擎兼容性: %v", err)
 	}
 	if err := workflow.Validate(def); err == nil {
-		t.Fatal("qoder 不认 effort，整份校验应报错")
+		t.Fatal("antigravity 不认 effort，整份校验应报错")
 	}
 }
 
@@ -178,7 +178,7 @@ func TestApplyEngineConfigCollapsesToNil(t *testing.T) {
 func TestApplyEngineConfigUntouchedWhenNoScalar(t *testing.T) {
 	original := &workflow.EngineConfig{Model: "m"}
 	carrier := original
-	applyEngineConfig(&carrier, nodeSetOptions{DisplayName: strPtr("x")}) // 无 model/effort/reasoning
+	applyEngineConfig(&carrier, nodeSetOptions{DisplayName: strPtr("x")}) // 无 model/effort
 	if carrier != original {
 		t.Fatalf("未给调优标量时不应改动 EngineConfig 指针")
 	}

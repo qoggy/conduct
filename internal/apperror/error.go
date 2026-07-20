@@ -64,7 +64,6 @@ const (
 	CodeNonAncestorNodeReference    Code = "non_ancestor_node_reference"
 	CodeNodeReferenceNotFound       Code = "node_reference_not_found"
 	CodeUnknownEngine               Code = "unknown_engine"
-	CodeEngineCapabilityUnavailable Code = "engine_capability_unavailable"
 	CodeEngineModelNotAllowed       Code = "engine_model_not_allowed"
 	CodeEngineEffortFieldNotAllowed Code = "engine_effort_field_not_allowed"
 	CodeEngineEffortValueNotAllowed Code = "engine_effort_value_not_allowed"
@@ -87,7 +86,7 @@ func AllCodes() []Code {
 		CodeEdgeToStart, CodeEdgeFromEnd, CodeDuplicateEdge, CodeCycleDetected,
 		CodeNodeMissingIncomingEdge, CodeNodeMissingOutgoingEdge, CodeUnknownSystemVariable,
 		CodeMarkerNodeReference, CodeNonAncestorNodeReference, CodeNodeReferenceNotFound,
-		CodeUnknownEngine, CodeEngineCapabilityUnavailable, CodeEngineModelNotAllowed,
+		CodeUnknownEngine, CodeEngineModelNotAllowed,
 		CodeEngineEffortFieldNotAllowed, CodeEngineEffortValueNotAllowed,
 	}
 }

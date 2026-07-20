@@ -12,7 +12,21 @@ import (
 // 用法见 docs/references/qodercli-print.md。
 type qoderEngine struct{}
 
-func (qoderEngine) Name() string { return "qoder" }
+func (qoderEngine) Descriptor() EngineDescriptor {
+	return EngineDescriptor{
+		Name: "qoder",
+		Capability: EngineCapability{
+			AllowsModel:      true,
+			ModelSuggestions: []string{"Auto", "Ultimate", "Performance", "Efficient", "Lite"},
+			AllowsEffort:     true,
+			EffortValues:     []string{"disabled", "off", "none", "low", "medium", "high", "xhigh", "max"},
+		},
+		IconFilename: "qoder.png",
+		SessionReplayCommand: func(sessionID string) string {
+			return "qodercli -r " + ShellQuote(sessionID)
+		},
+	}
+}
 
 // qoderResult 是 `qodercli -p --output-format json` 的 stdout 单对象（只取用到的字段）。
 // is_error=true 时 result 可能整个不存在（反序列化为空串），真正的失败原因在 errors 数组里。
@@ -20,10 +34,10 @@ type qoderResult struct {
 	Result    string   `json:"result"`
 	IsError   bool     `json:"is_error"`
 	Errors    []string `json:"errors"`
-	SessionID string   `json:"session_id"`
-	Usage     struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+	SessionID *string  `json:"session_id"`
+	Usage     *struct {
+		InputTokens  *int `json:"input_tokens"`
+		OutputTokens *int `json:"output_tokens"`
 	} `json:"usage"`
 }
 
@@ -65,11 +79,15 @@ func (qoderEngine) Run(ctx context.Context, request RunRequest) (RunResult, erro
 	if parsed.IsError {
 		return RunResult{DurationMilliseconds: out.durationMs}, fmt.Errorf("qodercli error: %s", qoderFailureMessage(parsed))
 	}
+	var tokens *int
+	if parsed.Usage != nil {
+		tokens = tokenTotal(parsed.Usage.InputTokens, parsed.Usage.OutputTokens)
+	}
 	return RunResult{
 		Text:                 parsed.Result,
 		DurationMilliseconds: out.durationMs,
-		Tokens:               parsed.Usage.InputTokens + parsed.Usage.OutputTokens,
-		SessionID:            parsed.SessionID,
+		Tokens:               tokens,
+		SessionID:            nonEmptyString(parsed.SessionID),
 	}, nil
 }
 

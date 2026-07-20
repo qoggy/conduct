@@ -32,6 +32,20 @@ func read(t *testing.T, path string) string {
 	return string(data)
 }
 
+func requireIntPointer(t *testing.T, value *int, want int) {
+	t.Helper()
+	if value == nil || *value != want {
+		t.Fatalf("得到 %v，期望指向 %d 的非 nil 指针", value, want)
+	}
+}
+
+func requireStringPointer(t *testing.T, value *string, want string) {
+	t.Helper()
+	if value == nil || *value != want {
+		t.Fatalf("得到 %v，期望指向 %q 的非 nil 指针", value, want)
+	}
+}
+
 func TestClaudeCodeRunParsesAndPlumbs(t *testing.T) {
 	dir := fakeBinary(t, "claude", `cat > "$FAKE_OUT/stdin"
 echo "$@" > "$FAKE_OUT/args"
@@ -43,9 +57,10 @@ echo '{"result":"HELLO","is_error":false,"usage":{"input_tokens":3,"output_token
 	if err != nil {
 		t.Fatalf("Run 报错: %v", err)
 	}
-	if res.Text != "HELLO" || res.Tokens != 10 {
-		t.Errorf("解析错误：Text=%q Tokens=%d", res.Text, res.Tokens)
+	if res.Text != "HELLO" {
+		t.Errorf("解析错误：Text=%q", res.Text)
 	}
+	requireIntPointer(t, res.Tokens, 10)
 	if got := read(t, filepath.Join(dir, "stdin")); got != "做点事" {
 		t.Errorf("prompt 应经 stdin 传入，得到 %q", got)
 	}
@@ -100,6 +115,17 @@ exit 1`)
 	}
 }
 
+func TestClaudeCodeRunNonZeroExitStdoutEmptyResultUsesStderr(t *testing.T) {
+	fakeBinary(t, "claude", `echo '{"is_error":true,"result":"","session_id":"s1"}'
+echo "stderr fallback message" >&2
+exit 1`)
+	_, err := claudeCodeEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
+	want := "claude exited with code 1: stderr fallback message"
+	if err == nil || err.Error() != want {
+		t.Fatalf("stdout result 为空时应回退 stderr，得到 %v，期望 %q", err, want)
+	}
+}
+
 func TestClaudeCodeRunIsError(t *testing.T) {
 	fakeBinary(t, "claude", `echo '{"result":"model said no","is_error":true}'`)
 	_, err := claudeCodeEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
@@ -132,6 +158,47 @@ func TestSingleObjectEnginesAllowEmptyText(t *testing.T) {
 	})
 }
 
+func TestSingleObjectEnginesPreserveNullableMetadata(t *testing.T) {
+	t.Run("claude-code partial usage and empty session", func(t *testing.T) {
+		fakeBinary(t, "claude", `echo '{"result":"x","is_error":false,"usage":{"input_tokens":1},"session_id":""}'`)
+		result, err := (claudeCodeEngine{}).Run(context.Background(), RunRequest{Prompt: "p"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Tokens != nil || result.SessionID != nil {
+			t.Fatalf("不完整 usage 和空 session 应为 nil: %+v", result)
+		}
+	})
+	t.Run("qoder missing metadata", func(t *testing.T) {
+		fakeBinary(t, "qodercli", `echo '{"result":"x","is_error":false}'`)
+		result, err := (qoderEngine{}).Run(context.Background(), RunRequest{Prompt: "p"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Tokens != nil || result.SessionID != nil {
+			t.Fatalf("缺失 metadata 应为 nil: %+v", result)
+		}
+	})
+	t.Run("antigravity missing metadata", func(t *testing.T) {
+		fakeBinary(t, "agy", `echo '{"status":"SUCCESS","response":"x","usage":{}}'`)
+		result, err := (antigravityEngine{}).Run(context.Background(), RunRequest{Prompt: "p"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Tokens != nil || result.SessionID != nil {
+			t.Fatalf("缺失 metadata 应为 nil: %+v", result)
+		}
+	})
+	t.Run("known zero usage", func(t *testing.T) {
+		fakeBinary(t, "claude", `echo '{"result":"x","is_error":false,"usage":{"input_tokens":0,"output_tokens":0}}'`)
+		result, err := (claudeCodeEngine{}).Run(context.Background(), RunRequest{Prompt: "p"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireIntPointer(t, result.Tokens, 0)
+	})
+}
+
 func TestAntigravityRunUsesArgAndDir(t *testing.T) {
 	dir := fakeBinary(t, "agy", `echo "$@" > "$FAKE_OUT/args"
 pwd > "$FAKE_OUT/pwd"
@@ -142,9 +209,10 @@ echo '{"status":"SUCCESS","response":"hey","usage":{"total_tokens":42}}'`)
 	if err != nil {
 		t.Fatalf("Run 报错: %v", err)
 	}
-	if res.Text != "hey" || res.Tokens != 42 {
-		t.Errorf("解析错误：Text=%q Tokens=%d", res.Text, res.Tokens)
+	if res.Text != "hey" {
+		t.Errorf("解析错误：Text=%q", res.Text)
 	}
+	requireIntPointer(t, res.Tokens, 42)
 	if !strings.Contains(read(t, filepath.Join(dir, "args")), "问候一下") {
 		t.Error("agy 的 prompt 应经命令行参数传入")
 	}
@@ -159,6 +227,16 @@ func TestAntigravityRunNonSuccessStatus(t *testing.T) {
 	_, err := antigravityEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
 	if err == nil || !strings.Contains(err.Error(), "agy status ERROR") || !strings.Contains(err.Error(), "quota exceeded") {
 		t.Errorf("非 SUCCESS 应转译，得到 %v", err)
+	}
+}
+
+func TestAntigravityRunTruncatesResponseFallback(t *testing.T) {
+	response := strings.Repeat("B", 600)
+	fakeBinary(t, "agy", `echo '{"status":"FAILED","response":"`+response+`"}'`)
+	_, err := antigravityEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
+	want := "agy status FAILED: " + strings.Repeat("B", 500) + "…"
+	if err == nil || err.Error() != want {
+		t.Fatalf("response 回退应截断至 500 字，得到 %v", err)
 	}
 }
 
@@ -194,9 +272,10 @@ echo '{"result":"OK","is_error":false,"usage":{"input_tokens":5,"output_tokens":
 	if err != nil {
 		t.Fatalf("Run 报错: %v", err)
 	}
-	if res.Text != "OK" || res.Tokens != 10 {
-		t.Errorf("解析错误：Text=%q Tokens=%d", res.Text, res.Tokens)
+	if res.Text != "OK" {
+		t.Errorf("解析错误：Text=%q", res.Text)
 	}
+	requireIntPointer(t, res.Tokens, 10)
 	if got := read(t, filepath.Join(dir, "stdin")); got != "跑一下" {
 		t.Errorf("prompt 应经 stdin 传入，得到 %q", got)
 	}
@@ -216,6 +295,15 @@ func TestQoderRunIsErrorEmptyResultUsesErrorsArray(t *testing.T) {
 	}
 	if err != nil && strings.TrimSpace(err.Error()) == "qodercli error:" {
 		t.Errorf("报错信息不应为空，得到 %v", err)
+	}
+}
+
+func TestQoderRunIsErrorEmptyErrorsUsesTrimmedResult(t *testing.T) {
+	fakeBinary(t, "qodercli", `echo '{"is_error":true,"result":"  fallback result text  "}'`)
+	_, err := qoderEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
+	want := "qodercli error: fallback result text"
+	if err == nil || err.Error() != want {
+		t.Fatalf("errors 为空时应回退 trim 后的 result，得到 %v，期望 %q", err, want)
 	}
 }
 
@@ -240,5 +328,15 @@ echo '{"is_error":true,"errors":["boom"]}'`)
 	}
 	if res.DurationMilliseconds <= 0 {
 		t.Errorf("失败路径应保留真实耗时，得到 DurationMilliseconds=%d", res.DurationMilliseconds)
+	}
+}
+
+func TestCommandErrorTruncatesStderr(t *testing.T) {
+	fakeBinary(t, "claude", `printf '%0600d' 0 | tr '0' 'A' >&2
+exit 1`)
+	_, err := claudeCodeEngine{}.Run(context.Background(), RunRequest{Prompt: "p"})
+	want := "claude exited with code 1: " + strings.Repeat("A", 500) + "…"
+	if err == nil || err.Error() != want {
+		t.Fatalf("stderr 摘要应截断至 500 字，得到 %v", err)
 	}
 }

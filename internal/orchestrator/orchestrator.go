@@ -178,11 +178,7 @@ func (o *Orchestrator) invokeEngine(ctx context.Context, engineName string, conf
 	request := engine.RunRequest{Prompt: prompt, WorkingDirectory: cwd}
 	if config != nil {
 		request.Model = config.Model
-		// effort / reasoningEffort 二者按引擎互斥，取非空那个交给引擎自解释。
 		request.Effort = config.Effort
-		if request.Effort == "" {
-			request.Effort = config.ReasoningEffort
-		}
 	}
 	return eng.Run(ctx, request)
 }

@@ -78,10 +78,10 @@ type TraceEntry struct {
 	Success      bool                   `json:"success"`
 	Error        *string                `json:"error"`
 	Output       string                 `json:"output"`
-	Tokens       int                    `json:"tokens,omitempty"`
-	SessionID    string                 `json:"sessionId,omitempty"` // 选填：该节点引擎的会话/线程 id（引擎回报则记），凭它回放本节点
-	StartedAt    string                 `json:"startedAt"`           // 节点开跑时刻（RFC3339）——并行下据此还原时间线
-	EndedAt      string                 `json:"endedAt"`             // 节点落定时刻（RFC3339）
+	Tokens       *int                   `json:"tokens"`
+	SessionID    *string                `json:"sessionId"` // 该节点引擎的会话/线程 id；引擎未回报时为 null
+	StartedAt    string                 `json:"startedAt"` // 节点开跑时刻（RFC3339）——并行下据此还原时间线
+	EndedAt      string                 `json:"endedAt"`   // 节点落定时刻（RFC3339）
 	DurationMs   int64                  `json:"durationMs"`
 }
 

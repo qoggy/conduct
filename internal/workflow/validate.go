@@ -270,42 +270,20 @@ func validateEngine(path, engineName string, config *EngineConfig) []Problem {
 	}
 
 	var problems []Problem
-	capability, ok := engine.Capability(engineName)
-	if !ok {
-		// 引擎已登记但能力表待实装 → 暂不接受任何 engineConfig 字段
-		if config.Model != "" || config.Effort != "" || config.ReasoningEffort != "" {
-			problems = append(problems, problem(path+".engineConfig", apperror.CodeEngineCapabilityUnavailable, "engine", engineName))
-		}
-		return problems
-	}
+	descriptor, _ := engine.Describe(engineName)
+	capability := descriptor.Capability
 
 	if config.Model != "" && !capability.AllowsModel {
 		problems = append(problems, problem(path+".engineConfig.model", apperror.CodeEngineModelNotAllowed, "engine", engineName))
 	}
-	// effort / reasoningEffort：只接受该引擎声明的那一个，另一个必须为空。
 	if config.Effort != "" {
-		if capability.EffortField != "effort" {
-			problems = append(problems, effortFieldProblem(path+".engineConfig.effort", engineName, "effort", capability))
+		if !capability.AllowsEffort {
+			problems = append(problems, effortFieldProblem(path+".engineConfig.effort", engineName))
 		} else if !slices.Contains(capability.EffortValues, config.Effort) {
 			problems = append(problems, effortValueProblem(path+".engineConfig.effort", engineName, config.Effort, capability.EffortValues))
 		}
 	}
-	if config.ReasoningEffort != "" {
-		if capability.EffortField != "reasoningEffort" {
-			problems = append(problems, effortFieldProblem(path+".engineConfig.reasoningEffort", engineName, "reasoningEffort", capability))
-		} else if !slices.Contains(capability.EffortValues, config.ReasoningEffort) {
-			problems = append(problems, effortValueProblem(path+".engineConfig.reasoningEffort", engineName, config.ReasoningEffort, capability.EffortValues))
-		}
-	}
 	return problems
-}
-
-// otherEffortField 在用户填错调优字段时返回该引擎实际接受的机器字段名（若有）。
-func otherEffortField(capability engine.EngineCapability, wrongField string) string {
-	if capability.EffortField == "" || capability.EffortField == wrongField {
-		return ""
-	}
-	return capability.EffortField
 }
 
 func problem(path string, code apperror.Code, pairs ...any) Problem {
@@ -327,10 +305,8 @@ func requiredProblem(path, field string) Problem {
 	return problem(path, apperror.CodeRequiredField, "field", field)
 }
 
-func effortFieldProblem(path, engineName, field string, capability engine.EngineCapability) Problem {
-	return problem(path, apperror.CodeEngineEffortFieldNotAllowed,
-		"engine", engineName, "field", field,
-		"expectedField", otherEffortField(capability, field))
+func effortFieldProblem(path, engineName string) Problem {
+	return problem(path, apperror.CodeEngineEffortFieldNotAllowed, "engine", engineName)
 }
 
 func effortValueProblem(path, engineName, value string, allowed []string) Problem {

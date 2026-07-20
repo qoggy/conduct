@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qoggy/conduct/internal/engine"
+	"github.com/qoggy/conduct/internal/locale"
 	"github.com/spf13/cobra"
 )
 
@@ -64,6 +66,7 @@ func TestHelpUsesSelectedLanguage(t *testing.T) {
 			args:     []string{"help"},
 			want: []string{
 				"conduct —— 一个把 workflow 定义（JSON）解释运行起来的 CLI。",
+				"支持 " + strings.Join(engine.RegisteredNames(), "、") + " 引擎",
 				"怎么写好节点 promptTemplate：模板变量、节点隔离、最佳实践",
 				"用法：",
 				"可用命令：",
@@ -77,15 +80,26 @@ func TestHelpUsesSelectedLanguage(t *testing.T) {
 			},
 		},
 		{
+			name:     "chinese kiro node help",
+			language: "zh_CN.UTF-8",
+			args:     []string{"help", "workflow", "node", "set"},
+			want: []string{
+				"设引擎（" + engineNamesHelp() + "）",
+				"设推理档位（" + effortValuesHelp() + "）；传空串清除",
+			},
+			doesNotWant: []string{"Set the engine", "Set the reasoning effort level", "--reasoning-effort"},
+		},
+		{
 			name:     "english nested command help",
 			language: "en_US.UTF-8",
 			args:     []string{"help", "workflow", "node", "set"},
 			want: []string{
 				"Change only one agent node's fields",
-				"Set the engine (claude-code / antigravity / qoder / codex)",
+				"Set the engine (" + engineNamesHelp() + ")",
+				"Set the reasoning effort level (" + effortValuesHelp() + ")",
 				"Change the node display name (must be nonempty)",
 			},
-			doesNotWant: []string{"只改一个 agent 节点的字段", "设引擎（"},
+			doesNotWant: []string{"只改一个 agent 节点的字段", "设引擎（", "--reasoning-effort"},
 		},
 		{
 			name:     "english root help",
@@ -161,6 +175,49 @@ func TestEnglishRootHelpContainsNoChinese(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "conduct help <topic>") {
 		t.Fatalf("英文根帮助应使用英文 topic 占位符，得到：\n%s", output.String())
+	}
+}
+
+func TestReasoningEffortFlagIsOrdinaryUnknownFlag(t *testing.T) {
+	isolateTestSettings(t)
+	t.Setenv("LC_ALL", "C")
+	execute := func(flag string) string {
+		root, err := newRootCommand()
+		if err != nil {
+			t.Fatal(err)
+		}
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+		root.SetArgs([]string{"workflow", "node", "set", "flow", "node", "--" + flag, "high"})
+		err = root.Execute()
+		var usage *usageError
+		if !errors.As(err, &usage) {
+			t.Fatalf("未知 flag %s 应返回 usageError，得到 %T: %v", flag, err, err)
+		}
+		return strings.ReplaceAll(err.Error(), flag, "<unknown>")
+	}
+	if reasoning, ordinary := execute("reasoning-effort"), execute("xxxabc"); reasoning != ordinary {
+		t.Fatalf("--reasoning-effort 应与普通未知 flag 走同一路径：\nreasoning=%s\nordinary=%s", reasoning, ordinary)
+	}
+}
+
+func TestEngineHelpFormattingUsesSyntheticDescriptors(t *testing.T) {
+	descriptors := []engine.EngineDescriptor{
+		{Name: "alpha", Capability: engine.EngineCapability{AllowsModel: true}},
+		{Name: "zeta", Capability: engine.EngineCapability{AllowsEffort: true, EffortValues: []string{"small", "large"}}},
+	}
+	if got := engineNamesHelpFrom(descriptors); got != "alpha / zeta" {
+		t.Fatalf("synthetic engine names = %q", got)
+	}
+	if got := effortValuesHelpFrom(descriptors); got != "zeta:small|large" {
+		t.Fatalf("synthetic effort values = %q", got)
+	}
+	useTestLanguage(t, locale.English)
+	if got := engineConfigFieldsHelp(engine.EngineCapability{}); got != "accepts no engineConfig fields" {
+		t.Fatalf("no-field engineConfig help = %q", got)
+	}
+	if got := engineConfigFieldsHelp(engine.EngineCapability{AllowsModel: true}); got != "model" {
+		t.Fatalf("model-only engineConfig help = %q", got)
 	}
 }
 

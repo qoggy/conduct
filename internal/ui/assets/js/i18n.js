@@ -466,12 +466,8 @@ function sharedErrorMessages(language) {
     non_ancestor_node_reference: (p) => choose(`引用非上游祖先节点 {{${p.id}}}（数据流须来自沿边可达的前驱）`, `references non-upstream-ancestor node {{${p.id}}} (data must come from a predecessor reachable along edges)`),
     node_reference_not_found: (p) => choose(`引用不存在的节点 {{${p.id}}}`, `references nonexistent node {{${p.id}}}`),
     unknown_engine: (p) => choose(`未知引擎 "${p.engine}"（可用：${p.available}）`, `unknown engine "${p.engine}" (available: ${p.available})`),
-    engine_capability_unavailable: (p) => choose(`engine="${p.engine}" 的能力表待实装，暂不接受配置字段`, `the capability table for engine="${p.engine}" is not implemented; configuration fields are not currently accepted`),
     engine_model_not_allowed: (p) => choose(`engine="${p.engine}" 不接受 model`, `engine="${p.engine}" does not accept model`),
-    engine_effort_field_not_allowed: (p) => choose(
-      `engine="${p.engine}" 不认 ${p.field}${p.expectedField ? `（该引擎用 ${p.expectedField}）` : ""}`,
-      `engine="${p.engine}" does not accept ${p.field}${p.expectedField ? ` (this engine uses ${p.expectedField})` : ""}`,
-    ),
+    engine_effort_field_not_allowed: (p) => choose(`engine="${p.engine}" 不接受 effort`, `engine="${p.engine}" does not accept effort`),
     engine_effort_value_not_allowed: (p) => choose(`"${p.value}" 不在 engine="${p.engine}" 允许集 [${p.allowed}] 内`, `"${p.value}" is not in the allowed set [${p.allowed}] for engine="${p.engine}"`),
   };
 }

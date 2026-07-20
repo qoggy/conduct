@@ -21,17 +21,17 @@ func newRootCommand() (*cobra.Command, error) {
 	rootCommand := &cobra.Command{
 		Use:   "conduct",
 		Short: localizedHelpText("编排并运行多引擎 AI workflow", "Orchestrate and run multi-engine AI workflows"),
-		Long: localizedHelpText(`conduct —— 一个把 workflow 定义（JSON）解释运行起来的 CLI。
+		Long: fmt.Sprintf(localizedHelpText(`conduct —— 一个把 workflow 定义（JSON）解释运行起来的 CLI。
 
 它按 DAG 依赖确定性调度节点，并驱动 AI 编程引擎完成任务；
-支持 claude-code、antigravity、qoder、codex 引擎，均以无头 CLI 方式调用。
+支持 %s 引擎，均以无头 CLI 方式调用。
 
 工作流的增删改查与解释运行已就位（conduct workflow ...）；运行记录查询见 conduct run ...。`, `conduct — a CLI that interprets and runs workflow definitions (JSON).
 
 It schedules nodes deterministically according to DAG dependencies and drives AI coding engines to complete tasks;
-it supports the claude-code, antigravity, qoder, and codex engines, all invoked through headless CLIs.
+it supports the %s engines, all invoked through headless CLIs.
 
-Workflow creation, deletion, editing, querying, and interpreted execution are available under conduct workflow ...; see conduct run ... to query run records.`),
+Workflow creation, deletion, editing, querying, and interpreted execution are available under conduct workflow ...; see conduct run ... to query run records.`), engineNamesSentence()),
 		// 子命令自行返回 error，由 Execute 统一打印，避免 Cobra 重复输出用法与错误。
 		SilenceUsage:  true,
 		SilenceErrors: true,

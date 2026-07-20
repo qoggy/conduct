@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"math"
 	"net/http"
@@ -9,6 +10,37 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestKiroIconAndNullableRunDetailAssets(t *testing.T) {
+	server := newTestServer(t)
+	icon := do(t, server, http.MethodGet, "/vendor/engine-icons/kiro.png", "", nil)
+	if icon.Code != http.StatusOK {
+		t.Fatalf("GET Kiro icon 期望 200，得到 %d", icon.Code)
+	}
+	sum := sha256.Sum256(icon.Body.Bytes())
+	if got := fmt.Sprintf("%x", sum); got != "36947799f77cee84e4c6b5325d14fceea151162bb55bc6c76b9671334f274d1f" {
+		t.Fatalf("Kiro icon SHA-256 = %s", got)
+	}
+
+	engines := do(t, server, http.MethodGet, "/js/engines.js", "", nil).Body.String()
+	if strings.Contains(engines, "ICON_FILES") || !strings.Contains(engines, "entry.iconPath") {
+		t.Fatal("engines.js 应从 API iconPath 渲染图标，不保留品牌映射")
+	}
+	editor := do(t, server, http.MethodGet, "/js/pages/editor.js", "", nil).Body.String()
+	if strings.Contains(editor, "reasoningEffort") || strings.Contains(editor, "cap.effortField") || !strings.Contains(editor, "modelSuggestions") || !strings.Contains(editor, "allowsEffort") {
+		t.Fatal("编辑器应只消费 descriptor 的 modelSuggestions/allowsEffort 和统一 effort 字段")
+	}
+	runDetail := do(t, server, http.MethodGet, "/js/pages/run-detail.js", "", nil).Body.String()
+	if !strings.Contains(runDetail, "entry.tokens !== null && entry.tokens !== undefined") {
+		t.Fatal("Run 详情应区分未知 token 与已知 0")
+	}
+	if !strings.Contains(runDetail, "if (!entry.sessionId) return null") {
+		t.Fatal("Run 详情应对 null、缺失和空 session id 隐藏整块 session/replay")
+	}
+	if strings.Contains(runDetail, "sessionReplayCmd") || !strings.Contains(runDetail, "entry.sessionReplayCommand") {
+		t.Fatal("Run 详情应直接展示服务端派生的 sessionReplayCommand")
+	}
+}
 
 func TestThemeAssetsAreEmbeddedAndInitializedBeforeStyles(t *testing.T) {
 	server := newTestServer(t)

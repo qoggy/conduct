@@ -71,8 +71,8 @@ func showRunJSON(cmd *cobra.Command, record *run.Record, trace []run.TraceEntry,
 	}
 	payload := struct {
 		*run.Record
-		Trace []run.TraceEntry `json:"trace"`
-	}{Record: record, Trace: trace}
+		Trace []run.TraceView `json:"trace"`
+	}{Record: record, Trace: run.NewTraceViews(trace)}
 	return printJSON(cmd, payload)
 }
 
@@ -156,8 +156,8 @@ func recordNodeCount(record *run.Record) int {
 func printTraceEntryFull(out io.Writer, entry run.TraceEntry, result string) {
 	fmt.Fprintf(out, "● %s [%s] %s  %s\n", entry.NodeID, entry.DisplayName, entry.Engine, result)
 	// 某节点若记有引擎会话/线程 id，先附一行会话信息 + 该引擎的回放命令，便于凭引擎自带工具回放本节点。
-	if entry.SessionID != "" {
-		fmt.Fprintf(out, localizedHelpText("  ── 会话 ──\n%s\n", "  ── session ──\n%s\n"), sessionReplayLine(entry.Engine, entry.SessionID))
+	if entry.SessionID != nil && *entry.SessionID != "" {
+		fmt.Fprintf(out, localizedHelpText("  ── 会话 ──\n%s\n", "  ── session ──\n%s\n"), sessionReplayLine(run.NewTraceView(entry)))
 	}
 	fmt.Fprintf(out, localizedHelpText("  ── 输入 ──\n%s\n", "  ── input ──\n%s\n"), entry.Input)
 	if entry.Success {
@@ -169,22 +169,12 @@ func printTraceEntryFull(out io.Writer, entry run.TraceEntry, result string) {
 
 // sessionReplayLine 返回某节点的会话信息行：会话 id + 该引擎凭其自带工具回放该节点的命令。
 // 未知引擎（无对应回放命令）只显示 id，不臆造命令。
-func sessionReplayLine(engineName, sessionID string) string {
-	var replay string
-	switch engineName {
-	case "claude-code":
-		replay = "claude -r " + sessionID
-	case "codex":
-		replay = "codex resume " + sessionID
-	case "qoder":
-		replay = "qodercli -r " + sessionID
-	case "antigravity":
-		replay = "agy --conversation " + sessionID
-	}
-	if replay == "" {
+func sessionReplayLine(view run.TraceView) string {
+	sessionID := *view.SessionID
+	if view.SessionReplayCommand == nil {
 		return localizedHelpText("会话 ", "session ") + sessionID
 	}
-	return localizedHelpText("会话 ", "session ") + sessionID + localizedHelpText(" · 回放：", " · replay: ") + replay
+	return localizedHelpText("会话 ", "session ") + sessionID + localizedHelpText(" · 回放：", " · replay: ") + *view.SessionReplayCommand
 }
 
 // elapsed / endedDisplay 处理终态时间展示；endedAt 缺失（异常）时给占位而非崩溃。

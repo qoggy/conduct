@@ -30,10 +30,10 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 // handleEngines 直读引擎能力表——检查器引擎 / effort 下拉的数据源。这是唯一无 CLI 命令等价的
 // 只读信息性端点（无独占能力不变量的显式豁免，见 ui.md〈需要额外实现〉①）。
 func (s *Server) handleEngines(w http.ResponseWriter, r *http.Request) {
-	names := engine.RegisteredNames()
-	infos := make([]engineInfo, 0, len(names))
-	for _, name := range names {
-		infos = append(infos, engineInfoOf(name))
+	descriptors := engine.RegisteredDescriptors()
+	infos := make([]engineInfo, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		infos = append(infos, engineInfoOf(descriptor))
 	}
 	writeJSON(w, http.StatusOK, infos)
 }
@@ -383,7 +383,8 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 			writeTechnicalError(w, http.StatusInternalServerError, err)
 			return
 		}
-		detail.Trace = &trace // 恒非 nil（LoadTrace 空时返回 []），故 ?trace=1 恒有 trace 字段（空则为 []）
+		traceViews := run.NewTraceViews(trace)
+		detail.Trace = &traceViews // 恒非 nil（LoadTrace 空时返回 []），故 ?trace=1 恒有 trace 字段（空则为 []）
 		// 进度按唯一 nodeId 且 success 去重（trace 已在手，直接用纯函数），防 resume 后 k>N。
 		detail.Progress = run.ProgressCount(trace)
 	} else {

@@ -54,12 +54,28 @@ func TestHumanObserverNodeLifecycle(t *testing.T) {
 	}
 
 	var done bytes.Buffer
+	tokens := 12
 	humanObserver{out: &done}.OnNodeDone(run.TraceEntry{
-		NodeID: "plan", Success: true, Output: "结果", DurationMs: 8021, Tokens: 12,
+		NodeID: "plan", Success: true, Output: "结果", DurationMs: 8021, Tokens: &tokens,
 	})
 	if !strings.Contains(done.String(), "✓") || !strings.Contains(done.String(), "plan") ||
 		!strings.Contains(done.String(), "完成") {
 		t.Errorf("成功事件行应含 ✓/id/完成，实际:\n%s", done.String())
+	}
+	if !strings.Contains(done.String(), "tokens=12") {
+		t.Errorf("已知 token 应显示实际值，实际:\n%s", done.String())
+	}
+
+	zero := 0
+	var zeroDone bytes.Buffer
+	humanObserver{out: &zeroDone}.OnNodeDone(run.TraceEntry{NodeID: "zero", Success: true, Tokens: &zero})
+	if !strings.Contains(zeroDone.String(), "tokens=0") {
+		t.Errorf("已知 token 0 应如实显示，实际:\n%s", zeroDone.String())
+	}
+	var unknownDone bytes.Buffer
+	humanObserver{out: &unknownDone}.OnNodeDone(run.TraceEntry{NodeID: "unknown", Success: true})
+	if strings.Contains(unknownDone.String(), "tokens=") {
+		t.Errorf("未知 token 应省略 token 片段，实际:\n%s", unknownDone.String())
 	}
 
 	var fail bytes.Buffer

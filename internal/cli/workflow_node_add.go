@@ -14,7 +14,7 @@ import (
 // --from / --to 各自给出则该侧按指定连、缺省的一侧仍自动接 START / END。内存建好后复用整份定义的同一套校验再落盘。
 func newWorkflowNodeAddCommand() *cobra.Command {
 	var engineFlag, displayNameFlag, promptFlag, fromFlag, toFlag string
-	var modelFlag, effortFlag, reasoningEffortFlag string
+	var modelFlag, effortFlag string
 	cmd := &cobra.Command{
 		Use:   "add <name> <id>",
 		Short: localizedHelpText("建一个 agent 节点并连边（缺省自动接 START→<id>→END）", "Create an agent node and connect edges (defaults to START→<id>→END)"),
@@ -69,7 +69,7 @@ func newWorkflowNodeAddCommand() *cobra.Command {
 				DisplayName:    displayNameFlag,
 				Engine:         engineFlag,
 				PromptTemplate: prompt,
-				EngineConfig:   buildEngineConfig(modelFlag, effortFlag, reasoningEffortFlag),
+				EngineConfig:   buildEngineConfig(modelFlag, effortFlag),
 			})
 			// --from / --to 各自缺省接 START / END；给了就按指定连（可含 START / END）。
 			froms := splitEndpoints(fromFlag, workflow.NodeIDStart, flags.Changed("from"))
@@ -92,7 +92,7 @@ func newWorkflowNodeAddCommand() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&engineFlag, "engine", "", localizedHelpText("引擎（claude-code / antigravity / qoder / codex），必填", "Engine (claude-code / antigravity / qoder / codex), required"))
+	f.StringVar(&engineFlag, "engine", "", fmt.Sprintf(localizedHelpText("引擎（%s），必填", "Engine (%s), required"), engineNamesHelp()))
 	f.StringVar(&displayNameFlag, "display-name", "", localizedHelpText("节点显示名，必填、须非空", "Node display name, required and nonempty"))
 	f.StringVar(&fromFlag, "from", "", localizedHelpText(
 		"入边来源，逗号分隔的一个或多个已存在节点 id（可含 START）；给了就不再自动接 START",
@@ -107,11 +107,7 @@ func newWorkflowNodeAddCommand() *cobra.Command {
 		"Prompt (default {{sys.userPrompt}}); for complex / multiline content, use node set-prompt to read stdin",
 	))
 	f.StringVar(&modelFlag, "model", "", localizedHelpText("模型（受 engine 约束）", "Model (constrained by engine)"))
-	f.StringVar(&effortFlag, "effort", "", fmt.Sprintf(localizedHelpText("claude-code 档位（%s）", "claude-code effort level (%s)"), effortEnum("claude-code")))
-	f.StringVar(&reasoningEffortFlag, "reasoning-effort", "", fmt.Sprintf(
-		localizedHelpText("qoder / codex 推理档位（qoder：%s；codex：%s）", "qoder / codex reasoning effort level (qoder: %s; codex: %s)"),
-		effortEnum("qoder"), effortEnum("codex"),
-	))
+	f.StringVar(&effortFlag, "effort", "", fmt.Sprintf(localizedHelpText("推理档位（%s）", "Reasoning effort level (%s)"), effortValuesHelp()))
 	return cmd
 }
 
@@ -130,10 +126,10 @@ func splitEndpoints(value, fallback string, changed bool) []string {
 	return out
 }
 
-// buildEngineConfig 从三个调优字段组装 EngineConfig；三者皆空返回 nil（保持规范化形态干净）。
-func buildEngineConfig(model, effort, reasoningEffort string) *workflow.EngineConfig {
-	if model == "" && effort == "" && reasoningEffort == "" {
+// buildEngineConfig 从调优字段组装 EngineConfig；字段皆空返回 nil（保持规范化形态干净）。
+func buildEngineConfig(model, effort string) *workflow.EngineConfig {
+	if model == "" && effort == "" {
 		return nil
 	}
-	return &workflow.EngineConfig{Model: model, Effort: effort, ReasoningEffort: reasoningEffort}
+	return &workflow.EngineConfig{Model: model, Effort: effort}
 }

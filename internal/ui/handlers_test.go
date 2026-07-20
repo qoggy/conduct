@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/qoggy/conduct/internal/apperror"
+	"github.com/qoggy/conduct/internal/engine"
 	"github.com/qoggy/conduct/internal/locale"
 	"github.com/qoggy/conduct/internal/run"
 	"github.com/qoggy/conduct/internal/store"
@@ -79,23 +80,26 @@ func TestEnginesEndpoint(t *testing.T) {
 	}
 	var infos []engineInfo
 	decodeBody(t, rec, &infos)
-	byName := map[string]engineInfo{}
-	for _, info := range infos {
-		byName[info.Name] = info
+	descriptors := engine.RegisteredDescriptors()
+	if len(infos) != len(descriptors) {
+		t.Fatalf("引擎数量=%d，descriptor 数量=%d", len(infos), len(descriptors))
 	}
-	cc, ok := byName["claude-code"]
-	if !ok || cc.Capability == nil {
-		t.Fatalf("claude-code 应有能力表: %+v", cc)
-	}
-	if cc.Capability.EffortField != "effort" {
-		t.Fatalf("claude-code effortField 应为 effort，得到 %q", cc.Capability.EffortField)
-	}
-	agy, ok := byName["antigravity"]
-	if !ok || agy.Capability == nil {
-		t.Fatalf("antigravity 应有能力表: %+v", agy)
-	}
-	if agy.Capability.EffortField != "" {
-		t.Fatalf("antigravity 应无独立 effort 字段，得到 %q", agy.Capability.EffortField)
+	for index, descriptor := range descriptors {
+		info := infos[index]
+		if info.Capability.ModelSuggestions == nil || info.Capability.EffortValues == nil {
+			t.Fatalf("API 第 %d 项的 capability 列表应编码为 [] 而非 null: %+v", index, info.Capability)
+		}
+		wantIconPath := ""
+		if descriptor.IconFilename != "" {
+			wantIconPath = "/vendor/engine-icons/" + descriptor.IconFilename
+		}
+		if info.Name != descriptor.Name || info.IconPath != wantIconPath ||
+			info.Capability.AllowsModel != descriptor.Capability.AllowsModel ||
+			info.Capability.AllowsEffort != descriptor.Capability.AllowsEffort ||
+			strings.Join(info.Capability.ModelSuggestions, ",") != strings.Join(descriptor.Capability.ModelSuggestions, ",") ||
+			strings.Join(info.Capability.EffortValues, ",") != strings.Join(descriptor.Capability.EffortValues, ",") {
+			t.Fatalf("API 第 %d 项未逐字段匹配 descriptor：got=%+v want=%+v", index, info, descriptor)
+		}
 	}
 }
 
@@ -314,6 +318,22 @@ func TestPutValidDefinition(t *testing.T) {
 	}
 }
 
+func TestPutTreatsReasoningEffortAsOrdinaryUnknownField(t *testing.T) {
+	s := newTestServer(t)
+	do(t, s, http.MethodPost, "/api/workflows", `{"name":"demo"}`, nil)
+	request := func(field string) string {
+		body := `{"nodes":[{"id":"START"},{"id":"n1","displayName":"步骤","engine":"codex","promptTemplate":"x","engineConfig":{"` + field + `":"high"}},{"id":"END"}],"edges":[{"from":"START","to":"n1"},{"from":"n1","to":"END"}]}`
+		recorder := do(t, s, http.MethodPut, "/api/workflows/demo", body, nil)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("未知字段 %s 应返回 400，得到 %d: %s", field, recorder.Code, recorder.Body.String())
+		}
+		return strings.ReplaceAll(recorder.Body.String(), field, "<unknown>")
+	}
+	if reasoning, ordinary := request("reasoningEffort"), request("xxxabc"); reasoning != ordinary {
+		t.Fatalf("HTTP reasoningEffort 应与普通未知字段同路：\nreasoning=%s\nordinary=%s", reasoning, ordinary)
+	}
+}
+
 // TestPutFullRecordIgnoresMetadata 锁定 spec〈API 设计〉「PUT 接受整条记录时解包 definition、忽略元数据」：
 // 传入的 name 与 URL 不一致也不拒绝，落盘沿用 URL 名（元数据由系统管理，改名走 rename）。
 func TestPutFullRecordIgnoresMetadata(t *testing.T) {
@@ -513,7 +533,8 @@ func TestListRunsWithProgressAndFilter(t *testing.T) {
 func TestGetRunWithTrace(t *testing.T) {
 	s := newTestServer(t)
 	seedRun(t, s, "demo-20260101-000000", "demo", run.StatusCompleted, 1)
-	if err := s.store.AppendTrace("demo-20260101-000000", run.TraceEntry{NodeID: "a", Output: "hi"}); err != nil {
+	sessionID := "session with space"
+	if err := s.store.AppendTrace("demo-20260101-000000", run.TraceEntry{NodeID: "a", Engine: "codex", Output: "hi", SessionID: &sessionID}); err != nil {
 		t.Fatalf("追加 trace 失败: %v", err)
 	}
 	rec := do(t, s, http.MethodGet, "/api/runs/demo-20260101-000000?trace=1", "", nil)
@@ -527,6 +548,9 @@ func TestGetRunWithTrace(t *testing.T) {
 	}
 	if detail.Trace == nil || len(*detail.Trace) != 1 || (*detail.Trace)[0].Output != "hi" {
 		t.Fatalf("trace 全文缺失: %+v", detail.Trace)
+	}
+	if command := (*detail.Trace)[0].SessionReplayCommand; command == nil || *command != "codex resume 'session with space'" {
+		t.Fatalf("trace replay 派生错误: %v", command)
 	}
 }
 

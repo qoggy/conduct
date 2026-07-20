@@ -609,7 +609,7 @@ class Editor {
   }
 
   // 切换引擎后清掉新引擎不接受的 engineConfig 字段：否则残值既不渲染（无处修改）又会在保存时 422，
-  // 且该错误路径在检查器里无对应控件、红框都挂不上。cap 未登记（能力表待实装）时任何字段都不接受。
+  // 且该错误路径在检查器里无对应控件、红框都挂不上。
   pruneEngineConfig(holder) {
     const cfg = holder.engineConfig;
     if (!cfg) return;
@@ -617,12 +617,10 @@ class Editor {
     if (!cap) {
       delete cfg.model;
       delete cfg.effort;
-      delete cfg.reasoningEffort;
       return;
     }
     if (!cap.allowsModel) delete cfg.model;
-    if (cap.effortField !== "effort") delete cfg.effort;
-    if (cap.effortField !== "reasoningEffort") delete cfg.reasoningEffort;
+    if (!cap.allowsEffort) delete cfg.effort;
   }
 
   // engineConfig 按引擎能力表条件渲染：该引擎没有的字段就不渲染（不配解释文案）。
@@ -630,11 +628,11 @@ class Editor {
     const cap = capabilityOf(engine);
     const fields = [];
     if (!cap || cap.allowsModel) fields.push(this.modelField(cap, holder));
-    if (cap && cap.effortField) fields.push(this.effortField(cap, holder));
+    if (cap && cap.allowsEffort) fields.push(this.effortField(cap, holder));
     return fields;
   }
 
-  // cap.modelValues 非空时挂一个自定义建议下拉（与 engine 选择器同一套 .engsel 视觉），但控件本身
+  // cap.modelSuggestions 非空时挂一个自定义建议下拉（与 engine 选择器同一套 .engsel 视觉），但控件本身
   // 仍是真实 <input>——保留自由打字 / 光标 / 输入法，建议值只是点击可填的便利提示（非白名单）。
   modelField(cap, holder) {
     const cfg = () => holder.engineConfig || (holder.engineConfig = {});
@@ -647,9 +645,9 @@ class Editor {
       if (renderMenu) renderMenu();
     });
 
-    const modelValues = (cap && cap.modelValues) || [];
+    const modelSuggestions = (cap && cap.modelSuggestions) || [];
     let control = input;
-    if (modelValues.length) {
+    if (modelSuggestions.length) {
       const menu = h("div", { class: "engsel-menu" });
       const wrap = h("div", { class: "engsel" }, input, menu);
       let stopOutsideClick = null;
@@ -673,7 +671,7 @@ class Editor {
       renderMenu = () => {
         mount(
           menu,
-          ...modelValues.map((v) =>
+          ...modelSuggestions.map((v) =>
             h(
               "div",
               {
@@ -705,7 +703,7 @@ class Editor {
   // 自定义下拉（listSelect），与 engine 选择器同一套视觉/交互——原生 <select> 在 macOS 上会用
   // 系统级弹出样式（以当前选中项为中心展开），观感与 engine 选择器不统一。
   effortField(cap, holder) {
-    const field = cap.effortField;
+    const field = "effort";
     const cfg = () => holder.engineConfig || (holder.engineConfig = {});
     const current = (holder.engineConfig && holder.engineConfig[field]) || "";
     const items = [{ value: "", label: i18n.fEffortNotSet }, ...(cap.effortValues || []).map((v) => ({ value: v, label: v }))];

@@ -16,19 +16,39 @@ import (
 // prompt 走 stdin（codex exec … - 的 - 哨兵强制从 stdin 读取）；用法见 docs/references/codex.md。
 type codexEngine struct{}
 
-func (codexEngine) Name() string { return "codex" }
+func (codexEngine) Descriptor() EngineDescriptor {
+	return EngineDescriptor{
+		Name: "codex",
+		Capability: EngineCapability{
+			AllowsModel: true,
+			ModelSuggestions: []string{
+				"gpt-5.6-sol",
+				"gpt-5.6-terra",
+				"gpt-5.6-luna",
+				"gpt-5.5",
+				"gpt-5.3-codex-spark",
+			},
+			AllowsEffort: true,
+			EffortValues: []string{"low", "medium", "high", "xhigh"},
+		},
+		IconFilename: "codex.png",
+		SessionReplayCommand: func(sessionID string) string {
+			return "codex resume " + ShellQuote(sessionID)
+		},
+	}
+}
 
 // codexEvent 是 codex --json 事件流的一行（只取用到的字段；未识别的 type 忽略）。
 type codexEvent struct {
-	Type     string `json:"type"`
-	ThreadID string `json:"thread_id"` // thread.started
+	Type     string  `json:"type"`
+	ThreadID *string `json:"thread_id"` // thread.started
 	Item     struct {
 		Type string `json:"type"` // item.completed；agent_message 才取 text
 		Text string `json:"text"`
 	} `json:"item"`
 	Usage struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+		InputTokens  *int `json:"input_tokens"`
+		OutputTokens *int `json:"output_tokens"`
 	} `json:"usage"` // turn.completed
 	Message string `json:"message"` // error 事件的错误文本
 }
@@ -77,14 +97,14 @@ func parseCodexStream(stdout string) (RunResult, error) {
 			}
 			switch event.Type {
 			case "thread.started":
-				result.SessionID = event.ThreadID
+				result.SessionID = nonEmptyString(event.ThreadID)
 			case "item.completed":
 				if event.Item.Type == "agent_message" {
 					result.Text = event.Item.Text // 取最后一条 agent_message
 					sawMessage = true
 				}
 			case "turn.completed":
-				result.Tokens = event.Usage.InputTokens + event.Usage.OutputTokens // 取最后一个 turn
+				result.Tokens = tokenTotal(event.Usage.InputTokens, event.Usage.OutputTokens) // 取最后一个完整 usage
 			case "turn.failed", "error":
 				return RunResult{}, fmt.Errorf("codex error: %s", codexFailureMessage(event))
 			default:

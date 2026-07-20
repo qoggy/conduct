@@ -24,9 +24,11 @@ printf '%s\n' \
 	if err != nil {
 		t.Fatalf("Run 报错: %v", err)
 	}
-	if res.Text != "最终产物" || res.Tokens != 24885 || res.SessionID != "th-1" {
-		t.Errorf("解析错误：Text=%q Tokens=%d SessionID=%q", res.Text, res.Tokens, res.SessionID)
+	if res.Text != "最终产物" {
+		t.Errorf("解析错误：Text=%q", res.Text)
 	}
+	requireIntPointer(t, res.Tokens, 24885)
+	requireStringPointer(t, res.SessionID, "th-1")
 	if got := read(t, filepath.Join(dir, "stdin")); got != "做点事" {
 		t.Errorf("prompt 应经 stdin 传入，得到 %q", got)
 	}
@@ -61,6 +63,29 @@ func TestCodexRunAllowsEmptyAgentMessageText(t *testing.T) {
 	}
 }
 
+func TestCodexRunPreservesNullableMetadata(t *testing.T) {
+	result, err := parseCodexStream(strings.Join([]string{
+		`{"type":"thread.started","thread_id":""}`,
+		`{"type":"item.completed","item":{"type":"agent_message","text":"x"}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":0}}`,
+	}, "\n") + "\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tokens != nil || result.SessionID != nil {
+		t.Fatalf("空 thread id 和不完整 usage 应为 nil: %+v", result)
+	}
+
+	result, err = parseCodexStream(strings.Join([]string{
+		`{"type":"item.completed","item":{"type":"agent_message","text":"x"}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":0,"output_tokens":0}}`,
+	}, "\n") + "\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireIntPointer(t, result.Tokens, 0)
+}
+
 func TestCodexRunTurnFailedIsError(t *testing.T) {
 	// turn.failed 优先返回错误，即使后面还有 agent_message、且进程退 0。
 	fakeBinary(t, "codex", `printf '%s\n' \
@@ -73,6 +98,13 @@ func TestCodexRunTurnFailedIsError(t *testing.T) {
 	}
 }
 
+func TestCodexRunTurnFailedWithoutTopLevelMessageUsesEventType(t *testing.T) {
+	_, err := parseCodexStream(`{"type":"turn.failed","error":{"message":"nested detail"}}` + "\n")
+	if err == nil || err.Error() != "codex error: turn.failed" {
+		t.Fatalf("turn.failed 无顶层 message 时应回退事件类型，得到 %v", err)
+	}
+}
+
 func TestCodexRunErrorEventIsError(t *testing.T) {
 	_, err := parseCodexStream(`{"type":"error","message":"模型不可用"}` + "\n")
 	if err == nil || !strings.Contains(err.Error(), "codex error") || !strings.Contains(err.Error(), "模型不可用") {
@@ -81,9 +113,12 @@ func TestCodexRunErrorEventIsError(t *testing.T) {
 }
 
 func TestCodexRunUnparseableLineIsError(t *testing.T) {
-	_, err := parseCodexStream(`{"type":"thread.started","thread_id":"th-1"}` + "\n这不是JSON\n")
-	if err == nil || !strings.Contains(err.Error(), "failed to parse line 2") || !strings.Contains(err.Error(), "这不是JSON") {
-		t.Errorf("无法解析的行应显式报错并附内容，得到 %v", err)
+	badLine := "BADHEAD" + strings.Repeat("x", 200) + "TAILMARK"
+	_, err := parseCodexStream(`{"type":"thread.started","thread_id":"th-1"}` + "\n" + badLine + "\n")
+	if err == nil || !strings.Contains(err.Error(), "failed to parse line 2") ||
+		!strings.Contains(err.Error(), "BADHEAD") || !strings.Contains(err.Error(), "…") ||
+		strings.Contains(err.Error(), "TAILMARK") {
+		t.Errorf("无法解析的行应附行号并截断至前 200 字，得到 %v", err)
 	}
 }
 

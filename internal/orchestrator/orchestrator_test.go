@@ -27,7 +27,9 @@ type fakeEngine struct {
 	reply func(request engine.RunRequest) (engine.RunResult, error)
 }
 
-func (f fakeEngine) Name() string { return "claude-code" }
+func (f fakeEngine) Descriptor() engine.EngineDescriptor {
+	return engine.EngineDescriptor{Name: "claude-code"}
+}
 func (f fakeEngine) Run(_ context.Context, request engine.RunRequest) (engine.RunResult, error) {
 	f.mu.Lock()
 	*f.calls = append(*f.calls, request)
@@ -72,7 +74,8 @@ func newOrchestrator(t *testing.T, reply func(engine.RunRequest) (engine.RunResu
 
 // echoReply 返回 Text = "out:"+prompt 的成功结果，使下游输入可回溯上游产物、且与调用序无关。
 func echoReply(request engine.RunRequest) (engine.RunResult, error) {
-	return engine.RunResult{Text: "out:" + request.Prompt, Tokens: 5, DurationMilliseconds: 3}, nil
+	tokens := 5
+	return engine.RunResult{Text: "out:" + request.Prompt, Tokens: &tokens, DurationMilliseconds: 3}, nil
 }
 
 // wf 把定义主体包成完整记录（Run/Resume 的入参单元）。
@@ -144,6 +147,18 @@ func TestRunThreadsArtifactsAndCompletes(t *testing.T) {
 	}
 	if _, hasStart := rec.Artifacts["START"]; hasStart {
 		t.Error("artifacts 不应含 START 标记节点")
+	}
+	trace, err := st.LoadTrace(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range trace {
+		if entry.Tokens == nil || *entry.Tokens != 5 {
+			t.Fatalf("引擎 token 指针应原样写入 trace: %+v", entry)
+		}
+		if entry.SessionID != nil {
+			t.Fatalf("未知 session id 应原样写为 nil: %+v", entry)
+		}
 	}
 }
 

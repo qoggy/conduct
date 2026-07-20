@@ -54,6 +54,9 @@ async function bootstrap() {
   setLanguage(currentSettings.resolvedLanguage);
   syncChrome(currentSettings);
 
+  // 所有页面的引擎图标与配置控件都读 descriptor；路由首屏渲染前先完成缓存。
+  await loadEngines();
+
   start(document.getElementById("app"));
 
   // 顶栏版本号（= conduct version）。失败不致命，留空即可。
@@ -63,9 +66,6 @@ async function bootstrap() {
       document.getElementById("version").textContent = v.version;
     })
     .catch(() => {});
-
-  // 引擎能力表先行预热；失败时编辑器打开后会正常展示请求错误。
-  loadEngines().catch(() => {});
 }
 
 bootstrap().catch((err) => {

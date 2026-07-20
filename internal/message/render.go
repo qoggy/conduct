@@ -180,18 +180,11 @@ func render(language locale.Language, code apperror.Code, params apperror.Params
 	case apperror.CodeUnknownEngine:
 		zh = fmt.Sprintf("未知引擎 %q（可用：%s）", p.text("engine"), p.text("available"))
 		en = fmt.Sprintf("unknown engine %q (available: %s)", p.text("engine"), p.text("available"))
-	case apperror.CodeEngineCapabilityUnavailable:
-		zh = fmt.Sprintf("engine=%q 的能力表待实装，暂不接受配置字段", p.text("engine"))
-		en = fmt.Sprintf("the capability table for engine=%q is not implemented; configuration fields are not currently accepted", p.text("engine"))
 	case apperror.CodeEngineModelNotAllowed:
 		zh, en = fmt.Sprintf("engine=%q 不接受 model", p.text("engine")), fmt.Sprintf("engine=%q does not accept model", p.text("engine"))
 	case apperror.CodeEngineEffortFieldNotAllowed:
-		zhHint, enHint := "", ""
-		if expected := p.text("expectedField"); expected != "" {
-			zhHint, enHint = fmt.Sprintf("（该引擎用 %s）", expected), fmt.Sprintf(" (this engine uses %s)", expected)
-		}
-		zh = fmt.Sprintf("engine=%q 不认 %s%s", p.text("engine"), p.text("field"), zhHint)
-		en = fmt.Sprintf("engine=%q does not accept %s%s", p.text("engine"), p.text("field"), enHint)
+		zh = fmt.Sprintf("engine=%q 不接受 effort", p.text("engine"))
+		en = fmt.Sprintf("engine=%q does not accept effort", p.text("engine"))
 	case apperror.CodeEngineEffortValueNotAllowed:
 		zh = fmt.Sprintf("%q 不在 engine=%q 允许集 [%s] 内", p.text("value"), p.text("engine"), p.text("allowed"))
 		en = fmt.Sprintf("%q is not in the allowed set [%s] for engine=%q", p.text("value"), p.text("allowed"), p.text("engine"))

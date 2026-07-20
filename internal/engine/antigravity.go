@@ -11,7 +11,21 @@ import (
 // 无独立 effort 标志（推理强度编码在 model 标签后缀里）。用法见 docs/references/agy-print.md。
 type antigravityEngine struct{}
 
-func (antigravityEngine) Name() string { return "antigravity" }
+func (antigravityEngine) Descriptor() EngineDescriptor {
+	return EngineDescriptor{
+		Name: "antigravity",
+		Capability: EngineCapability{
+			AllowsModel:      true,
+			ModelSuggestions: []string{},
+			AllowsEffort:     false,
+			EffortValues:     []string{},
+		},
+		IconFilename: "antigravity.png",
+		SessionReplayCommand: func(sessionID string) string {
+			return "agy --conversation " + ShellQuote(sessionID)
+		},
+	}
+}
 
 // agyPromptLimitBytes 是经命令行参数下传 prompt 的保守上限。agy 无 stdin 形态，prompt 只能进 argv，
 // 受 ARG_MAX 约束（macOS 约 1MB，含环境变量）。运行内核会把上游节点完整产物渲染进 prompt，长产物叠加
@@ -20,12 +34,12 @@ const agyPromptLimitBytes = 256 * 1024
 
 // antigravityResult 是 `agy -p ... --output-format json` 的 stdout 单对象（只取用到的字段）。
 type antigravityResult struct {
-	Status         string `json:"status"`
-	Response       string `json:"response"`
-	Error          string `json:"error"`
-	ConversationID string `json:"conversation_id"`
+	Status         string  `json:"status"`
+	Response       string  `json:"response"`
+	Error          string  `json:"error"`
+	ConversationID *string `json:"conversation_id"`
 	Usage          struct {
-		TotalTokens int `json:"total_tokens"`
+		TotalTokens *int `json:"total_tokens"`
 	} `json:"usage"`
 }
 
@@ -61,7 +75,7 @@ func (antigravityEngine) Run(ctx context.Context, request RunRequest) (RunResult
 		Text:                 parsed.Response,
 		DurationMilliseconds: out.durationMs,
 		Tokens:               parsed.Usage.TotalTokens,
-		SessionID:            parsed.ConversationID,
+		SessionID:            nonEmptyString(parsed.ConversationID),
 	}, nil
 }
 

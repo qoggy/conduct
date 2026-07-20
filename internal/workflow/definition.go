@@ -49,9 +49,8 @@ type Edge struct {
 // EngineConfig 是引擎专属的调优载荷，其合法字段由所属 Node 的 engine 决定
 // （判别联合，见 engine 包的能力表与 Validate）。所有字段选填。
 type EngineConfig struct {
-	Model           string `json:"model,omitempty"`
-	Effort          string `json:"effort,omitempty"`          // 仅 claude-code
-	ReasoningEffort string `json:"reasoningEffort,omitempty"` // qoder / codex
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 }
 
 // IsStart 报告本节点是否为保留的 START 标记节点。

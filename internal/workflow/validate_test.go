@@ -92,13 +92,11 @@ func TestValidateRejections(t *testing.T) {
 		{"缺 displayName", mutate(func(d *Definition) { d.Nodes[1].DisplayName = "" }), "displayName"},
 		{"缺 promptTemplate", mutate(func(d *Definition) { d.Nodes[1].PromptTemplate = "" }), "promptTemplate"},
 		{"未知引擎", mutate(func(d *Definition) { d.Nodes[1].Engine = "nope" }), "未知引擎"},
-		{"codex reasoningEffort 非法值", withEngineConfig("codex", &EngineConfig{ReasoningEffort: "insane"}), "允许集"},
-		{"codex 不认 effort", withEngineConfig("codex", &EngineConfig{Effort: "high"}), "不认 effort"},
+		{"codex effort 非法值", withEngineConfig("codex", &EngineConfig{Effort: "insane"}), "允许集"},
 		{"claude-code effort 非法值", withEngineConfig("claude-code", &EngineConfig{Effort: "insane"}), "允许集"},
-		{"claude-code 不认 reasoningEffort", withEngineConfig("claude-code", &EngineConfig{ReasoningEffort: "high"}), "不认 reasoningEffort"},
-		{"antigravity 不认 effort", withEngineConfig("antigravity", &EngineConfig{Effort: "high"}), "不认 effort"},
-		{"qoder reasoningEffort 非法值", withEngineConfig("qoder", &EngineConfig{ReasoningEffort: "insane"}), "允许集"},
-		{"qoder 不认 effort", withEngineConfig("qoder", &EngineConfig{Effort: "high"}), "不认 effort"},
+		{"kiro effort 非法值", withEngineConfig("kiro", &EngineConfig{Effort: "insane"}), "允许集"},
+		{"antigravity 不认 effort", withEngineConfig("antigravity", &EngineConfig{Effort: "high"}), "不接受 effort"},
+		{"qoder effort 非法值", withEngineConfig("qoder", &EngineConfig{Effort: "insane"}), "允许集"},
 		// —— 标记节点必空 ——
 		{"START 带 engine", mutate(func(d *Definition) { d.Nodes[0].Engine = "claude-code" }), "必须为空"},
 		{"END 带 displayName", mutate(func(d *Definition) { d.Nodes[2].DisplayName = "尾" }), "必须为空"},
@@ -169,19 +167,27 @@ func TestValidateAntigravityModelOnly(t *testing.T) {
 	}
 }
 
-// TestValidateQoderModelAndReasoningEffort 确认 qoder 接受 model + reasoningEffort。
-func TestValidateQoderModelAndReasoningEffort(t *testing.T) {
-	def := withEngineConfig("qoder", &EngineConfig{Model: "Performance", ReasoningEffort: "high"})
+// TestValidateQoderModelAndEffort 确认 qoder 接受 model + effort。
+func TestValidateQoderModelAndEffort(t *testing.T) {
+	def := withEngineConfig("qoder", &EngineConfig{Model: "Performance", Effort: "high"})
 	if err := Validate(def); err != nil {
-		t.Errorf("qoder + model + reasoningEffort 应通过，却报错: %v", err)
+		t.Errorf("qoder + model + effort 应通过，却报错: %v", err)
 	}
 }
 
-// TestValidateCodexModelAndReasoningEffort 确认 codex 接受 model + reasoningEffort。
-func TestValidateCodexModelAndReasoningEffort(t *testing.T) {
-	def := withEngineConfig("codex", &EngineConfig{Model: "gpt-5-codex", ReasoningEffort: "high"})
+// TestValidateCodexModelAndEffort 确认 codex 接受 model + effort。
+func TestValidateCodexModelAndEffort(t *testing.T) {
+	def := withEngineConfig("codex", &EngineConfig{Model: "gpt-5-codex", Effort: "high"})
 	if err := Validate(def); err != nil {
-		t.Errorf("codex + model + reasoningEffort 应通过，却报错: %v", err)
+		t.Errorf("codex + model + effort 应通过，却报错: %v", err)
+	}
+}
+
+// TestValidateKiroModelAndEffort 确认 kiro 接受开放 model + 固定枚举 effort。
+func TestValidateKiroModelAndEffort(t *testing.T) {
+	def := withEngineConfig("kiro", &EngineConfig{Model: "account-specific-model", Effort: "max"})
+	if err := Validate(def); err != nil {
+		t.Errorf("kiro + model + effort 应通过，却报错: %v", err)
 	}
 }
 

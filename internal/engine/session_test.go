@@ -14,9 +14,7 @@ func TestEnginesParseSessionID(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.SessionID != "claude-sess" {
-			t.Errorf("应取 session_id，得到 %q", res.SessionID)
-		}
+		requireStringPointer(t, res.SessionID, "claude-sess")
 	})
 
 	t.Run("qoder", func(t *testing.T) {
@@ -25,9 +23,7 @@ func TestEnginesParseSessionID(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.SessionID != "qoder-sess" {
-			t.Errorf("应取 session_id，得到 %q", res.SessionID)
-		}
+		requireStringPointer(t, res.SessionID, "qoder-sess")
 	})
 
 	t.Run("antigravity", func(t *testing.T) {
@@ -36,9 +32,7 @@ func TestEnginesParseSessionID(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.SessionID != "agy-conv" {
-			t.Errorf("应取 conversation_id，得到 %q", res.SessionID)
-		}
+		requireStringPointer(t, res.SessionID, "agy-conv")
 	})
 
 	t.Run("codex", func(t *testing.T) {
@@ -49,8 +43,6 @@ func TestEnginesParseSessionID(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.SessionID != "codex-thread" {
-			t.Errorf("应取 thread_id，得到 %q", res.SessionID)
-		}
+		requireStringPointer(t, res.SessionID, "codex-thread")
 	})
 }

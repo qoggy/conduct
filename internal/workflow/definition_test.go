@@ -3,6 +3,7 @@ package workflow
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,20 @@ func loadFixture(t *testing.T, name string) *Definition {
 		t.Fatalf("解析 fixture %s 失败: %v", name, err)
 	}
 	return def
+}
+
+func TestParseDefinitionTreatsReasoningEffortAsOrdinaryUnknownField(t *testing.T) {
+	parse := func(field string) string {
+		data := []byte(`{"nodes":[{"id":"a","engineConfig":{"` + field + `":"high"}}],"edges":[]}`)
+		_, err := ParseDefinition(data)
+		if err == nil {
+			t.Fatalf("未知字段 %s 应被拒绝", field)
+		}
+		return strings.ReplaceAll(err.Error(), field, "<unknown>")
+	}
+	if reasoning, ordinary := parse("reasoningEffort"), parse("xxxabc"); reasoning != ordinary {
+		t.Fatalf("reasoningEffort 应与普通未知字段走同一路径：\nreasoning=%s\nordinary=%s", reasoning, ordinary)
+	}
 }
 
 func TestParseDefinitionRejectsUnknownField(t *testing.T) {
