@@ -119,12 +119,13 @@ token usage / session id 的缺失不能用 `0`、空字符串或字段缺省冒
 
 ### kiro（`kiro-cli chat`）
 
-- **设置副作用**：每次运行先执行 `kiro-cli settings chat.disableMarkdownRendering true`，永久写入用户当前 Kiro profile 的全局 classic UI 设置；不备份、不恢复。设置失败时不启动 chat，返回设置错误及已耗时长。conduct 完整继承环境，不设置或覆盖 `KIRO_HOME`。
+- **权限副作用**：每次运行前在当前 Kiro profile 的 `settings/permissions.yaml` 中幂等确保存在 `capability: all` + `effect: allow`。`KIRO_HOME` 非空时以它为 profile 根目录，否则使用 `~/.kiro`。已有规则、未知字段、注释和文件权限均保留；已有相同规则时不重写文件。缺失时原子创建，新增文件权限为 `0600`。YAML 无法解析或 `rules` 不是数组时不启动 chat，返回权限配置错误及已耗时长。这是经用户确认的全局持久副作用，也会影响用户手动启动的 Kiro；已有 `deny` / `ask` 和 Kiro 硬编码保护仍高于 `allow`。
 - **提示词与目录**：完整 prompt 走 stdin，工作目录用 `cmd.Dir`；conduct 不做 Kiro 专属字节数或 token 数限制。图片继续把本地绝对路径写进 prompt。
-- **默认参数**：`chat --legacy-ui --no-interactive --wrap never --trust-all-tools --require-mcp-startup`。不传 `--agent`、`--resume` 或 `--resume-id`，因此复用用户默认 agent、认证、全局与项目配置并创建新 session。
+- **默认参数**：`chat --v3 --no-interactive --wrap never`。不传 `--agent`、`--resume` 或 `--resume-id`，因此复用用户默认 agent、认证、全局与项目配置并创建新 session。
 - **可变参数**：`Model` 非空 → `--model <m>`；`Effort` 非空 → `--effort <v>`。model 是开放集合；effort 在保存期限定为 `low` / `medium` / `high` / `xhigh` / `max`。
-- **输出解析**：普通 chat 没有 JSON 模式。适配器在原始 stdout 中寻找最后一个完整 `\x1b[m> \x1b[0m` assistant 标记，截取其后文本、删除 ANSI CSI 序列并只移除结尾换行；工具日志与中间 assistant 文本不进入 `Text`。标记存在但正文为空允许成功；找不到标记显式报 unexpected output，并分别附清理后的 stdout/stderr 前 500 字摘要。该标记只承担 classic UI 的结构分界，不根据最终回答、工具日志或 stderr 的自然语言内容推导状态。
-- **失败判定**：chat 非零退出时保留退出码；stderr 非空时附清理 ANSI、截断至 500 字的 stderr，stderr 为空时只报告退出码，不读取 stdout 补充诊断。退出 `0` 时只验证最终 assistant 结构，存在即成功、缺失即返回通用 unexpected output。Kiro 没有机器可读的业务失败字段，conduct 不用 `is rejected because`、`context window has overflowed` 等自然语言关键词猜测权限或上下文状态，因为相同文本可以合法出现在用户输入、模型回答、工具日志和被读取的源码中。
+- **输出解析**：v3 普通 chat 没有 JSON 模式。stdout 不含工具事件，但会把本轮所有可见 assistant `Say` 文本无结构地直接拼接；适配器保留完整 stdout，只删除结尾的 `CR` / `LF`。它不能可靠提取最后一条 text，空 stdout 允许成功。stderr 承载 INFO、tool 状态与错误诊断，不拼入 `Text`。
+- **失败判定**：chat 非零退出时保留退出码；stderr 非空时附清理 ANSI、截断至 500 字的 stderr，stderr 为空时只报告退出码，不读取 stdout 补充诊断。退出 `0` 时返回完整 stdout。Kiro 没有机器可读的业务失败字段，conduct 不用 `is rejected because`、`context window has overflowed` 等自然语言关键词猜测权限或上下文状态，因为相同文本可以合法出现在用户输入、模型回答、工具日志和被读取的源码中；工具和任务是否成功由 workflow 的真实产物约束判断。
+- **进程收尾**：三条标准流连接到创建后立即 unlink、仅当前用户可访问的普通临时文件，避免 Kiro v3 的 ACP 子进程持有匿名 pipe 导致 EOF 卡死。每次调用使用独立进程组；顶层进程结束后，无论成功或失败，都向该组仍存活的子进程发送终止信号。临时文件不形成持久目录项。
 - **metadata**：普通无头输出不提供本次 token usage 或当前 session id，`Tokens` / `SessionID` 固定为 `nil`。Kiro 仍在用户 profile 中持久化 session，可在相同工作目录用 `kiro-cli chat --list-sessions` 查看；conduct 不读取私有 session 文件或猜测 id。
 - 实现见 `internal/engine/kiro.go`；CLI 调研见 `docs/references/kiro-cli.md`。
 
@@ -159,13 +160,11 @@ token usage / session id 的缺失不能用 `0`、空字符串或字段缺省冒
 | codex | `--dangerously-bypass-approvals-and-sandbox` | 无人值守，无沙箱 + 全权限（与其它引擎 bypass 对齐） |
 | codex | `--skip-git-repo-check` | 允许在非 git 仓库目录运行 |
 | codex | `-`（PROMPT 位） | 强制从 stdin 读取 prompt |
-| kiro | `settings chat.disableMarkdownRendering true` | chat 前永久固定用户当前 profile 的 classic UI Markdown 渲染设置 |
-| kiro | `chat --legacy-ui --no-interactive` | 固定 classic UI 输出标记并无人值守运行一次 |
+| kiro | `settings/permissions.yaml` 中 `all/allow` | 持久允许 v3 开发工具无人值守执行；已有更严格规则仍优先 |
+| kiro | `chat --v3 --no-interactive` | 使用具备 shell/bash 工具的 v3 无头运行一次 |
 | kiro | `--wrap never` | 禁止主动插入终端宽度硬换行 |
-| kiro | `--trust-all-tools` | 信任当前 agent 可见的全部工具 |
-| kiro | `--require-mcp-startup` | 必需 MCP server 启动失败时显式失败 |
 
-除上表外，conduct **不注入**系统提示词、工具白名单、超时、上下文窗口等——这些走各引擎自身默认。claude-code / antigravity / qoder 依赖 `--output-format json`、codex 依赖 `--json`；Kiro 普通 chat 没有机器输出模式，依赖固定的 classic UI 原始 assistant 标记（见各引擎输出解析）。
+除上表外，conduct **不注入**系统提示词、工具白名单、超时、上下文窗口等——这些走各引擎自身默认。claude-code / antigravity / qoder 依赖 `--output-format json`、codex 依赖 `--json`；Kiro v3 普通 chat 没有机器输出模式，成功时返回完整 stdout（见各引擎输出解析）。
 
 ## 引擎能力表
 
@@ -199,13 +198,13 @@ token usage / session id 的缺失不能用 `0`、空字符串或字段缺省冒
 - **非零退出码**：`<engine> exited with code <code>: <stderr summary>`（stderr 截断至 500 字）。**claude-code 例外**：非零退出时先尝试把 stdout 解析成 JSON 取 `result`，非空则优先返回 `claude error: <result>`；只有 stdout 非法 JSON 或 `result` 为空才落到这条退出码+stderr 摘要（见〈claude-code〉小节）。
 - **找不到可执行文件等**：`failed to invoke <engine>: <original error>`。
 - **输出非预期 JSON**：claude-code / antigravity 使用 `<engine> returned unexpected JSON: <err> (first 200 characters of stdout: …)`；qoder 使用 `qodercli returned unexpected JSON: …`；codex 使用 `codex returned unexpected JSON: failed to parse line <line>: …`。
-- **Kiro 输出失败**：非零退出时只把 stderr 作为第三方诊断来源；stderr 为空则错误仅含退出码，stdout 不作为错误信息兜底。最终 assistant 标记缺失时返回 `kiro-cli returned unexpected output` 并分别附 stdout/stderr 摘要；设置命令失败时错误带 `kiro-cli settings` 且不启动 chat。exit `0` 且有最终 assistant 标记时返回该回答，不依据回答或混合终端记录中的自然语言分类错误。
+- **Kiro 输出失败**：非零退出时只把 stderr 作为第三方诊断来源；stderr 为空则错误仅含退出码，stdout 不作为错误信息兜底。权限 YAML 读取、解析或原子写入失败时不启动 chat。exit `0` 时完整 stdout（允许为空）作为回答，不依据回答或 stderr 中的自然语言分类错误。进程组清理失败显式上抛；若 chat 同时失败则两个错误都保留。
 - **引擎自报失败**（进程退出码为 0、但引擎自身报告业务失败）：
   - claude-code：`is_error` 为真 → 附 `result` 文本。
   - qoder：`is_error` 为真 → 优先附 `errors` 数组拼接的报错信息（`result` 此时可能整个不存在）；`errors` 为空才回退 `result`；两者皆空给兜底提示。
   - antigravity：`status != "SUCCESS"` → 优先附 `error` 字段；为空才回退截断至 500 字的 `response` 摘要。
   - codex：JSONL 中出现 `turn.failed` 或 `error` 事件 → 返回该事件携带的错误信息；若事件没有可用消息则返回明确的 codex 失败兜底文案。
-  - Kiro：普通 chat 没有结构化失败字段，不做自然语言错误分类；只有进程退出码和最终 assistant 结构参与成功失败判定。
+  - Kiro：普通 chat 没有结构化失败字段，不做自然语言错误分类；只有进程退出码参与最低层成功失败判定。
 - **prompt 超限**（仅 antigravity）：超 256 KiB 时**在调用前**返回 `agy passes prompts as command-line arguments; prompt too long (…); use a stdin-based engine or reduce upstream output`。
 
 这些错误如何冒泡到 `workflow run` 的退出码见 [cli-runtime.md](./cli-runtime.md)。
@@ -215,7 +214,7 @@ token usage / session id 的缺失不能用 `0`、空字符串或字段缺省冒
 - **Descriptor 注册表**：**已实装**。五个引擎各自在自身文件同时注册执行实现、capability、图标和 replay；workflow 校验、CLI help、CLI/HTTP TraceView 与 UI 均消费该注册表。通用测试覆盖 fail-fast 校验、排序和深拷贝。
 - **引擎 `claude-code` / `antigravity` / `qoder`**：**已实装**（无头 CLI `claude -p` / `agy -p` / `qodercli -p`，均经真实调用冒烟通过；单测 `internal/engine/exec_test.go` 用假二进制覆盖参数 / stdin / cwd 接线与 JSON 解析）。三者的 `RunResult.SessionID` 解析（从 `session_id` / `conversation_id` 取）**已实装**——在各自结果结构体补取已有字段，无新增 CLI 参数（单测 `internal/engine/session_test.go`）。
 - **引擎 `codex`**：**已实装**。`internal/engine/codex.go` 同时注册执行实现与 descriptor（`model? + effort ∈ {low, medium, high, xhigh}`）。契约见本篇〈codex〉小节、〈schema 字段映射〉、〈conduct 默认写死的参数〉、〈引擎能力表〉——codex 输出为 JSONL 事件流，逐行扫描按 type 归一化（单测 `internal/engine/codex_test.go` 覆盖 thread.started / agent_message / turn.completed / turn.failed / 无法解析行 / 无 agent_message 各路径）。
-- **引擎 `kiro`**：**已实装**。`internal/engine/kiro.go` 注册 Kiro，引导全局设置写入、classic UI chat 参数与原始 assistant 标记解析；`internal/engine/kiro_test.go` 以 PATH 假二进制覆盖设置顺序、环境继承、参数/stdin/cwd、解析、非零退出、格式错误，以及回答/工具日志包含诊断关键词时不得误报。
+- **引擎 `kiro`**：**已实装**。`internal/engine/kiro.go` 注册 Kiro，幂等合并全局 v3 权限、调用 `chat --v3 --no-interactive`、把完整 stdout 归一化为 `Text`，并以临时文件和独立进程组处理 ACP 子进程收尾；`internal/engine/kiro_test.go` 以 PATH 假二进制覆盖权限保留/去重/错误、环境继承、参数/stdin/cwd、完整文本、非零退出、自然语言碰撞、临时文件与子进程清理。
 - **`RunResult.SessionID`**：**已实装可空语义**。claude-code / qoder 从 `session_id`、antigravity 从 `conversation_id`、codex 从 `thread_id` 填充非空指针；缺失、JSON `null` 或空字符串返回 `nil`。Kiro 不提供当前 id，固定 `nil`。conduct 不额外拷贝 transcript。
 - **`RunResult.DurationMilliseconds`**：由 conduct 侧计时（`internal/engine/exec.go` 的 `runCommand`），非引擎回报。
 - **`RunResult.Tokens`**：**已实装可空语义**。结构化引擎仅在所需 usage 字段完整存在时返回指针（已知 `0` 有效），否则返回 `nil`；Kiro 固定 `nil`。trace 对未知值明确写 JSON `null`。
