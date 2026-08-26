@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-26
+
+### Changed
+
+- The workflow editor now suggests `claude-opus-5` instead of `claude-opus-4.8` for Kiro nodes while continuing to accept custom model values.
+
+### Fixed
+
+- Saving a workflow no longer resets the page or `promptTemplate` editor scroll position, so long prompts stay at the place being edited.
+
 ## [0.1.3] - 2026-07-21
 
 ### Changed
@@ -149,7 +159,8 @@ Initial public release.
 - One-line install script: `curl -sSL https://raw.githubusercontent.com/qoggy/conduct/main/install.sh | sh`, which detects the OS and architecture and installs the latest version.
 - Released under the MIT license.
 
-[unreleased]: https://github.com/qoggy/conduct/compare/v0.1.3...HEAD
+[unreleased]: https://github.com/qoggy/conduct/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/qoggy/conduct/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/qoggy/conduct/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/qoggy/conduct/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/qoggy/conduct/compare/v0.1.0...v0.1.1
