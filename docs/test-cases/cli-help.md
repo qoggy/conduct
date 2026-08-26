@@ -1,6 +1,6 @@
-# help 命令与 prompts 主题测试用例
+# help 命令与内嵌主题测试用例
 
-覆盖 `conduct help` 的根帮助、命令路径分派、内嵌 `prompts` 主题、语言选择与未知目标错误。对应 spec：见 [docs/specs/cli-tooling.md](../specs/cli-tooling.md)〈help〉、[docs/specs/cli-authoring.md](../specs/cli-authoring.md)〈模板变量〉。
+覆盖 `conduct help` 的根帮助、命令路径分派、内嵌 `prompts` / `run-prompts` 主题、语言选择与未知目标错误。对应 spec：见 [docs/specs/cli-tooling.md](../specs/cli-tooling.md)〈help〉、[docs/specs/cli-authoring.md](../specs/cli-authoring.md)〈模板变量〉与 [docs/specs/cli-runtime.md](../specs/cli-runtime.md)〈workflow run〉。
 
 ## 覆盖规划
 
@@ -9,6 +9,7 @@
 | 正常路径 | 无参数时打印完整根帮助，同时列出顶层命令与帮助主题 | TC-001 |
 | 正常路径 | 一到多级命令路径分派到对应命令帮助 | TC-002 |
 | 正常路径 | `prompts` 主题随二进制离线输出 | TC-003 |
+| 正常路径 | `run-prompts` 主题随二进制离线输出本次运行的任务提示词指南 | TC-008 |
 | 正常路径 | `--help`、命令路径帮助与内嵌主题按环境输出中文或英文 | TC-005 |
 | 边界与错误 | 未知主题或命令路径 fail-loud，退出 `2` | TC-004 |
 | 边界与错误 | `C`、`POSIX`、未设置或无法识别的语言值使用英文 | TC-006 |
@@ -16,9 +17,10 @@
 | 数据流转 | `help workflow node set` 与目标命令 `--help` 输出一致 | TC-002 |
 | 数据流转 | prompts 文档带出 DAG 模板变量、祖先引用与并行写盘冲突约束 | TC-003 |
 | 特性叠加 | `LC_ALL` > `LC_MESSAGES` > `LANG`，高优先级值无法识别时不读取低优先级值 | TC-006 |
+| 特性叠加 | run-prompts 主题中英文一一对应，英文输出无汉字 | TC-005、TC-008 |
 | 特性叠加 | DAG + resume + 模板变量：每节点至多成功一次且 `{{sys.runId}}` 可用 | TC-003 |
 
-帮助分派的 Cobra 内部查找过程交给 CLI 单测；手工层只断言对外的退出码与文本。主题通过 `go:embed` 随二进制发布，本文不访问仓库中的 `internal/help/prompts.md` 来代替验证。
+帮助分派的 Cobra 内部查找过程交给 CLI 单测；手工层只断言对外的退出码与文本。主题通过 `go:embed` 随二进制发布，本文不访问仓库中的 `internal/help/*.md` 来代替验证。
 
 ## 环境准备（每篇跑一次）
 
@@ -42,7 +44,7 @@ CONDUCT="$PWD/bin/conduct"
 - **预期**：
   - 退出码 `0`。
   - stdout 含 `Usage:`、`Available Commands:`，并列出 `workflow`、`run`、`ui`、`update`、`version`。
-  - stdout 含 `Additional help topics:` 与 `conduct help prompts`。
+  - stdout 含 `Additional help topics:`、`conduct help prompts` 与 `conduct help run-prompts`。
 - **清理**：无。
 
 ### TC-002 多级命令路径输出与 --help 一致
@@ -86,7 +88,7 @@ CONDUCT="$PWD/bin/conduct"
   2. `LC_ALL=zh_CN.UTF-8 "$CONDUCT" help workflow does-not-exist 2>&1; echo "exit=$?"`
 - **预期**：
   - 两步退出码均为 `2`。
-  - stderr 均含 `未知帮助主题`、`可用主题：prompts`，并提示 `conduct --help` 或 `conduct help <命令>`；不打印成功主题正文。
+  - stderr 均含 `未知帮助主题`、`可用主题：prompts / run-prompts`，并提示 `conduct --help` 或 `conduct help <命令>`；不打印成功主题正文。
 - **清理**：无。
 
 ### TC-005 中文与英文 help 完整切换
@@ -108,6 +110,8 @@ CONDUCT="$PWD/bin/conduct"
        LC_ALL=en_US.UTF-8 "$CONDUCT" help workflow node set > "$WORK/set.en.txt"
        LC_ALL=zh_CN.UTF-8 "$CONDUCT" help prompts > "$WORK/prompts.zh.txt"
        LC_ALL=en_US.UTF-8 "$CONDUCT" help prompts > "$WORK/prompts.en.txt"
+       LC_ALL=zh_CN.UTF-8 "$CONDUCT" help run-prompts > "$WORK/run-prompts.zh.txt"
+       LC_ALL=en_US.UTF-8 "$CONDUCT" help run-prompts > "$WORK/run-prompts.en.txt"
 
        command grep -F 'conduct —— 一个把 workflow 定义（JSON）解释运行起来的 CLI。' "$WORK/root.zh.txt"
        command grep -F 'conduct — a CLI that interprets and runs workflow definitions (JSON).' "$WORK/root.en.txt"
@@ -115,12 +119,14 @@ CONDUCT="$PWD/bin/conduct"
        command grep -F "Change only one agent node's fields" "$WORK/set.en.txt"
        command grep -F '# 写好节点 promptTemplate' "$WORK/prompts.zh.txt"
        command grep -F '# Writing a Good Node promptTemplate' "$WORK/prompts.en.txt"
+       command grep -F '# workflow run 的任务提示词' "$WORK/run-prompts.zh.txt"
+       command grep -F '# Task Prompts for workflow run' "$WORK/run-prompts.en.txt"
        test "$(command grep -Fo '`## 标题`' "$WORK/prompts.zh.txt" | wc -l | tr -d ' ')" = 2
-       test "$(command grep -Fo '`## 标题`' "$WORK/prompts.en.txt" | wc -l | tr -d ' ')" = 2
+       test "$(command grep -Fo '`## Heading`' "$WORK/prompts.en.txt" | wc -l | tr -d ' ')" = 2
        command grep -F 'conduct workflow node set <name> <id>' "$WORK/set.zh.txt"
        command grep -F 'conduct workflow node set <name> <id>' "$WORK/set.en.txt"
        command grep -F 'git worktree add ../wt-<分支标识> -b <分支名>' "$WORK/prompts.zh.txt"
-       command grep -F 'git worktree add ../wt-<分支标识> -b <分支名>' "$WORK/prompts.en.txt"
+       command grep -F 'git worktree add ../wt-<branch-key> -b <branch-name>' "$WORK/prompts.en.txt"
        if grep -Fq -- '--lang' "$WORK/root.zh.txt"; then
          exit 1
        fi
@@ -130,9 +136,9 @@ CONDUCT="$PWD/bin/conduct"
      )
      ```
 - **预期**：
-  - 原子 shell 块退出码为 `0`，因此六条 conduct 命令均退出 `0`，所有文本断言均成功。
+  - 原子 shell 块退出码为 `0`，因此八条 conduct 命令均退出 `0`，所有文本断言均成功。
   - 中文文件含中文关键文案，英文文件含忠实对应的英文关键文案。
-  - 命令路径、`<name>` / `<id>` 占位符、Markdown 标题示例与 `git worktree add` 代码示例在两种语言里逐字相同。
+  - 命令路径与 `<name>` / `<id>` 占位符在两种语言里逐字相同；Markdown 标题示例和 `git worktree add` 中的自然语言占位符随语言翻译。
   - 两种语言的根帮助中均没有 `--lang` 参数。
 - **清理**：原子 shell 块退出时由 trap 自动删除临时目录。
 
@@ -201,3 +207,47 @@ CONDUCT="$PWD/bin/conduct"
   - 英文句子逐字为 `it supports the antigravity, claude-code, codex, kiro, and qoder engines, all invoked through headless CLIs.`；中文句子逐字为 `支持 antigravity、claude-code、codex、kiro、qoder 引擎，均以无头 CLI 方式调用。`——两者引擎集合相同、均按 name 排序且含 `kiro`，仅连接符（`, ` + `and` ↔ `、`）随语言不同。
   - 反向守卫证明未回退到删除前的四引擎硬编码文案。
 - **清理**：原子 shell 块退出时由 trap 自动删除隔离 `HOME` 临时目录；未触碰真实 `HOME` 下的 conduct store。
+
+### TC-008 run-prompts 主题输出任务提示词写作原则
+
+- **目的**：验证内嵌 `run-prompts` 主题只讲怎样把任务提示词写清楚，覆盖零上下文假设、背景与排除项、查询与调查的不同交代方式，以及“不要委派理解”原则。
+- **前置**：无（步骤在原子 shell 块内创建并清理临时目录）。
+- **步骤**：
+  1. 执行以下原子 shell 块；任一帮助调用或文本断言失败，整个步骤立即以非零状态退出：
+
+     ```bash
+     (
+       set -euo pipefail
+       WORK=$(mktemp -d)
+       trap 'rm -rf "$WORK"' EXIT
+
+       LC_ALL=zh_CN.UTF-8 "$CONDUCT" help run-prompts > "$WORK/run-prompts.zh.txt"
+       LC_ALL=en_US.UTF-8 "$CONDUCT" help run-prompts > "$WORK/run-prompts.en.txt"
+
+       command grep -F '# workflow run 的任务提示词' "$WORK/run-prompts.zh.txt"
+       command grep -F '刚走进房间的聪明同事' "$WORK/run-prompts.zh.txt"
+       command grep -F '已经了解或排除了什么' "$WORK/run-prompts.zh.txt"
+       command grep -F '查询任务：给出准确命令' "$WORK/run-prompts.zh.txt"
+       command grep -F '不要委派理解' "$WORK/run-prompts.zh.txt"
+
+       command grep -F '# Task Prompts for workflow run' "$WORK/run-prompts.en.txt"
+       command grep -F 'smart colleague who just walked into the room' "$WORK/run-prompts.en.txt"
+       command grep -F 'already learned or ruled out' "$WORK/run-prompts.en.txt"
+       command grep -F 'For a lookup, provide the exact command' "$WORK/run-prompts.en.txt"
+       command grep -F 'Never delegate understanding' "$WORK/run-prompts.en.txt"
+
+       python3 - "$WORK/run-prompts.en.txt" <<'PY'
+import pathlib
+import sys
+
+content = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+if any("\u4e00" <= character <= "\u9fff" for character in content):
+    raise SystemExit("English run-prompts topic contains Han characters")
+PY
+     )
+     ```
+- **预期**：
+  - 原子 shell 块退出码 `0`；中英文 `conduct help run-prompts` 均退出 `0`。
+  - 中文输出覆盖“假设执行者没有当前对话”“交代已知与排除项”“查询给命令、调查给问题”和“不要委派理解”。
+  - 英文输出包含逐项对应的原则，且不含汉字。
+- **清理**：原子 shell 块退出时由 trap 删除临时目录；命令只读取内嵌帮助，不修改 conduct store。

@@ -159,7 +159,7 @@ conduct update --pre           # 更新到最新版本，纳入 beta
 
 ## help — 跨命令长文档（支撑）
 
-**用途**：输出**跨命令的长文档**——教程 / 概念 / 最佳实践，按概念组织（如 `prompts` 讲 `promptTemplate` 怎么写好）。这类内容不塞进各命令的 `--help`（`--help` 只做精简速查），改由本命令承载，对标 `go help <topic>`。文档 `go:embed` 进二进制随发布走（`docs/` 不随 `go install` 发布，故必须内嵌），相关命令的 `--help` 末尾留一行指针指向对应主题。
+**用途**：输出**跨命令的长文档**——教程 / 概念 / 最佳实践，按概念组织（如 `prompts` 讲 `promptTemplate` 机制，`run-prompts` 讲任务提示词怎么写清楚）。这类内容不塞进各命令的 `--help`（`--help` 只做精简速查），改由本命令承载，对标 `go help <topic>`。文档 `go:embed` 进二进制随发布走（`docs/` 不随 `go install` 发布，故必须内嵌），相关命令的 `--help` 末尾留一行指针指向对应主题。
 
 **用法**：
 
@@ -171,7 +171,7 @@ conduct help [命令路径 | 主题]
 
 | 参数 | 必填 | 说明 |
 | --- | --- | --- |
-| `<命令路径 | 主题>` | 否 | 主题名（如 `prompts`），或一到多级命令路径（如 `workflow node set`）。省略时打印完整根帮助（含命令列表与帮助主题） |
+| `<命令路径 | 主题>` | 否 | 主题名（如 `prompts` / `run-prompts`），或一到多级命令路径（如 `workflow node set`）。省略时打印完整根帮助（含命令列表与帮助主题） |
 
 **输出**：
 
@@ -185,12 +185,14 @@ conduct help [命令路径 | 主题]
 | 主题 | 内容 |
 | --- | --- |
 | `prompts` | 如何写好节点 `promptTemplate`（模板变量、祖先产物串联、并行分支写盘冲突） |
+| `run-prompts` | 如何写任务提示词（目标与原因、已知与排除项、周边背景，以及查询与调查的不同交代方式） |
 
 **示例**：
 
 ```bash
 conduct help            # 打印完整根帮助（含命令与主题）
 conduct help prompts    # 读「怎么写好提示词」
+conduct help run-prompts  # 读「怎么写任务提示词」
 conduct help workflow node set  # 查看多级命令用法
 ```
 
@@ -215,6 +217,6 @@ conduct help workflow node set  # 查看多级命令用法
 | `version` | **已实现**（构建期 `ldflags` 注入版本；根命令 `--version` 等价） |
 | `ui` | **已实现**（`conduct ui --port/--open`、服务端已注册 API、self-exec 发射器与内嵌 SPA、light / dark 主题均已落地；只绑 127.0.0.1、启动探测 store、Host/Origin 白名单、变更类强制 JSON。`ui.md` 明确延后的 node / edge 粒度端点不在当前已实现面，编辑器通过整体 `PUT` 保存；浏览器交互按 `docs/test-cases/ui-frontend.md` 验收） |
 | `update` | **已实现**（`internal/cli/update.go`：经 `creativeprojects/go-selfupdate` 从 GitHub Releases 下载匹配架构资产、`checksums.txt` 校验、原地替换；`--check` / `--pre` / 显式版本；Homebrew 前缀拒绝自替换；非规范当前版本跳过比较。资产命名与 `.goreleaser.yaml` 对齐，改一处须同步另一处） |
-| `help` | **部分实现**（命令 + `internal/help` 内嵌 `go:embed` 落地；`--help`、命令路径帮助与内嵌主题已按 `settings.json` > `LC_ALL` > `LC_MESSAGES` > `LANG` > 英文的统一规则支持中英文；当前仅 `prompts` 一个主题，按概念继续扩充） |
+| `help` | **已实现**（命令 + `internal/help` 内嵌 `go:embed` 落地；`--help`、命令路径帮助与 `prompts` / `run-prompts` 两个内嵌主题已按 `settings.json` > `LC_ALL` > `LC_MESSAGES` > `LANG` > 英文的统一规则支持中英文；主题可继续按概念扩充） |
 
 `ui` 的实现边界与延后端点以 [ui.md](./ui.md)〈配套实现状态〉为准；浏览器验收步骤维护在 [ui-frontend.md](../test-cases/ui-frontend.md)，不在规格中记录某次测试执行状态。

@@ -39,6 +39,13 @@ var topicDefinitions = []topicDefinition{
 		chineseFile:  "prompts.md",
 		englishFile:  "prompts.en.md",
 	},
+	{
+		name:         "run-prompts",
+		chineseShort: "怎么写任务提示词：目标、已知信息、背景和具体改动",
+		englishShort: "How to write task prompts: goals, known information, context, and concrete changes",
+		chineseFile:  "run-prompts.md",
+		englishFile:  "run-prompts.en.md",
+	},
 }
 
 // Topics 返回全部已注册主题的只读快照（按登记顺序）。

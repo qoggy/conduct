@@ -135,7 +135,7 @@ func newHelpCommand(root *cobra.Command) *cobra.Command {
 			if len(args) == 0 {
 				return root.Help()
 			}
-			// 帮助主题：conduct help prompts → 输出内嵌长文档。
+			// 帮助主题：conduct help prompts / run-prompts → 输出内嵌长文档。
 			if len(args) == 1 {
 				content, ok, err := help.Content(args[0], detectedHelpLanguage())
 				if err != nil {

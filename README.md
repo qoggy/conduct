@@ -40,3 +40,17 @@ rm -rf ~/.conduct            # optional: workflows and run records
 ```bash
 conduct --help
 ```
+
+## Agent Skill
+
+The repository includes a conduct Skill at `.agents/skills/conduct`. Copy it into a Skill root supported by your coding agent.
+
+For example, after cloning this repository:
+
+```bash
+# Choose a directory supported by your agent, for example a user-level
+# ~/.agents/skills or ~/.claude/skills directory, or the matching project directory.
+SKILL_ROOT="$HOME/.agents/skills"
+mkdir -p "$SKILL_ROOT/conduct"
+cp -R .agents/skills/conduct/. "$SKILL_ROOT/conduct/"
+```

@@ -68,6 +68,7 @@ func TestHelpUsesSelectedLanguage(t *testing.T) {
 				"conduct —— 一个把 workflow 定义（JSON）解释运行起来的 CLI。",
 				"支持 " + strings.Join(engine.RegisteredNames(), "、") + " 引擎",
 				"怎么写好节点 promptTemplate：模板变量、节点隔离、最佳实践",
+				"怎么写任务提示词：目标、已知信息、背景和具体改动",
 				"用法：",
 				"可用命令：",
 				"选项：",
@@ -90,6 +91,16 @@ func TestHelpUsesSelectedLanguage(t *testing.T) {
 			doesNotWant: []string{"Set the engine", "Set the reasoning effort level", "--reasoning-effort"},
 		},
 		{
+			name:     "chinese workflow run help",
+			language: "zh_CN.UTF-8",
+			args:     []string{"help", "workflow", "run"},
+			want: []string{
+				"怎么写本次运行的任务提示词",
+				"conduct help run-prompts",
+			},
+			doesNotWant: []string{"For how to write this run's task prompt"},
+		},
+		{
 			name:     "english nested command help",
 			language: "en_US.UTF-8",
 			args:     []string{"help", "workflow", "node", "set"},
@@ -108,6 +119,7 @@ func TestHelpUsesSelectedLanguage(t *testing.T) {
 			want: []string{
 				"conduct — a CLI that interprets and runs workflow definitions (JSON).",
 				"How to write a good node promptTemplate: template variables, node isolation, and best practices",
+				"How to write task prompts: goals, known information, context, and concrete changes",
 			},
 			doesNotWant: []string{"conduct —— 一个把 workflow 定义（JSON）解释运行起来的 CLI。", "--lang"},
 		},
@@ -120,6 +132,18 @@ func TestHelpUsesSelectedLanguage(t *testing.T) {
 				"Artifacts from parallel branches are not merged automatically",
 			},
 			doesNotWant: []string{"# 写好节点 promptTemplate"},
+		},
+		{
+			name:     "english run prompts topic",
+			language: "C",
+			args:     []string{"help", "run-prompts"},
+			want: []string{
+				"# Task Prompts for workflow run",
+				"smart colleague who just walked into the room",
+				"already learned or ruled out",
+				"Never delegate understanding",
+			},
+			doesNotWant: []string{"# workflow run 的任务提示词"},
 		},
 	}
 

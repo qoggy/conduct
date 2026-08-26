@@ -12,19 +12,35 @@ import (
 // 往 topics 加了一行却漏放 / 写错 .md 文件名时，此测试立刻失败，而非留给用户在运行时踩。
 func TestTopicsLoad(t *testing.T) {
 	languages := []struct {
-		name     string
-		language locale.Language
-		title    string
-		heading  string
+		name            string
+		language        locale.Language
+		titles          map[string]string
+		markdownHeading string
 	}{
-		{name: "chinese", language: locale.Chinese, title: "# 写好节点 promptTemplate", heading: "`## 标题`"},
-		{name: "english", language: locale.English, title: "# Writing a Good Node promptTemplate", heading: "`## Heading`"},
+		{
+			name:     "chinese",
+			language: locale.Chinese,
+			titles: map[string]string{
+				"prompts":     "# 写好节点 promptTemplate",
+				"run-prompts": "# workflow run 的任务提示词",
+			},
+			markdownHeading: "`## 标题`",
+		},
+		{
+			name:     "english",
+			language: locale.English,
+			titles: map[string]string{
+				"prompts":     "# Writing a Good Node promptTemplate",
+				"run-prompts": "# Task Prompts for workflow run",
+			},
+			markdownHeading: "`## Heading`",
+		},
 	}
 	for _, language := range languages {
 		t.Run(language.name, func(t *testing.T) {
 			all := Topics(language.language)
-			if len(all) == 0 {
-				t.Fatal("未登记任何 help 主题")
+			if len(all) != len(language.titles) {
+				t.Fatalf("help 主题数 = %d，期望 %d", len(all), len(language.titles))
 			}
 			for _, topic := range all {
 				if topic.Name == "" || topic.Short == "" {
@@ -42,14 +58,54 @@ func TestTopicsLoad(t *testing.T) {
 				if strings.TrimSpace(content) == "" {
 					t.Errorf("主题 %q 的内嵌内容为空", topic.Name)
 				}
-				if !strings.HasPrefix(content, language.title) {
+				title, exists := language.titles[topic.Name]
+				if !exists {
+					t.Errorf("主题 %q 没有登记预期标题", topic.Name)
+					continue
+				}
+				if !strings.HasPrefix(content, title) {
 					t.Errorf("主题 %q 未加载对应语言正文，首行得到 %q", topic.Name, strings.SplitN(content, "\n", 2)[0])
 				}
-				if topic.Name == "prompts" && strings.Count(content, language.heading) != 2 {
-					t.Errorf("主题 %q 应原样保留两处 Markdown 标题示例 %s", topic.Name, language.heading)
+				if topic.Name == "prompts" && strings.Count(content, language.markdownHeading) != 2 {
+					t.Errorf("主题 %q 应原样保留两处 Markdown 标题示例 %s", topic.Name, language.markdownHeading)
 				}
 				if language.language == locale.English && regexp.MustCompile(`\p{Han}`).MatchString(content) {
 					t.Errorf("英文主题 %q 不得包含汉字", topic.Name)
+				}
+			}
+		})
+	}
+}
+
+func TestRunPromptsTopicFollowsTaskPromptWritingPrinciples(t *testing.T) {
+	tests := []struct {
+		name     string
+		language locale.Language
+		want     []string
+	}{
+		{
+			name:     "chinese",
+			language: locale.Chinese,
+			want:     []string{"刚走进房间的聪明同事", "已经了解或排除了什么", "查询任务：给出准确命令", "不要委派理解"},
+		},
+		{
+			name:     "english",
+			language: locale.English,
+			want:     []string{"smart colleague who just walked into the room", "already learned or ruled out", "For a lookup, provide the exact command", "Never delegate understanding"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			content, ok, err := Content("run-prompts", test.language)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				t.Fatal("run-prompts 主题未登记")
+			}
+			for _, want := range test.want {
+				if !strings.Contains(content, want) {
+					t.Errorf("run-prompts 主题缺少 %q", want)
 				}
 			}
 		})

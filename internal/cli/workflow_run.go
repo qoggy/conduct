@@ -25,6 +25,7 @@ func newWorkflowRunCommand() *cobra.Command {
 		Long: localizedHelpText(
 			"解释运行名为 <name> 的工作流：按定义逐节点驱动 AI 引擎执行，前台同步阻塞并打印进度，结束后用 conduct run show <id> 看记录。\n"+
 				"用户需求经第二个位置参数或 stdin 传入（二者其一必填；均缺且 stdin 是终端则报错退 2，不挂起）。\n"+
+				"怎么写本次运行的任务提示词见 conduct help run-prompts。\n"+
 				"给引擎看图片：把图片的本地绝对路径直接写进需求文本即可（如「参考 /Users/me/shot.png 的布局」），各引擎自带的文件工具会自行读取该图。\n"+
 				"-d / --detach 改为后台起跑，用 run show / run wait / run stop 查看、等待、停止。\n\n"+
 				"示例：\n"+
@@ -34,6 +35,7 @@ func newWorkflowRunCommand() *cobra.Command {
 				"  conduct workflow run myflow \"重构结算流程\" -d",
 			"Interpret and run the workflow named <name>: drive the AI engine node by node according to the definition, block synchronously in the foreground while printing progress, and use conduct run show <id> afterward to view the record.\n"+
 				"Pass the user request as the second positional argument or through stdin (one is required; if both are absent and stdin is a terminal, report an error and exit 2 without hanging).\n"+
+				"For how to write this run's task prompt, see conduct help run-prompts.\n"+
 				"To show an image to an engine, put the image's absolute local path directly in the request text (for example, \"match the layout in /Users/me/shot.png\"); each engine's built-in file tools will read the image.\n"+
 				"-d / --detach starts the run in the background; use run show / run wait / run stop to inspect, wait for, or stop it.\n\n"+
 				"Examples:\n"+

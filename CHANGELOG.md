@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-26
+
+### Added
+
+- Added `conduct help run-prompts`, a bilingual guide based on Claude Code's task-prompt writing principles.
+- Added a reusable conduct agent Skill that can be copied into a coding agent's supported Skill directory and reads the installed CLI's live workflow and run help.
+
 ## [0.1.4] - 2026-08-26
 
 ### Changed
@@ -159,7 +166,8 @@ Initial public release.
 - One-line install script: `curl -sSL https://raw.githubusercontent.com/qoggy/conduct/main/install.sh | sh`, which detects the OS and architecture and installs the latest version.
 - Released under the MIT license.
 
-[unreleased]: https://github.com/qoggy/conduct/compare/v0.1.4...HEAD
+[unreleased]: https://github.com/qoggy/conduct/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/qoggy/conduct/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/qoggy/conduct/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/qoggy/conduct/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/qoggy/conduct/compare/v0.1.1...v0.1.2
