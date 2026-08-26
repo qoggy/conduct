@@ -1,6 +1,6 @@
-# conduct ui 前端主题测试用例
+# conduct ui 前端测试用例
 
-覆盖内嵌 SPA 的 light / dark 主题选择、切换、持久化与主要视觉令牌。对应 spec：[docs/specs/ui.md](../specs/ui.md)〈前端技术栈〉。
+覆盖内嵌 SPA 的 light / dark 主题以及工作流表单交互。对应 spec：[docs/specs/ui.md](../specs/ui.md)〈工作流编辑器〉与〈前端技术栈〉。
 
 ## 行为空间
 
@@ -12,6 +12,8 @@
 | 边界 | 主题缺失、两个有效值与非法值；语言/主题严格部分更新 | `internal/locale/settings_test.go`、`internal/ui/handlers_test.go`（由 `make test` 执行） |
 | 特性叠加 | 设置页语言与主题互不覆盖，分别支持跟随项 | TC-003 |
 | 视觉覆盖 | 页面、表面、边框、DAG 节点与语法高亮均取当前主题令牌，切换不改变布局 | TC-004 |
+| 正常路径 / 数据流转 | 长 `promptTemplate` 在内部底部编辑后保存，服务端回传定义并重建 DOM | TC-005 |
+| 特性叠加 | 保存同时保持 `promptTemplate` 内部滚动与页面滚动位置 | TC-005 |
 
 内嵌资产存在、主题脚本先于样式表加载、dark 令牌块存在及关键小字号文字对比度，由 `internal/ui/assets_test.go` 覆盖。
 
@@ -150,3 +152,32 @@ node -e 'if (Number(process.versions.node.split(".")[0]) < 22) process.exit(1)'
 
 - **预期**：退出码 `0`并打印 `PASS: visual`。脚本断言：公开 API 创建工作流返回 `201`；`.insp` 背景/边框为 `rgb(25, 36, 52)` / `rgb(39, 53, 72)`；`.nb` fill 为 `rgb(20, 28, 39)`；`.edge` stroke 为 `rgb(94, 113, 137)`；标题及占位符前景/背景分别为 `rgb(138, 171, 255)`、`rgb(233, 167, 124)`、`rgb(61, 47, 36)`；顶栏、画布、检查器和提示词编辑器的矩形在 light→dark 切换前后完全一致；截图文件存在且非空；无浏览器错误日志。
 - **清理**：脚本 `trap` 先停止 UI/Chrome，再恢复环境、比较真实 store 前后快照并删除包含临时工作流、浏览器 profile 和截图的 `$WORK`。
+
+### TC-005 保存长 promptTemplate 后保持滚动位置
+
+- **目的**：验证在 `promptTemplate` 内部滚动到底部编辑并保存后，服务端返回的定义重建表单 DOM，但编辑区和页面都不跳回顶部。
+- **前置**：已完成〈环境准备〉；脚本通过公开 API 在临时 store 创建工作流。
+- **步骤**：完整复制执行：
+
+  ```bash
+  bash <<'BASH'
+  set -euo pipefail
+  source docs/test-cases/atomic-conduct-test.sh
+  conduct_test_setup
+  "$CONDUCT" ui --port 0 >"$WORK/ui.log" 2>&1 &
+  UIPID=$!
+  conduct_test_register_pid "$UIPID"
+  B=""
+  for _ in $(seq 1 100); do
+    B=$(grep -oE 'http://127\.0\.0\.1:[0-9]+' "$WORK/ui.log" | head -1 || true)
+    [ -n "$B" ] && curl -fsS "$B/api/version" >/dev/null && break
+    sleep 0.05
+  done
+  test -n "$B" || { cat "$WORK/ui.log"; exit 1; }
+  node docs/test-cases/ui-theme-browser.mjs \
+    --scenario prompt-scroll --url "$B" --profile "$WORK/chrome"
+  BASH
+  ```
+
+- **预期**：退出码 `0` 并打印 `PASS: prompt-scroll`；脚本先确认 120 行提示词产生了内部滚动，再确认保存后 textarea 确已被新 DOM 替换，最后确认 `promptTemplate` 内部滚动位置精确不变、页面保持原位置（若重建后页面变短，则停在新布局允许的最底部），且无浏览器错误日志。
+- **清理**：脚本 `trap` 自动关闭 UI 与 Chrome、恢复 `HOME/PATH`、删除临时工作流与浏览器 profile，并确认真实 store 前后零差异。

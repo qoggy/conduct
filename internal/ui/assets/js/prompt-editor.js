@@ -9,7 +9,7 @@ import { createCodeEditor } from "./code-editor.js";
 import { pushOverlay, popOverlay } from "./modal.js";
 import { i18n } from "./i18n.js";
 
-// createPromptEditor(opts) → { element, getValue, setValue, setInvalid, focus }
+// createPromptEditor(opts) → { element, getValue, setValue, getScrollPosition, setScrollPosition, setInvalid, focus }
 //   opts.value        初始文本
 //   opts.fieldName    头部条字段名（如 promptTemplate）
 //   opts.placeholders 占位符列表（点击复制），string[]；空则不渲染占位符下拉
@@ -96,6 +96,8 @@ export function createPromptEditor(opts) {
       editor.setValue(v);
       updateMeta(v);
     },
+    getScrollPosition: editor.getScrollPosition,
+    setScrollPosition: editor.setScrollPosition,
     setInvalid: editor.setInvalid,
     focus: editor.focus,
   };

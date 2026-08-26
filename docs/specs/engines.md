@@ -178,7 +178,7 @@ token usage / session id 的缺失不能用 `0`、空字符串或字段缺省冒
 | `antigravity` | 接受（完整 model 标签） | 无 | 无 | ——（推理强度编码在 model 标签后缀） |
 | `qoder` | 接受（模型名或档位） | `Auto` · `Ultimate` · `Performance` · `Efficient` · `Lite` | 接受 | `disabled` · `off` · `none` · `low` · `medium` · `high` · `xhigh` · `max` |
 | `codex` | 接受（GPT 系） | `gpt-5.6-sol` · `gpt-5.6-terra` · `gpt-5.6-luna` · `gpt-5.5` · `gpt-5.3-codex-spark` | 接受 | `low` · `medium` · `high` · `xhigh` |
-| `kiro` | 接受（开放模型名） | `auto` · `claude-sonnet-5` · `claude-opus-4.8` · `gpt-5.6-sol` · `gpt-5.6-terra` · `gpt-5.6-luna` | `effort` | `low` · `medium` · `high` · `xhigh` · `max` |
+| `kiro` | 接受（开放模型名） | `auto` · `claude-sonnet-5` · `claude-opus-5` · `gpt-5.6-sol` · `gpt-5.6-terra` · `gpt-5.6-luna` | `effort` | `low` · `medium` · `high` · `xhigh` · `max` |
 
 `engineConfig` 两个字段（`internal/workflow/definition.go` 的 `EngineConfig`）——`model` / `effort`——**均选填**，校验时逐字段核对：
 

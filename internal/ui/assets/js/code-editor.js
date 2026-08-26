@@ -7,7 +7,7 @@ import { h } from "./dom.js";
 import { i18n } from "./i18n.js";
 import { highlightHTML } from "./highlight.js";
 
-// createCodeEditor(opts) → { element, getValue, setValue, focus }
+// createCodeEditor(opts) → { element, getValue, setValue, getScrollPosition, setScrollPosition, focus }
 //   opts.value       初始文本
 //   opts.lang        "markdown-conduct" | "markdown" | "json"
 //   opts.ghostAppend 运行时自动追加段的只读预告（可空）
@@ -54,6 +54,13 @@ export function createCodeEditor(opts) {
       refresh();
     },
     setInvalid: (on) => element.classList.toggle("red", !!on),
+    getScrollPosition: () => ({ top: textarea.scrollTop, left: textarea.scrollLeft }),
+    setScrollPosition: ({ top = 0, left = 0 } = {}) => {
+      textarea.scrollTop = top;
+      textarea.scrollLeft = left;
+      layer.scrollTop = top;
+      layer.scrollLeft = left;
+    },
     focus: () => textarea.focus(),
     textarea,
   };

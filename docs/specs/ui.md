@@ -104,7 +104,7 @@ hash 路由（单 index.html，embed 静态服务无需 history fallback，刷�
 
 **JSON 视图**——**定义主体** `{nodes, edges}`（含 START/END）的源码编辑区（同款高亮），与图画布双向同步；作为兜底编辑模式，面向想直接改 JSON / 从外部粘贴的程序员。JSON→图切换先 parse：语法错误 → 阻止切换、就地标错。真正未知的字段（拼写错）整体保留、保存时由服务端 `DisallowUnknownFields` 拒绝（不在前端复刻字段白名单，避免与内核 schema 漂移）。元数据 `name` / `createdAt` / `updatedAt` 不属主体：即便粘进带 `definition` 外壳与这三个键的整条记录（如 `show --json` 导出），保存时一律解包 `definition`、**忽略**元数据——`name` 由路由 `{name}` 定（改名走独立 rename 入口）、时间戳由服务端管理，不因不一致报错。已知限制：视图切换重建编辑区，浏览器原生撤销（⌘Z）历史随之清空，界面提示告知。
 
-**保存**：PUT 完整定义整体替换（= `cat def.json | conduct workflow edit <name>`），服务端复用 `ParseDefinition + Validate + store.ReplaceDefinition`——校验不过 → 422 逐条返回字段级错误、**不落盘、原定义不变**；旧定义文件只要存在，即使已无法严格解码，也可由一份合法完整定义覆盖修复。错误面板置顶列出（与 CLI stderr 逐字一致），每条按路径**点击定位**（左栏对应节点标红、右栏切到该节点并红框该字段；边错误在画布高亮对应连线）。**乐观并发提示**：保存请求携带载入时的 updatedAt 基线，服务端发现已被外部改过（CLI `edit` 或另一标签页）→ 返回冲突，前端弹「已被外部修改：覆盖保存 / 放弃重载」——软提示不做硬锁，不超出 `edit` 的 last-write-wins 语义。
+**保存**：PUT 完整定义整体替换（= `cat def.json | conduct workflow edit <name>`），服务端复用 `ParseDefinition + Validate + store.ReplaceDefinition`——校验不过 → 422 逐条返回字段级错误、**不落盘、原定义不变**；旧定义文件只要存在，即使已无法严格解码，也可由一份合法完整定义覆盖修复。保存响应导致表单 DOM 重建时，页面与 `promptTemplate` 内部编辑区均保持保存前的滚动位置，长提示词在底部编辑后保存不跳回顶部。错误面板置顶列出（与 CLI stderr 逐字一致），每条按路径**点击定位**（左栏对应节点标红、右栏切到该节点并红框该字段；边错误在画布高亮对应连线）。**乐观并发提示**：保存请求携带载入时的 updatedAt 基线，服务端发现已被外部改过（CLI `edit` 或另一标签页）→ 返回冲突，前端弹「已被外部修改：覆盖保存 / 放弃重载」——软提示不做硬锁，不超出 `edit` 的 last-write-wins 语义。
 
 > **粒度端点 vs 整份保存**：图编辑器的主保存路径是整份 `PUT`（编辑器一次改多处后统一存）。UI 无独占能力要求每个界面动作都有 CLI 等价物——增删节点 ↔ `node add` / `node rm`、连边 ↔ `edge`——但 UI 可选择用整份 `PUT` 聚合实现这些动作，或调用对应的粒度端点（`POST /nodes` / `DELETE /nodes/{id}` / `POST /edges`，见〈API 设计〉）。两条路径都在服务端复用同一套整份校验。**当前实现**：粒度端点尚未实现（见〈API 设计〉与〈配套实现状态〉），编辑器唯一走整份 `PUT`；这不违反不变量，只是暂未提供比整份替换更细的编辑接口。
 

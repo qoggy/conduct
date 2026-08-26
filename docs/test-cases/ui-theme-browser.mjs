@@ -16,7 +16,7 @@ const screenshotPath = argumentsByName.get("--screenshot");
 let activeChromeChild;
 
 if (!scenario || !uiURL || !profileDirectory) {
-  throw new Error("用法: node ui-theme-browser.mjs --scenario <follow-system|toggle|settings|visual> --url <UI_URL> --profile <DIR> [--screenshot <PNG>]");
+  throw new Error("用法: node ui-theme-browser.mjs --scenario <follow-system|toggle|settings|visual|prompt-scroll> --url <UI_URL> --profile <DIR> [--screenshot <PNG>]");
 }
 
 function chromeExecutable() {
@@ -50,7 +50,8 @@ class DevToolsClient {
         this.errors.push(message.params.exceptionDetails.text);
       }
       if (message.method === "Log.entryAdded" && message.params.entry.level === "error") {
-        this.errors.push(message.params.entry.text);
+        const entry = message.params.entry;
+        this.errors.push(entry.url ? `${entry.text} (${entry.url})` : entry.text);
       }
     });
   }
@@ -306,6 +307,46 @@ async function runVisual(endpoint, clients) {
   await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
 }
 
+async function runPromptScroll(endpoint, clients) {
+  const page = await openPage(endpoint, "light");
+  clients.push(page);
+  const creationStatus = await page.evaluate(`fetch("/api/workflows", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "prompt-scroll-check" }),
+  }).then((response) => response.status)`);
+  assert.equal(creationStatus, 201);
+  await page.evaluate(`location.hash = "#/workflows/prompt-scroll-check"`);
+  await waitFor(() => page.evaluate(`Boolean(document.querySelector(".insp .pe-input"))`), "工作流编辑器未就绪");
+
+  const before = await page.evaluate(`(() => {
+    const input = document.querySelector(".insp .pe-input");
+    input.value = Array.from({ length: 120 }, (_, index) => "line-" + index).join("\\n");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.scrollTop = input.scrollHeight;
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    globalThis.promptInputBeforeSave = input;
+    return { prompt: input.scrollTop, page: window.scrollY };
+  })()`);
+  assert.ok(before.prompt > 0, "长 promptTemplate 必须产生内部滚动距离");
+
+  await page.evaluate(`document.querySelector(".edithead .btn-ink").click()`);
+  await waitFor(
+    () => page.evaluate(`document.querySelector(".savedot") && !document.querySelector(".savedot").classList.contains("unsaved") && document.querySelector(".insp .pe-input") !== globalThis.promptInputBeforeSave`),
+    "工作流未保存或编辑器 DOM 未重建",
+  );
+  const after = await page.evaluate(`(() => {
+    const input = document.querySelector(".insp .pe-input");
+    return {
+      prompt: input.scrollTop,
+      page: window.scrollY,
+      pageMaximum: document.documentElement.scrollHeight - window.innerHeight,
+    };
+  })()`);
+  assert.equal(after.prompt, before.prompt, "保存重建表单后应保持 promptTemplate 内部滚动位置");
+  assert.equal(after.page, Math.min(before.page, after.pageMaximum), "保存重建表单后页面应保持原位置或停在新布局底部");
+}
+
 const clients = [];
 for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
   process.once(signal, () => {
@@ -319,9 +360,11 @@ try {
   else if (scenario === "toggle") await runToggle(chrome.endpoint, clients);
   else if (scenario === "settings") await runSettings(chrome.endpoint, clients);
   else if (scenario === "visual") await runVisual(chrome.endpoint, clients);
+  else if (scenario === "prompt-scroll") await runPromptScroll(chrome.endpoint, clients);
   else throw new Error(`未知场景: ${scenario}`);
 
-  const browserErrors = clients.flatMap((client) => client.errors);
+  // Chrome 会自动探测未声明的可选 favicon；Conduct 当前没有该资源，这条 404 与被测页面逻辑无关。
+  const browserErrors = clients.flatMap((client) => client.errors).filter((message) => !message.includes("/favicon.ico)"));
   assert.deepEqual(browserErrors, [], `浏览器控制台错误: ${browserErrors.join(" | ")}`);
   console.log(`PASS: ${scenario}`);
 } finally {

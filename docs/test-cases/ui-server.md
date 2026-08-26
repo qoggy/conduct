@@ -220,7 +220,7 @@ stop_ui() { kill "$UIPID" 2>/dev/null; wait "$UIPID" 2>/dev/null; }
      print("codex=", codex)
      kiro = next(e for e in d if e["name"] == "kiro")
      assert kiro["capability"]["modelSuggestions"] == [
-         "auto", "claude-sonnet-5", "claude-opus-4.8",
+         "auto", "claude-sonnet-5", "claude-opus-5",
          "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
      ]
      assert kiro["capability"]["allowsEffort"] is True
@@ -234,7 +234,7 @@ stop_ui() { kill "$UIPID" 2>/dev/null; wait "$UIPID" 2>/dev/null; }
   - `cc=` 的 capability 含 `allowsModel:true`、`modelSuggestions:['sonnet','opus','fable']`、`allowsEffort:true` 与包含 `high` 的 `effortValues`；`iconPath` 为 `/vendor/engine-icons/claude-code.png`。
   - `agy=` 的 `modelSuggestions:[]`、`allowsEffort:false` 且 `effortValues:[]`；capability 的列表无内容时不输出 `null`。
   - `codex=` 的 `modelSuggestions` 精确为 `['gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna','gpt-5.5','gpt-5.3-codex-spark']`。
-  - `kiro=` 的 `modelSuggestions` 精确为 `['auto','claude-sonnet-5','claude-opus-4.8','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna']`（不构成模型白名单）；`allowsEffort:true` 与精确 `effortValues:['low','medium','high','xhigh','max']`；`iconPath` 为 `/vendor/engine-icons/kiro.png`。
+  - `kiro=` 的 `modelSuggestions` 精确为 `['auto','claude-sonnet-5','claude-opus-5','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna']`（不构成模型白名单）；`allowsEffort:true` 与精确 `effortValues:['low','medium','high','xhigh','max']`；`iconPath` 为 `/vendor/engine-icons/kiro.png`。
   - **说明**：这是唯一无 CLI 命令等价的只读信息性端点（「无独占能力」不变量的显式豁免）。
 - **清理**：`stop_ui; export HOME="$OLD_HOME"; rm -rf "$WORK"`。
 

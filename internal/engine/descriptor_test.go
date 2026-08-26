@@ -119,7 +119,7 @@ func TestBuiltInModelSuggestions(t *testing.T) {
 		},
 		{
 			name: "kiro",
-			want: []string{"auto", "claude-sonnet-5", "claude-opus-4.8", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
+			want: []string{"auto", "claude-sonnet-5", "claude-opus-5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
 		},
 	}
 	for _, test := range tests {

@@ -30,7 +30,7 @@ func (kiroEngine) Descriptor() EngineDescriptor {
 			ModelSuggestions: []string{
 				"auto",
 				"claude-sonnet-5",
-				"claude-opus-4.8",
+				"claude-opus-5",
 				"gpt-5.6-sol",
 				"gpt-5.6-terra",
 				"gpt-5.6-luna",

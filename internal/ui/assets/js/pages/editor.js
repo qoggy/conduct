@@ -726,6 +726,7 @@ class Editor {
         this.renderFlow(); // 模板 {{引用}} 变化影响校验：刷新画布红点与「可运行」徽标（只重建画布，不动检查器里的提示词编辑器）
       },
     });
+    this.promptEditor = editor;
     return h("div", { dataset: { field: "promptTemplate" } }, editor.element);
   }
 
@@ -778,6 +779,7 @@ class Editor {
 
   // ---- 保存 ----
   async save() {
+    const viewState = this.captureViewState();
     let body;
     if (this.view === "json") {
       const parsed = this.parseJsonEditor();
@@ -791,35 +793,53 @@ class Editor {
     this.def = body;
     try {
       const saved = await api.putWorkflow(this.name, body, this.baseUpdatedAt);
-      this.onSaved(saved);
+      this.onSaved(saved, viewState);
     } catch (err) {
       if (err instanceof ApiError && err.problems.length) {
         this.errors = err.problems;
         if (this.view === "json") this.view = "form"; // 切回表单便于逐字段定位
-        this.renderAll();
+        this.renderAllPreservingViewState(viewState);
         return;
       }
       if (err instanceof ApiError && err.status === 409 && err.current) {
         this.openConflict(body, err.current);
         return;
       }
-      this.showSaveError(err.message);
+      this.showSaveError(err.message, viewState);
     }
   }
 
-  onSaved(saved) {
+  // 保存响应会用服务端返回值重建编辑页。重建前后显式搬运滚动状态，避免长 promptTemplate
+  // 正在底部编辑时因 textarea 被替换而跳回顶部；页面自身的滚动位置同样保持。
+  captureViewState() {
+    return {
+      view: this.view,
+      selectedNodeID: this.selId,
+      pageScroll: { x: window.scrollX, y: window.scrollY },
+      promptScroll: this.view === "form" && this.promptEditor ? this.promptEditor.getScrollPosition() : null,
+    };
+  }
+
+  renderAllPreservingViewState(viewState) {
+    this.renderAll();
+    if (!viewState || viewState.view !== this.view || viewState.selectedNodeID !== this.selId) return;
+    if (viewState.promptScroll && this.promptEditor) this.promptEditor.setScrollPosition(viewState.promptScroll);
+    window.scrollTo(viewState.pageScroll.x, viewState.pageScroll.y);
+  }
+
+  onSaved(saved, viewState) {
     this.record = saved;
     this.def = saved.definition;
     this.baseUpdatedAt = saved.updatedAt;
     this.dirty = false;
     this.errors = [];
     if (!this.selectedNode()) this.selId = this.firstAgentId();
-    this.renderAll();
+    this.renderAllPreservingViewState(viewState);
   }
 
-  showSaveError(message) {
+  showSaveError(message, viewState = this.captureViewState()) {
     this.errors = [{ path: "", message }];
-    this.renderAll();
+    this.renderAllPreservingViewState(viewState);
   }
 
   // 乐观并发冲突：弹「覆盖保存 / 放弃重载」。current 是服务端当前完整记录。
@@ -827,11 +847,12 @@ class Editor {
     const overwrite = h("button", { class: "btn btn-ink" }, i18n.overwrite);
     overwrite.addEventListener("click", async () => {
       ctl.close();
+      const viewState = this.captureViewState();
       try {
         const saved = await api.putWorkflow(this.name, myBody, ""); // 不带基线 = 强制覆盖
-        this.onSaved(saved);
+        this.onSaved(saved, viewState);
       } catch (err) {
-        this.showSaveError(err.message);
+        this.showSaveError(err.message, viewState);
       }
     });
     const reload = h("button", { class: "btn" }, i18n.reload);
