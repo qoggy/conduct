@@ -22,11 +22,11 @@ func (codexEngine) Descriptor() EngineDescriptor {
 		Capability: EngineCapability{
 			AllowsModel: true,
 			ModelSuggestions: []string{
+				"gpt-6.1-sol",
+				"gpt-6-astra",
 				"gpt-5.6-sol",
 				"gpt-5.6-terra",
 				"gpt-5.6-luna",
-				"gpt-5.5",
-				"gpt-5.3-codex-spark",
 			},
 			AllowsEffort: true,
 			EffortValues: []string{"low", "medium", "high", "xhigh"},
