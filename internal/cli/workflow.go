@@ -295,6 +295,8 @@ func printJSON(cmd *cobra.Command, value any) error {
 	if err != nil {
 		return fmt.Errorf("failed to encode JSON: %w", err)
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), string(data))
+	if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(data)); err != nil {
+		return fmt.Errorf("failed to write JSON: %w", err)
+	}
 	return nil
 }

@@ -9,7 +9,9 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/creativeprojects/go-selfupdate"
+	"github.com/qoggy/conduct/internal/skillinstall"
 	"github.com/spf13/cobra"
 )
 
@@ -25,35 +27,31 @@ func newUpdateCommand() *cobra.Command {
 	var (
 		checkOnly bool
 		pre       bool
+		project   bool
+		global    bool
 	)
 	cmd := &cobra.Command{
 		Use:   localizedHelpText("update [版本]", "update [version]"),
-		Short: localizedHelpText("自更新 conduct 到最新版本（或指定版本）", "Update conduct to the latest version (or a specified version)"),
-		Long: localizedHelpText(`自更新 conduct：从 GitHub Releases 下载匹配本机系统/架构的预编译二进制，
-校验 checksum 后原地替换当前正在运行的可执行文件。无需本机安装 Go 工具链。
+		Short: localizedHelpText("更新 conduct 和已安装的 Skill", "Update conduct and installed Skills"),
+		Long: localizedHelpText(`更新 conduct，并更新通过 conduct init 安装的 Skill。
+默认更新到最新正式版，也可指定版本（包括预发布版）。
+默认更新所有安装位置；--project / --global 仅限定 Skill 范围，两者不能同时使用。
+conduct 已是最新版本时仍会更新 Skill；--check 仅检查 conduct 版本，不执行更新。
 
-用法：
-  conduct update                更新到最新正式版
-  conduct update v0.2.0         更新（或回退）到指定版本；显式版本号可安装预发布版
-  conduct update --pre          更新到最新版本，纳入预发布（beta）版本
-  conduct update --check        只检查有无新版本，不实际安装
+示例：
+  conduct update                更新 conduct 和所有已安装的 Skill
+  conduct update --project      更新 conduct 和当前目录的 Skill
+  conduct update v0.2.0         更新到指定版本
+  conduct update --check        仅检查 conduct 更新`, `Update conduct and Skills installed with conduct init.
+Use the latest stable release by default, or specify a version (including prereleases).
+All installation locations are updated by default. --project / --global restrict only Skill updates and cannot be combined.
+Skills are updated even when conduct is up to date. --check only checks for a conduct update without making changes.
 
-说明：
-  · 若 conduct 由 Homebrew 安装，请改用对应的包管理器命令（如 brew upgrade
-    conduct），自更新会拒绝执行以免与包管理器冲突。
-  · 尚无任何 Release 时命令会明确报错，而非静默无动作。`, `Update conduct by downloading a precompiled binary matching the local system/architecture from GitHub Releases,
-verifying its checksum, and replacing the currently running executable in place. The Go toolchain is not required locally.
-
-Usage:
-  conduct update                Update to the latest stable release
-  conduct update v0.2.0         Update (or roll back) to the specified version; an explicit version may install a prerelease
-  conduct update --pre          Update to the latest version, including prerelease (beta) versions
-  conduct update --check        Only check whether a new version exists; do not install it
-
-Notes:
-  · If conduct was installed by Homebrew, use the corresponding package-manager command instead (such as brew upgrade
-    conduct); self-update refuses to run to avoid conflicting with the package manager.
-  · If no Release exists yet, the command reports an explicit error instead of silently doing nothing.`),
+Examples:
+  conduct update                Update conduct and all installed Skills
+  conduct update --project      Update conduct and Skills in the current directory
+  conduct update v0.2.0         Update to a specified version
+  conduct update --check        Only check for a conduct update`),
 		Args:          maximumArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -62,22 +60,32 @@ Notes:
 			if len(args) == 1 {
 				target = args[0]
 			}
-			return runUpdate(cmd, target, checkOnly, pre)
+			if project && global {
+				return scopeUsageError()
+			}
+			scope := skillinstall.Scope("")
+			if project {
+				scope = skillinstall.Project
+			}
+			if global {
+				scope = skillinstall.Global
+			}
+			return runUpdateWithDependencies(cmd, target, checkOnly, pre, scope, defaultUpdateDependencies())
 		},
 	}
-	cmd.Flags().BoolVar(&checkOnly, "check", false, localizedHelpText("只检查有无新版本，不实际安装", "Only check for a new version; do not install it"))
-	cmd.Flags().BoolVar(&pre, "pre", false, localizedHelpText("纳入预发布（beta）版本", "Include prerelease (beta) versions"))
+	cmd.Flags().BoolVar(&checkOnly, "check", false, localizedHelpText("仅检查 conduct 更新，不修改文件", "Only check for a conduct update without changing files"))
+	cmd.Flags().BoolVar(&pre, "pre", false, localizedHelpText("检查最新版本时包含预发布版", "Include prereleases when checking for the latest version"))
+	cmd.Flags().BoolVar(&project, "project", false, localizedHelpText("仅更新当前目录的 Skill", "Update Skills in the current directory only"))
+	cmd.Flags().BoolVar(&global, "global", false, localizedHelpText("仅更新用户级 Skill", "Update user-level Skills only"))
 	return cmd
 }
 
-// runUpdate 执行一次自更新（或检查）。checkOnly 为真时只比对版本、不安装；
-// pre 为真时把预发布版本纳入「最新」的候选。
-func runUpdate(cmd *cobra.Command, target string, checkOnly, pre bool) error {
+func runUpdateWithDependencies(cmd *cobra.Command, target string, checkOnly, pre bool, scope skillinstall.Scope, dependencies updateDependencies) error {
 	out := cmd.OutOrStdout()
 
 	// 定位当前可执行文件的真实路径：解开软链，因为 UpdateTo 要按真实路径做原子替换；
 	// 且 Homebrew 会把 /usr/local/bin/conduct 软链到 Cellar，解链后才能识别出 brew 安装。
-	exePath, err := currentExecutablePath()
+	exePath, err := dependencies.executable()
 	if err != nil {
 		return fmt.Errorf("failed to locate current executable: %w", err)
 	}
@@ -85,19 +93,100 @@ func runUpdate(cmd *cobra.Command, target string, checkOnly, pre bool) error {
 	// 经 Homebrew 安装时拒绝自替换——否则会与包管理器的版本记账打架、且下次 brew
 	// 操作会覆盖掉替换结果。fail-loud 引导用户走 brew。
 	if prefix := homebrewPrefixOf(exePath); prefix != "" {
-		return localizedErrorf("检测到 conduct 由 Homebrew 安装（%s）；请改用 `brew upgrade conduct` 更新，自更新不接管包管理器管辖的二进制", "conduct appears to be installed by Homebrew (%s); use `brew upgrade conduct` because self-update does not take over package-manager-managed binaries", exePath)
+		return localizedErrorf("conduct 由 Homebrew 管理，请运行 `brew upgrade conduct` 更新。", "conduct is managed by Homebrew. Run `brew upgrade conduct` to update.")
 	}
 
+	candidate, err := dependencies.query(cmd.Context(), target, pre)
+	if err != nil {
+		return err
+	}
+
+	// 与当前版本比较。当前版本可能是 dev / git 伪版本 / dirty 等非规范 semver，
+	// 这类情况无法可靠比大小，跳过「已最新」判断、如实说明，绝不假装能算落后几个版本。
+	cur := strings.TrimPrefix(version, "v")
+	curIsSemver := isSemanticVersion(cur)
+	upToDate := false
+	if curIsSemver {
+		currentVersion, parseErr := semver.NewVersion(cur)
+		if parseErr != nil {
+			return fmt.Errorf("parse current version: %w", parseErr)
+		}
+		releaseVersion, parseErr := semver.NewVersion(candidate.Version)
+		if parseErr != nil {
+			return fmt.Errorf("parse release version: %w", parseErr)
+		}
+		upToDate = releaseVersion.Compare(currentVersion) <= 0
+	}
+
+	if checkOnly {
+		switch {
+		case upToDate:
+			if _, err := fmt.Fprintf(out, localizedHelpText("conduct 已是最新版本 %s（最新发布 %s）。\n", "conduct %s is up to date (latest release: %s).\n"), version, candidate.Version); err != nil {
+				return err
+			}
+		case curIsSemver:
+			if _, err := fmt.Fprintf(out, localizedHelpText("conduct 有新版本：%s → %s。\n运行 `conduct update`。\n", "A new conduct version is available: %s → %s.\nRun `conduct update`.\n"), version, candidate.Version); err != nil {
+				return err
+			}
+		default:
+			if _, err := fmt.Fprintf(out, localizedHelpText("无法比较当前 conduct 版本 %s；最新发布为 %s。\n运行 `conduct update`。\n", "Current conduct version %s cannot be compared; the latest release is %s.\nRun `conduct update`.\n"), version, candidate.Version); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if upToDate {
+		if _, err := fmt.Fprintf(out, localizedHelpText("conduct 已是最新版本 %s。\n", "conduct %s is up to date.\n"), version); err != nil {
+			return err
+		}
+		return dependencies.synchronize(cmd, scope)
+	}
+
+	if _, err := fmt.Fprintf(out, localizedHelpText("正在更新 conduct：%s → %s …\n", "Updating conduct: %s → %s …\n"), version, candidate.Version); err != nil {
+		return err
+	}
+	if err := candidate.Install(cmd.Context(), exePath); err != nil {
+		return fmt.Errorf("update failed: %w", err)
+	}
+	if _, err := fmt.Fprintf(out, localizedHelpText("conduct 已更新至 %s。\n", "conduct updated to %s.\n"), candidate.Version); err != nil {
+		return err
+	}
+	if candidate.URL != "" {
+		if _, err := fmt.Fprintf(out, localizedHelpText("发布说明：%s\n", "Release notes: %s\n"), candidate.URL); err != nil {
+			return err
+		}
+	}
+	return dependencies.handoff(cmd, exePath, candidate.Version, scope)
+}
+
+type updateCandidate struct {
+	Version string
+	URL     string
+	Install func(context.Context, string) error
+}
+
+type updateDependencies struct {
+	executable  func() (string, error)
+	query       func(context.Context, string, bool) (*updateCandidate, error)
+	synchronize func(*cobra.Command, skillinstall.Scope) error
+	handoff     func(*cobra.Command, string, string, skillinstall.Scope) error
+}
+
+func defaultUpdateDependencies() updateDependencies {
+	return updateDependencies{executable: currentExecutablePath, query: queryUpdateCandidate, synchronize: syncRegisteredSkills, handoff: handoffSkillSync}
+}
+
+func queryUpdateCandidate(ctx context.Context, target string, pre bool) (*updateCandidate, error) {
 	updater, err := selfupdate.NewUpdater(selfupdate.Config{
 		// GoReleaser 默认产出单一 checksums.txt，一行一个资产的 SHA256。
 		Validator:  &selfupdate.ChecksumValidator{UniqueFilename: "checksums.txt"},
 		Prerelease: pre,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to initialize updater: %w", err)
+		return nil, fmt.Errorf("failed to initialize updater: %w", err)
 	}
 	repo := selfupdate.ParseSlug(updateRepoSlug)
-	ctx := context.Background()
 
 	var (
 		release *selfupdate.Release
@@ -110,47 +199,16 @@ func runUpdate(cmd *cobra.Command, target string, checkOnly, pre bool) error {
 		release, found, err = updater.DetectLatest(ctx, repo)
 	}
 	if err != nil {
-		return fmt.Errorf("failed to query releases: %w", err)
+		return nil, fmt.Errorf("failed to query releases: %w", err)
 	}
 	if !found {
 		if target != "" {
-			return localizedErrorf("未找到版本 %q 的发布，或该发布无匹配 %s/%s 的资产", "release %q was not found, or it has no matching %s/%s asset", target, runtime.GOOS, runtime.GOARCH)
+			return nil, localizedErrorf("未找到版本 %q 的发布，或该发布无匹配 %s/%s 的资产", "release %q was not found, or it has no matching %s/%s asset", target, runtime.GOOS, runtime.GOARCH)
 		}
-		return localizedErrorf("尚无可用发布：%s 还没有正式 Release，或无匹配 %s/%s 的资产", "no release is available: %s has no stable release or no matching %s/%s asset", updateRepoSlug, runtime.GOOS, runtime.GOARCH)
+		return nil, localizedErrorf("尚无可用发布：%s 还没有正式 Release，或无匹配 %s/%s 的资产", "no release is available: %s has no stable release or no matching %s/%s asset", updateRepoSlug, runtime.GOOS, runtime.GOARCH)
 	}
 
-	// 与当前版本比较。当前版本可能是 dev / git 伪版本 / dirty 等非规范 semver，
-	// 这类情况无法可靠比大小，跳过「已最新」判断、如实说明，绝不假装能算落后几个版本。
-	cur := strings.TrimPrefix(version, "v")
-	curIsSemver := isSemanticVersion(cur)
-	upToDate := curIsSemver && release.LessOrEqual(cur)
-
-	if checkOnly {
-		switch {
-		case upToDate:
-			fmt.Fprintf(out, localizedHelpText("已是最新：当前 %s，最新发布 %s\n", "Up to date: current %s, latest release %s\n"), version, release.Version())
-		case curIsSemver:
-			fmt.Fprintf(out, localizedHelpText("有新版本：当前 %s → 可更新到 %s\n运行 `conduct update` 安装。\n", "A new version is available: current %s → %s\nRun `conduct update` to install it.\n"), version, release.Version())
-		default:
-			fmt.Fprintf(out, localizedHelpText("当前版本 %s 非规范版本号，无法比较；最新发布为 %s\n运行 `conduct update` 安装。\n", "Current version %s is not a canonical version and cannot be compared; the latest release is %s.\nRun `conduct update` to install it.\n"), version, release.Version())
-		}
-		return nil
-	}
-
-	if upToDate {
-		fmt.Fprintf(out, localizedHelpText("已是最新版本 %s，无需更新。\n", "Version %s is already the latest; no update is needed.\n"), version)
-		return nil
-	}
-
-	fmt.Fprintf(out, localizedHelpText("正在更新：%s → %s …\n", "Updating: %s → %s …\n"), version, release.Version())
-	if err := updater.UpdateTo(ctx, release, exePath); err != nil {
-		return fmt.Errorf("update failed: %w", err)
-	}
-	fmt.Fprintf(out, localizedHelpText("已更新到 %s（安装于 %s）\n", "Updated to %s (installed at %s)\n"), release.Version(), exePath)
-	if release.URL != "" {
-		fmt.Fprintf(out, localizedHelpText("发布说明：%s\n", "Release notes: %s\n"), release.URL)
-	}
-	return nil
+	return &updateCandidate{Version: release.Version(), URL: release.URL, Install: func(ctx context.Context, path string) error { return updater.UpdateTo(ctx, release, path) }}, nil
 }
 
 // currentExecutablePath 返回当前可执行文件的真实路径（尽力解开软链）。

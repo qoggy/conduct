@@ -124,7 +124,7 @@ token usage / session id 的缺失不能用 `0`、空字符串或字段缺省冒
 - **默认参数**：`chat --v3 --no-interactive --wrap never`。不传 `--agent`、`--resume` 或 `--resume-id`，因此复用用户默认 agent、认证、全局与项目配置并创建新 session。
 - **可变参数**：`Model` 非空 → `--model <m>`；`Effort` 非空 → `--effort <v>`。model 是开放集合；effort 在保存期限定为 `low` / `medium` / `high` / `xhigh` / `max`。
 - **输出解析**：v3 普通 chat 没有 JSON 模式。stdout 不含工具事件，但会把本轮所有可见 assistant `Say` 文本无结构地直接拼接；适配器保留完整 stdout，只删除结尾的 `CR` / `LF`。它不能可靠提取最后一条 text，空 stdout 允许成功。stderr 承载 INFO、tool 状态与错误诊断，不拼入 `Text`。
-- **失败判定**：chat 非零退出时保留退出码；stderr 非空时附清理 ANSI、截断至 500 字的 stderr，stderr 为空时只报告退出码，不读取 stdout 补充诊断。退出 `0` 时返回完整 stdout。Kiro 没有机器可读的业务失败字段，conduct 不用 `is rejected because`、`context window has overflowed` 等自然语言关键词猜测权限或上下文状态，因为相同文本可以合法出现在用户输入、模型回答、工具日志和被读取的源码中；工具和任务是否成功由 workflow 的真实产物约束判断。
+- **失败判定**：chat 非零退出时保留退出码；stderr 非空时附清理 ANSI 后的完整 stderr，不截断启动日志后的真实错误；stderr 为空时只报告退出码，不读取 stdout 补充诊断。退出 `0` 时返回完整 stdout。Kiro 没有机器可读的业务失败字段，conduct 不用 `is rejected because`、`context window has overflowed` 等自然语言关键词猜测权限或上下文状态，因为相同文本可以合法出现在用户输入、模型回答、工具日志和被读取的源码中；工具和任务是否成功由 workflow 的真实产物约束判断。
 - **进程收尾**：三条标准流连接到创建后立即 unlink、仅当前用户可访问的普通临时文件，避免 Kiro v3 的 ACP 子进程持有匿名 pipe 导致 EOF 卡死。每次调用使用独立进程组；顶层进程结束后，无论成功或失败，都向该组仍存活的子进程发送终止信号。临时文件不形成持久目录项。
 - **metadata**：普通无头输出不提供本次 token usage 或当前 session id，`Tokens` / `SessionID` 固定为 `nil`。Kiro 仍在用户 profile 中持久化 session，可在相同工作目录用 `kiro-cli chat --list-sessions` 查看；conduct 不读取私有 session 文件或猜测 id。
 - 实现见 `internal/engine/kiro.go`；CLI 调研见 `docs/references/kiro-cli.md`。
@@ -195,10 +195,10 @@ token usage / session id 的缺失不能用 `0`、空字符串或字段缺省冒
 
 引擎层的错误一律**显式上抛、绝不静默**（承项目「错误不吞」）。这些适配器错误与底层技术诊断固定使用英文，不随 language 设置或 locale 切换；引擎原始返回的 stderr / `result` / `error` / `message` 内容原样保留。子进程失败经 `commandError`（`internal/engine/exec.go`）转译为带引擎名的可读错误。下列 `<engine>` 占位是错误前缀里的引擎名，取**CLI 二进制名**（`claude` / `agy` / `qodercli`），非注册名（`claude-code` / `qoder`）：
 
-- **非零退出码**：`<engine> exited with code <code>: <stderr summary>`（stderr 截断至 500 字）。**claude-code 例外**：非零退出时先尝试把 stdout 解析成 JSON 取 `result`，非空则优先返回 `claude error: <result>`；只有 stdout 非法 JSON 或 `result` 为空才落到这条退出码+stderr 摘要（见〈claude-code〉小节）。
+- **非零退出码**：`<engine> exited with code <code>: <stderr summary>`（通用适配器将 stderr 截断至 500 字；Kiro 保留清理 ANSI 后的完整 stderr）。**claude-code 例外**：非零退出时先尝试把 stdout 解析成 JSON 取 `result`，非空则优先返回 `claude error: <result>`；只有 stdout 非法 JSON 或 `result` 为空才落到这条退出码+stderr 摘要（见〈claude-code〉小节）。
 - **找不到可执行文件等**：`failed to invoke <engine>: <original error>`。
 - **输出非预期 JSON**：claude-code / antigravity 使用 `<engine> returned unexpected JSON: <err> (first 200 characters of stdout: …)`；qoder 使用 `qodercli returned unexpected JSON: …`；codex 使用 `codex returned unexpected JSON: failed to parse line <line>: …`。
-- **Kiro 输出失败**：非零退出时只把 stderr 作为第三方诊断来源；stderr 为空则错误仅含退出码，stdout 不作为错误信息兜底。权限 YAML 读取、解析或原子写入失败时不启动 chat。exit `0` 时完整 stdout（允许为空）作为回答，不依据回答或 stderr 中的自然语言分类错误。进程组清理失败显式上抛；若 chat 同时失败则两个错误都保留。
+- **Kiro 输出失败**：非零退出时只把清理 ANSI 后的完整 stderr 作为第三方诊断来源，避免启动日志挤掉末尾的实际错误；stderr 为空则错误仅含退出码，stdout 不作为错误信息兜底。权限 YAML 读取、解析或原子写入失败时不启动 chat。exit `0` 时完整 stdout（允许为空）作为回答，不依据回答或 stderr 中的自然语言分类错误。进程组清理失败显式上抛；若 chat 同时失败则两个错误都保留。
 - **引擎自报失败**（进程退出码为 0、但引擎自身报告业务失败）：
   - claude-code：`is_error` 为真 → 附 `result` 文本。
   - qoder：`is_error` 为真 → 优先附 `errors` 数组拼接的报错信息（`result` 此时可能整个不存在）；`errors` 为空才回退 `result`；两者皆空给兜底提示。

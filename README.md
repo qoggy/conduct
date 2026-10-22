@@ -18,12 +18,12 @@ go install github.com/qoggy/conduct/cmd/conduct@latest
 
 ## Update
 
-Once installed, conduct updates itself in place:
+Update the CLI and all Skills installed with `conduct init`:
 
 ```bash
-conduct update            # update to the latest release
-conduct update --check    # check for a newer version without installing
-conduct update v0.2.0     # install a specific version (a version tag opts into pre-releases)
+conduct update            # update the CLI and all installed Skills
+conduct update --check    # check only
+conduct update v0.2.0     # install a specific version
 ```
 
 ## Uninstall
@@ -32,7 +32,7 @@ conduct is a single binary. Remove it, and optionally its data:
 
 ```bash
 rm "$(command -v conduct)"   # prefix with sudo if it lives in a system dir like /usr/local/bin
-rm -rf ~/.conduct            # optional: workflows and run records
+rm -rf ~/.conduct            # optional: workflows, run records, and Skill installation metadata
 ```
 
 ## Usage
@@ -43,14 +43,8 @@ conduct --help
 
 ## Agent Skill
 
-The repository includes a conduct Skill at `.agents/skills/conduct`. Copy it into a Skill root supported by your coding agent.
-
-For example, after cloning this repository:
+Install the conduct Skill for your AI coding tools:
 
 ```bash
-# Choose a directory supported by your agent, for example a user-level
-# ~/.agents/skills or ~/.claude/skills directory, or the matching project directory.
-SKILL_ROOT="$HOME/.agents/skills"
-mkdir -p "$SKILL_ROOT/conduct"
-cp -R .agents/skills/conduct/. "$SKILL_ROOT/conduct/"
+conduct init                 # interactive setup
 ```

@@ -305,12 +305,12 @@ func TestKiroRunMissingBinary(t *testing.T) {
 	}
 }
 
-func TestKiroFailureDiagnosticIsCleanAndTruncatedByCharacters(t *testing.T) {
+func TestKiroFailureDiagnosticPreservesTrailingErrorAndCleansANSI(t *testing.T) {
 	t.Setenv("KIRO_HOME", t.TempDir())
-	value := strings.Repeat("界", 501)
+	value := strings.Repeat("[INFO] startup 界\n", 60) + "Error: pilot-kiro.json: hooks: Expected array, received object"
 	fakeBinary(t, "kiro-cli", `printf '\033[31m`+value+`\033[0m\n' >&2; exit 1`)
 	_, err := (kiroEngine{}).Run(context.Background(), RunRequest{Prompt: "p"})
-	if err == nil || !strings.Contains(err.Error(), strings.Repeat("界", 500)+"…") || strings.Contains(err.Error(), "\x1b[") {
-		t.Fatalf("诊断应清理 ANSI 并按字符截断: %v", err)
+	if err == nil || err.Error() != "kiro-cli exited with code 1: "+value {
+		t.Fatalf("诊断应清理 ANSI 并完整保留启动日志后的真实错误: %v", err)
 	}
 }

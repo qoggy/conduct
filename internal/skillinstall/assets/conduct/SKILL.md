@@ -1,6 +1,8 @@
 ---
 name: conduct
 description: 本机 conduct workflow 编排 CLI 的操作助手，用于把 JSON workflow 解释为节点与边组成的 DAG，并按依赖驱动 AI 编程引擎执行。用户提到 conduct、创建/编辑/查看 workflow、配置节点或 prompt、编排带依赖的 AI 编程任务，或运行、等待、恢复、停止 workflow 时使用。
+license: MIT
+compatibility: Requires Python 3.7+, Bash, and the conduct CLI in PATH.
 ---
 
 # Conduct

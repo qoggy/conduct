@@ -372,7 +372,7 @@ func kiroCommandError(commandName string, output commandOutput, err error) error
 		if diagnostic == "" {
 			return fmt.Errorf("%s exited with code %d", commandName, exitError.ExitCode())
 		}
-		return fmt.Errorf("%s exited with code %d: %s", commandName, exitError.ExitCode(), truncate(diagnostic, 500))
+		return fmt.Errorf("%s exited with code %d: %s", commandName, exitError.ExitCode(), diagnostic)
 	}
 	return fmt.Errorf("failed to invoke kiro-cli: %w", err)
 }

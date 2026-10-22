@@ -58,7 +58,9 @@ Workflow creation, deletion, editing, querying, and interpreted execution are av
 	rootCommand.AddCommand(newWorkflowCommand())
 	rootCommand.AddCommand(newRunCommand())
 	rootCommand.AddCommand(newUICommand())
+	rootCommand.AddCommand(newInitCommand())
 	rootCommand.AddCommand(newUpdateCommand())
+	rootCommand.AddCommand(newSkillSyncCommand())
 	rootCommand.AddCommand(newVersionCommand())
 	if err := addHelpTopics(rootCommand); err != nil {
 		return nil, err
