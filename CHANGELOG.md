@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-22
+
+### Added
+
+- Added `conduct init` to install the bundled conduct Skill offline, with project or user scope, copy or symlink installation, and interactive or scripted setup.
+
+### Changed
+
+- `conduct update` now also updates Skills installed with `conduct init`, even when conduct is already up to date. Use `--project` or `--global` to limit Skill updates; `--check` remains read-only. Skill updates replace local edits.
+- Updated workflow editor model suggestions: Codex adds `gpt-6.1-sol` and `gpt-6-astra`; Kiro replaces its Claude suggestions with `claude-sonnet-5.5` and `claude-opus-5.5`.
+
+### Removed
+
+- Removed `gpt-5.5` and `gpt-5.3-codex-spark` from Codex model suggestions. Custom model names remain supported.
+
+### Fixed
+
+- Kiro failures now show the full error output, so startup logs no longer hide the actual failure.
+- CLI commands now report JSON output write failures instead of exiting successfully.
+
 ## [0.1.5] - 2026-08-26
 
 ### Added
@@ -166,7 +186,8 @@ Initial public release.
 - One-line install script: `curl -sSL https://raw.githubusercontent.com/qoggy/conduct/main/install.sh | sh`, which detects the OS and architecture and installs the latest version.
 - Released under the MIT license.
 
-[unreleased]: https://github.com/qoggy/conduct/compare/v0.1.5...HEAD
+[unreleased]: https://github.com/qoggy/conduct/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/qoggy/conduct/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/qoggy/conduct/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/qoggy/conduct/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/qoggy/conduct/compare/v0.1.2...v0.1.3
